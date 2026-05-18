@@ -1,0 +1,86 @@
+"""harness.reports.junit — xUnit-2 dialect JUnit XML emitter.
+
+`<testsuites>` root, single `<testsuite name="verify-kit">`, one `<testcase>`
+per check. Failures embed `<failure message=… type=…>`, skips embed
+`<skipped message=…/>`. The `time` attribute on `<testsuites>` is sourced from
+`report.summary.duration_ms` (RESEARCH.md §13 S4).
+
+All special characters in attribute values and text content are escaped by
+`xml.etree.ElementTree`, so callers MUST NOT manually concatenate XML strings
+(threat T-02-16).
+"""
+from __future__ import annotations
+
+import xml.etree.ElementTree as ET
+from typing import IO
+
+from harness.models import VerifyReport
+
+
+def _format_time(duration_ms: int) -> str:
+    return f"{duration_ms / 1000.0:.3f}"
+
+
+def _classname_for(check_id: str) -> str:
+    if "." in check_id:
+        return check_id.rsplit(".", 1)[0]
+    return "misc"
+
+
+def emit(report: VerifyReport, stream: IO[str]) -> None:
+    """Write `report` to `stream` as JUnit XML."""
+    root = ET.Element(
+        "testsuites",
+        attrib={
+            "name": "verify-kit",
+            "tests": str(report.summary.total),
+            "failures": str(report.summary.fail_count),
+            "skipped": str(report.summary.skip_count),
+            "time": _format_time(report.summary.duration_ms),
+        },
+    )
+    suite = ET.SubElement(
+        root,
+        "testsuite",
+        attrib={
+            "name": "verify-kit",
+            "tests": str(report.summary.total),
+            "failures": str(report.summary.fail_count),
+            "skipped": str(report.summary.skip_count),
+            "time": _format_time(report.summary.duration_ms),
+        },
+    )
+
+    for check in report.checks:
+        case = ET.SubElement(
+            suite,
+            "testcase",
+            attrib={
+                "classname": _classname_for(check.check_id),
+                "name": check.check_id,
+                "time": _format_time(check.duration_ms),
+            },
+        )
+        if check.status == "fail":
+            err = check.error
+            failure_attrs = {
+                "message": (err.message if err else check.message) or "",
+                "type": (err.code if err else "fail"),
+            }
+            failure_el = ET.SubElement(case, "failure", attrib=failure_attrs)
+            if err and err.hint:
+                failure_el.text = err.hint
+        elif check.status == "skip":
+            ET.SubElement(
+                case,
+                "skipped",
+                attrib={"message": check.message or ""},
+            )
+
+    ET.indent(root, space="  ")
+    stream.write('<?xml version="1.0" encoding="utf-8"?>\n')
+    stream.write(ET.tostring(root, encoding="unicode"))
+    stream.write("\n")
+
+
+__all__ = ["emit"]

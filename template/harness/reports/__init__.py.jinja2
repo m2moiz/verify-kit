@@ -1,0 +1,30 @@
+"""harness.reports — registry of report emitters.
+
+Each emitter exposes `emit(report: VerifyReport, stream: IO[str]) -> None`.
+`FORMATTERS` is the single dispatch table consumed by the CLI (Plan 06).
+
+The pretty emitter additionally exposes `run_with_spinner(specs, runner_fn)`
+for the TTY-friendly progress UI (UX-07).
+"""
+from __future__ import annotations
+
+from harness.reports import (
+    json_emit,
+    jsonl,
+    junit,
+    otlp,
+    pretty,
+    sarif,
+)
+from harness.reports.pretty import run_with_spinner
+
+FORMATTERS = {
+    "pretty": pretty.emit,
+    "json": json_emit.emit,
+    "jsonl": jsonl.emit,
+    "junit": junit.emit,
+    "sarif": sarif.emit,
+    "otlp": otlp.emit,
+}
+
+__all__ = ["FORMATTERS", "run_with_spinner"]

@@ -1,0 +1,188 @@
+"""harness.reports.pretty — miette/rustc-style terminal renderer.
+
+Decision references:
+- UX-01: miette-style error block (header → hint → fix → docs).
+- UX-04: success-state next-step nudge.
+- UX-07: spinner gated on isatty + CI.
+
+The emitter respects NO_COLOR (no ANSI) and CI=1 (no_color + force_terminal so
+markup parses but renders without color). highlight=False prevents Rich from
+auto-detecting literal `[code]` strings in error messages and breaking layout.
+"""
+from __future__ import annotations
+
+import os
+import sys
+from typing import IO, Callable, Iterable
+
+from rich.console import Console
+from rich.progress import (
+    Progress,
+    SpinnerColumn,
+    TextColumn,
+    TimeElapsedColumn,
+)
+from rich.text import Text
+
+from harness.models import CheckResult, VerifyReport
+
+
+def _make_console(stream: IO[str] | None = None) -> Console:
+    """Build a Rich Console that respects NO_COLOR / CI / isatty.
+
+    - NO_COLOR=1 → no color, isatty determined by stream.
+    - CI=1 → no_color=True but force_terminal=True so `[bold]` still bolds without
+      color. This is the "structured-but-colorless" mode (R2 design note).
+    - Otherwise: default behavior (color when isatty, no color otherwise).
+    """
+    target = stream if stream is not None else sys.stdout
+    no_color_env = bool(os.environ.get("NO_COLOR"))
+    ci_env = bool(os.environ.get("CI"))
+
+    if ci_env:
+        return Console(
+            file=target,
+            no_color=True,
+            force_terminal=True,
+            highlight=False,
+            width=120,
+        )
+    if no_color_env:
+        return Console(
+            file=target,
+            no_color=True,
+            highlight=False,
+            width=120,
+        )
+    return Console(file=target, highlight=False, width=120)
+
+
+def _status_line(check: CheckResult) -> Text:
+    """Build a one-line status entry for pass/skip (and the header of fail)."""
+    line = Text()
+    if check.status == "pass":
+        line.append("✓ ", style="green")
+    elif check.status == "skip":
+        line.append("– ", style="yellow")
+    else:
+        line.append("✗ ", style="red")
+    line.append(f"[{check.check_id}] ")
+    if check.message:
+        line.append(check.message)
+        line.append(" ")
+    line.append(f"({check.duration_ms}ms)", style="dim")
+    if check.cached:
+        line.append(" (cached)", style="dim")
+    return line
+
+
+def _render_error(console: Console, check: CheckResult) -> None:
+    """Render a miette-style multi-line error block for a failing check."""
+    err = check.error
+    if err is None:
+        # Fail without envelope: still print a header
+        console.print(_status_line(check))
+        return
+
+    header = Text()
+    header.append("✗ ", style="red")
+    header.append(f"error[{err.code}]", style="bold red")
+    header.append(": ")
+    header.append(err.message)
+    header.append(f"  ({check.duration_ms}ms)", style="dim")
+    if check.cached:
+        header.append(" (cached)", style="dim")
+    console.print(header)
+
+    if err.file:
+        loc = Text("  --> ", style="blue")
+        loc.append(err.file)
+        if err.line is not None:
+            loc.append(f":{err.line}")
+            if err.column is not None:
+                loc.append(f":{err.column}")
+        console.print(loc)
+
+    if err.snippet:
+        sn = Text("    ")
+        sn.append(err.snippet, style="dim")
+        console.print(sn)
+
+    if err.hint:
+        line = Text("  hint: ", style="green")
+        line.append(err.hint)
+        console.print(line)
+    if err.fix_command:
+        line = Text("   fix: ", style="yellow")
+        line.append(err.fix_command)
+        console.print(line)
+    if err.docs_url:
+        line = Text("  docs: ", style="blue")
+        line.append(err.docs_url)
+        console.print(line)
+
+
+def emit(report: VerifyReport, stream: IO[str] | None = None) -> None:
+    """Render `report` to `stream` (or sys.stdout) in miette/rustc style."""
+    console = _make_console(stream)
+
+    for check in report.checks:
+        if check.status == "fail":
+            _render_error(console, check)
+        else:
+            console.print(_status_line(check))
+
+    summary = report.summary
+    line = Text()
+    line.append(f"{summary.pass_count}/{summary.total} passed")
+    line.append(f" in {summary.duration_ms}ms")
+    if summary.fail_count:
+        line.append(f", {summary.fail_count} failed", style="red")
+    if summary.skip_count:
+        line.append(f", {summary.skip_count} skipped", style="yellow")
+    cached_count = sum(1 for c in report.checks if c.cached)
+    if cached_count:
+        line.append(f", {cached_count} cached", style="dim")
+    console.print(line)
+
+    if report.exit_code == 0:
+        hint = Text(
+            "All checks passed. Try `just verify --watch` to re-run on file "
+            "changes, or `just verify --full` to include slow checks.",
+            style="dim",
+        )
+        console.print(hint)
+
+
+def run_with_spinner(
+    specs: Iterable, runner_fn: Callable
+) -> list[CheckResult]:
+    """Run `runner_fn(spec)` for each spec, optionally inside a Rich spinner.
+
+    Spinner appears only when stdout is a TTY AND CI is unset. Otherwise this
+    falls back to a plain list comprehension so output stays clean in CI logs
+    and pipes.
+    """
+    specs_list = list(specs)
+    is_tty = sys.stdout.isatty() and not os.environ.get("CI")
+    if not is_tty:
+        return [runner_fn(s) for s in specs_list]
+
+    results: list[CheckResult] = []
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("{task.description}"),
+        TimeElapsedColumn(),
+        transient=True,
+    ) as progress:
+        for spec in specs_list:
+            label = getattr(spec, "check_id", str(spec))
+            task_id = progress.add_task(f"running {label}", total=None)
+            try:
+                results.append(runner_fn(spec))
+            finally:
+                progress.remove_task(task_id)
+    return results
+
+
+__all__ = ["emit", "run_with_spinner"]

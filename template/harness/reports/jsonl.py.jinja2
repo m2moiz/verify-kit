@@ -1,0 +1,29 @@
+"""harness.reports.jsonl — one CheckResult per line, terminated by a summary.
+
+Stream-friendly format for agents and pipelines. Each non-final line is a
+CheckResult; the final line is `{"type": "summary", ...summary, "exit_code": N}`.
+"""
+from __future__ import annotations
+
+import json
+from typing import IO
+
+from harness.models import VerifyReport
+
+
+def emit(report: VerifyReport, stream: IO[str]) -> None:
+    """Write each CheckResult on its own line, then a summary marker line."""
+    for check in report.checks:
+        stream.write(check.model_dump_json(exclude_none=True))
+        stream.write("\n")
+
+    summary_obj = {
+        "type": "summary",
+        **report.summary.model_dump(),
+        "exit_code": report.exit_code,
+    }
+    stream.write(json.dumps(summary_obj))
+    stream.write("\n")
+
+
+__all__ = ["emit"]

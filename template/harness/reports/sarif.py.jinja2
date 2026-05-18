@@ -1,0 +1,96 @@
+"""harness.reports.sarif — SARIF 2.1.0 emitter for GitHub code scanning.
+
+Pulls the rule list from `harness.registry.list_checks()` so the
+`tool.driver.rules` array is deterministic. Only non-pass results appear in
+`runs[0].results` (SARIF convention; passing checks produce no result entry).
+"""
+from __future__ import annotations
+
+import json
+from typing import IO
+
+from harness.models import VerifyReport
+from harness.registry import list_checks
+
+_SARIF_SCHEMA = "https://json.schemastore.org/sarif-2.1.0.json"
+_TOOL_NAME = "verify-kit"
+_TOOL_URI = "https://github.com/m2moiz/verify-kit"
+
+
+def _build_rules() -> list[dict]:
+    rules: list[dict] = []
+    for spec in list_checks():
+        rules.append(
+            {
+                "id": spec.check_id,
+                "shortDescription": {"text": spec.description or spec.check_id},
+                "helpUri": "",
+            }
+        )
+    return rules
+
+
+def _build_results(report: VerifyReport) -> list[dict]:
+    results: list[dict] = []
+    for check in report.checks:
+        if check.status == "pass":
+            continue
+        err = check.error
+        if check.status == "fail":
+            level = "error"
+            msg_text = (err.message if err else check.message) or check.check_id
+            if err and err.hint:
+                msg_text = f"{msg_text}\n\nhint: {err.hint}"
+        else:
+            level = "note"
+            msg_text = check.message or "skipped"
+
+        physical_location: dict = {
+            "artifactLocation": {
+                "uri": (err.file if (err and err.file) else "."),
+                "uriBaseId": "%SRCROOT%",
+            }
+        }
+        if err and err.line is not None:
+            region: dict = {"startLine": err.line}
+            if err.column is not None:
+                region["startColumn"] = err.column
+            if err.snippet:
+                region["snippet"] = {"text": err.snippet}
+            physical_location["region"] = region
+
+        entry: dict = {
+            "ruleId": check.check_id,
+            "level": level,
+            "message": {"text": msg_text},
+            "locations": [{"physicalLocation": physical_location}],
+        }
+        if err and err.docs_url:
+            entry["hostedViewerUri"] = err.docs_url
+        results.append(entry)
+    return results
+
+
+def emit(report: VerifyReport, stream: IO[str]) -> None:
+    """Write `report` to `stream` as SARIF 2.1.0 JSON."""
+    sarif = {
+        "$schema": _SARIF_SCHEMA,
+        "version": "2.1.0",
+        "runs": [
+            {
+                "tool": {
+                    "driver": {
+                        "name": _TOOL_NAME,
+                        "informationUri": _TOOL_URI,
+                        "rules": _build_rules(),
+                    }
+                },
+                "results": _build_results(report),
+            }
+        ],
+    }
+    json.dump(sarif, stream, indent=2)
+    stream.write("\n")
+
+
+__all__ = ["emit"]
