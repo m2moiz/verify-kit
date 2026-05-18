@@ -1,0 +1,22 @@
+# justfile — canonical task runner for {{ project_name }}.
+# Run `just --list` to see all available recipes.
+
+set shell := ["bash", "-uc"]
+
+# Run all available checks (Phase 1: mise validity, copier-answers validity, just-list integrity)
+verify *FLAGS:
+    uv run verify-kit verify {% raw %}{{FLAGS}}{% endraw %}
+
+# Run linters (ruff for Python, biome for JS/TS) over the project
+lint:
+    uv run ruff check .
+    @command -v pnpm >/dev/null 2>&1 && pnpm dlx @biomejs/biome check . || true
+
+# Auto-format Python and JS/TS
+format:
+    uv run ruff format .
+    @command -v pnpm >/dev/null 2>&1 && pnpm dlx @biomejs/biome format --write . || true
+
+# Drop into a subshell with the mise-managed env activated
+shell:
+    mise exec -- $SHELL
