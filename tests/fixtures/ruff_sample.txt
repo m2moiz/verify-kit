@@ -1,0 +1,1 @@
+src/foo.py:12:5: F401 'os' imported but unused

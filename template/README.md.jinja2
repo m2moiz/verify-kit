@@ -144,6 +144,28 @@ When the Backend addon is enabled, the FastAPI app reuses the same Jaeger
 endpoint — application traces and verify traces appear together in the UI.
 {% endif %}
 
+## Other editors (JetBrains, Zed, Neovim)
+
+The `.vscode/` files document a VS Code setup but every tool used here speaks
+LSP and DAP, so any LSP-aware editor works with zero project-specific config:
+
+**JetBrains (PyCharm / WebStorm / IntelliJ):**
+- LSP: install the "LSP4IJ" plugin (or use built-in Pyright/Ruff support).
+- Tasks: PyCharm "External Tools" pointing at `just verify` work for `Ctrl+Shift+B`.
+- Debug: built-in Python debugger handles debugpy targets without `launch.json`.
+
+**Zed:**
+- LSP autoconfig for Pyright + Ruff + Biome works out of the box.
+- MCP integration via `.zed/settings.json` `context_servers` (already shipped if `has_zed=true`).
+
+**Neovim:**
+- LSP: `nvim-lspconfig` with `pyright`, `ruff`, `biome` ↔ same diagnostics surface.
+- DAP: `nvim-dap-python` reads `launch.json` directly.
+- Tasks: any task runner (overseer.nvim, neotest) can shell out to `just verify`.
+
+In all three, the same `just verify` command is the entrypoint; problem matcher
+output is parsed natively from LSP rather than from terminal regex.
+
 ## License
 
 {{ license }} — see LICENSE.

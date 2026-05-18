@@ -1,0 +1,29 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Pytest: Current File",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "pytest",
+      "args": ["${file}", "-v"],
+      "console": "integratedTerminal",
+      "justMyCode": false
+    }{% if has_backend %},
+    {
+      "name": "FastAPI: uvicorn",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "uvicorn",
+      "args": ["app.main:app", "--reload", "--host", "127.0.0.1", "--port", "8000"],
+      "jinja": true,
+      "justMyCode": false
+    }{% endif %}
+  ]{% if has_backend %},
+  "compounds": [
+    {
+      "name": "Compound: All",
+      "configurations": ["Pytest: Current File", "FastAPI: uvicorn"]
+    }
+  ]{% endif %}
+}
