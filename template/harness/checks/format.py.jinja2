@@ -1,0 +1,169 @@
+"""harness.checks.format — ruff format-check + biome format-check.
+
+Both checks declare `fixable=True` (Phase-2 metadata-only surface; the
+actual --fix codepath is wired in a later phase per CONTEXT.md scope_fence).
+
+Biome resolution mirrors `harness.checks.lint`: `cwd/node_modules/.bin/biome`
+→ `shutil.which("biome")` → skip. NEVER `pnpm dlx` (review HIGH-5).
+
+Decision references: Decision 1.2 (dotted codes), 3.2 (@register), 4.1
+(tier="standard"), carryover-cwd (cwd kwarg, subprocess cwd=cwd).
+"""
+from __future__ import annotations
+
+import shutil
+import subprocess
+import time
+from pathlib import Path
+
+from harness.models import CheckResult, ErrorEnvelope
+from harness.registry import register
+
+
+_BIOME_SKIP_MSG = (
+    "biome not found locally; add `@biomejs/biome` to devDependencies and run "
+    "`pnpm install`. verify-kit does not auto-fetch biome from the network "
+    "because offline-first is a hard UX requirement."
+)
+
+
+def _resolve_biome(cwd: Path) -> Path | None:
+    """Same local-first resolution as harness.checks.lint._resolve_biome."""
+    local = cwd / "node_modules" / ".bin" / "biome"
+    if local.is_file():
+        return local
+    global_biome = shutil.which("biome")
+    if global_biome is not None:
+        return Path(global_biome)
+    return None
+
+
+@register(
+    "format.ruff",
+    tier="standard",
+    category="format",
+    description="Verify Python files are ruff-formatted",
+    inputs=["**/*.py", "pyproject.toml"],
+    fixable=True,
+    tool="ruff",
+)
+def check_format_ruff(cwd: Path) -> CheckResult:
+    """Run `uv run ruff format --check .`."""
+    start = time.monotonic()
+    try:
+        proc = subprocess.run(
+            ["uv", "run", "ruff", "format", "--check", "."],
+            capture_output=True,
+            text=True,
+            cwd=cwd,
+            timeout=30,
+        )
+    except FileNotFoundError:
+        return CheckResult(
+            check_id="format.ruff",
+            status="fail",
+            message="uv not found on PATH",
+            duration_ms=int((time.monotonic() - start) * 1000),
+            error=ErrorEnvelope(
+                code="format.ruff.tool-missing",
+                message="uv binary not found",
+                hint=(
+                    "Install uv via `curl -LsSf https://astral.sh/uv/install.sh | sh` "
+                    "or via mise"
+                ),
+                docs_url="https://docs.astral.sh/uv/getting-started/installation/",
+            ),
+        )
+
+    duration_ms = int((time.monotonic() - start) * 1000)
+
+    if proc.returncode == 0:
+        return CheckResult(
+            check_id="format.ruff",
+            status="pass",
+            message="all Python files are ruff-formatted",
+            duration_ms=duration_ms,
+        )
+
+    return CheckResult(
+        check_id="format.ruff",
+        status="fail",
+        message=proc.stdout.strip().splitlines()[-1] if proc.stdout.strip() else "ruff format --check failed",
+        duration_ms=duration_ms,
+        error=ErrorEnvelope(
+            code="format.ruff.unformatted",
+            message=(proc.stdout.strip() or proc.stderr.strip())[:200],
+            hint="Run `uv run ruff format .` to fix",
+            fix_command="uv run ruff format .",
+            docs_url="https://docs.astral.sh/ruff/formatter/",
+        ),
+    )
+
+
+@register(
+    "format.biome",
+    tier="standard",
+    category="format",
+    description="Verify JS/TS/JSON files are biome-formatted (gated on local biome)",
+    inputs=[
+        "**/*.js",
+        "**/*.ts",
+        "**/*.tsx",
+        "**/*.jsx",
+        "**/*.json",
+    ],
+    fixable=True,
+    tool="biome",
+    skip_if_unavailable=True,
+)
+def check_format_biome(cwd: Path) -> CheckResult:
+    """Run `biome format --check .` via the locally-installed binary, or skip."""
+    start = time.monotonic()
+    biome = _resolve_biome(cwd)
+    if biome is None:
+        return CheckResult(
+            check_id="format.biome",
+            status="skip",
+            message=_BIOME_SKIP_MSG,
+            duration_ms=int((time.monotonic() - start) * 1000),
+        )
+
+    try:
+        proc = subprocess.run(
+            [str(biome), "format", "--check", "."],
+            capture_output=True,
+            text=True,
+            cwd=cwd,
+            timeout=30,
+        )
+    except FileNotFoundError:
+        return CheckResult(
+            check_id="format.biome",
+            status="skip",
+            message=_BIOME_SKIP_MSG,
+            duration_ms=int((time.monotonic() - start) * 1000),
+        )
+
+    duration_ms = int((time.monotonic() - start) * 1000)
+
+    if proc.returncode == 0:
+        return CheckResult(
+            check_id="format.biome",
+            status="pass",
+            message="all JS/TS/JSON files are biome-formatted",
+            duration_ms=duration_ms,
+        )
+
+    return CheckResult(
+        check_id="format.biome",
+        status="fail",
+        message=(proc.stdout.strip() or proc.stderr.strip())[:200] or "biome format --check failed",
+        duration_ms=duration_ms,
+        error=ErrorEnvelope(
+            code="format.biome.unformatted",
+            message=(proc.stdout.strip() or proc.stderr.strip())[:200],
+            hint="Run `pnpm exec biome format --write .` to fix",
+            fix_command="pnpm exec biome format --write .",
+            docs_url="https://biomejs.dev/formatter/",
+        ),
+    )
