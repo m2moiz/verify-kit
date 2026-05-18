@@ -1,0 +1,64 @@
+"""harness.registry — @register decorator + module-level dict of CheckSpecs.
+
+The decorator is the SINGLE registration entry point that Plan 04's checks
+use. `_checks` is module-public (but not in `__all__`) so tests can reset
+state via `harness.registry._checks.clear()`.
+
+Decision: no entry-points support in Phase 2 — third-party plugin discovery
+is deferred. Only in-tree `harness/checks/*` modules register here.
+"""
+from __future__ import annotations
+
+from typing import Callable
+
+from harness.models import CheckSpec, CheckTier
+
+_checks: dict[str, CheckSpec] = {}
+
+
+def register(
+    check_id: str,
+    *,
+    tier: CheckTier = "standard",
+    category: str = "misc",
+    description: str = "",
+    inputs: list[str] | None = None,
+    fixable: bool = False,
+    tool: str | None = None,
+    skip_if_unavailable: bool = False,
+) -> Callable[[Callable], Callable]:
+    """Decorator: register `fn` under `check_id` and return it unchanged.
+
+    Last-registration-wins: re-registering the same `check_id` overwrites the
+    prior entry. This is deterministic for test isolation.
+    """
+
+    def _decorator(fn: Callable) -> Callable:
+        spec = CheckSpec(
+            check_id=check_id,
+            fn=fn,
+            tier=tier,
+            category=category,
+            description=description,
+            inputs=list(inputs) if inputs is not None else [],
+            fixable=fixable,
+            tool=tool,
+            skip_if_unavailable=skip_if_unavailable,
+        )
+        _checks[check_id] = spec
+        return fn
+
+    return _decorator
+
+
+def list_checks() -> list[CheckSpec]:
+    """Return a snapshot list of every registered CheckSpec in insertion order."""
+    return list(_checks.values())
+
+
+def get_check(check_id: str) -> CheckSpec | None:
+    """Return the registered spec for `check_id`, or None if not registered."""
+    return _checks.get(check_id)
+
+
+__all__ = ["register", "list_checks", "get_check"]
