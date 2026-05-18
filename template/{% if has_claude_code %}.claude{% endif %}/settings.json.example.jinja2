@@ -1,0 +1,37 @@
+{
+  // verify-kit recommended Claude Code settings. Copy to .claude/settings.json
+  // (or merge into an existing one) to opt in. The hooks block ties this file
+  // to the .claude/hooks/ scripts.
+  "permissions": {
+    "allow": [
+      "Bash(verify-kit verify*)",
+      "Bash(verify-kit list-checks*)",
+      "Bash(verify-kit describe*)",
+      "Bash(verify-kit trace*)",
+      "Bash(just verify*)",
+      "Bash(just lint*)",
+      "Bash(just typecheck*)"
+    ],
+    "ask": [
+      "Bash(verify-kit fix*)"
+    ]
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit|NotebookEdit",
+        "hooks": [
+          { "type": "command", "command": ".claude/hooks/post-tool-use.sh" }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [
+          { "type": "command", "command": ".claude/hooks/stop.sh" }
+        ]
+      }
+    ]
+  }
+}
