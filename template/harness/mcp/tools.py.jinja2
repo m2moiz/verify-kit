@@ -70,7 +70,7 @@ def register_tools(mcp: FastMCP, *, cwd: Path) -> None:
     def verify() -> dict:
         """Run the full verify-kit check suite and return the JSON report."""
         report = _core.verify(cwd=cwd)
-        result = report.model_dump(mode="json")
+        result = report.model_dump(exclude_none=True, mode="json")
         return result
 
     @mcp.tool(
@@ -81,7 +81,7 @@ def register_tools(mcp: FastMCP, *, cwd: Path) -> None:
     def verify_check(name: str = _DEFAULT_CHECK_ID) -> dict:
         """Run a single registered check by id and return the JSON report."""
         report = _core.verify(check_ids=[name], cwd=cwd)
-        result = report.model_dump(mode="json")
+        result = report.model_dump(exclude_none=True, mode="json")
         return result
 
     @mcp.tool(
@@ -105,7 +105,7 @@ def register_tools(mcp: FastMCP, *, cwd: Path) -> None:
         report = _core.verify(
             check_ids=[_DEFAULT_CHECK_ID], tier="quick", cwd=cwd
         )
-        result = report.model_dump(mode="json")
+        result = report.model_dump(exclude_none=True, mode="json")
         return result
 
     @mcp.tool(
