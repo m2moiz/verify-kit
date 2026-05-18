@@ -1,0 +1,44 @@
+"""harness.reports.otlp — side-effect emitter that flushes OTel spans.
+
+This emitter does NOT serialize the report. Spans are already created by
+`harness.runner.run_check` during execution (Decision 3.4). The OTLP "format"
+just forces a `force_flush()` so that short-lived CLI runs do not lose
+queued spans before exit.
+
+`shutdown()` is NOT called here (review MEDIUM-8). The CLI registers
+`shutdown()` via `atexit` in Plan 06; calling it from an emitter would break
+later in-process emits, tests, or multi-command flows.
+
+When OTel is disabled (no OTEL_EXPORTER_OTLP_ENDPOINT), this writes a single
+warning line to the stream and logs the same via structlog.
+"""
+from __future__ import annotations
+
+from typing import IO
+
+from harness.logging import log
+from harness.models import VerifyReport
+from harness.observability import _otel_enabled, force_flush
+
+
+def emit(report: VerifyReport, stream: IO[str]) -> None:
+    """Force-flush OTel spans; write a status line describing what happened."""
+    if not _otel_enabled:
+        log.warning(
+            "otlp.disabled",
+            reason="OTEL_EXPORTER_OTLP_ENDPOINT not set",
+        )
+        stream.write(
+            "OTLP emitter requires OTEL_EXPORTER_OTLP_ENDPOINT to be set; "
+            "spans were not exported.\n"
+        )
+        return
+
+    force_flush()
+    stream.write(
+        f"OTLP spans flushed for {len(report.checks)} checks to "
+        "OTEL_EXPORTER_OTLP_ENDPOINT.\n"
+    )
+
+
+__all__ = ["emit"]
