@@ -28,6 +28,122 @@ This project was scaffolded from [verify-kit](https://github.com/m2moiz/verify-k
 
 > verify-kit v0.1.alpha scaffold. See ROADMAP.md in template repo for what's coming in v0.1.0.
 
+## Verifying Changes
+
+`just verify` is the ground-truth command for both human developers and coding
+agents in this project. Coding agents in particular should rely on its
+machine-readable output formats rather than scraping pretty stdout.
+
+### Commands
+
+- `just verify` — runs quick + standard tier checks.
+- `just verify --quick` — fast iteration; quick tier only.
+- `just verify --full` — includes slow tier.
+- `just verify --no-cache` — bypass the cache (force re-execution).
+- `just verify-clean` — wipe `.verify/` artifacts.
+
+### Output formats
+
+`verify-kit verify --format=<fmt>` accepts `pretty` (default), `json`, `jsonl`,
+`junit`, `sarif`, and `otlp`. Regardless of stdout format, every run writes
+`.verify/report.json`, `.verify/report.junit.xml`, and `.verify/report.sarif`
+to disk for CI / agent consumption. Writes are atomic (tmp file + `os.replace`)
+so agents never read partial files.
+
+### JSONL streaming contract
+
+When `--format=jsonl`, each line is a `CheckResult` JSON object except for the
+final line, which is the summary:
+
+```json
+{"type": "summary", "pass_count": N, "fail_count": N, "skip_count": N, "total": N, "duration_ms": N, "exit_code": N}
+```
+
+Agents detect end-of-stream by parsing `type == "summary"`.
+
+### Did-you-mean
+
+Typo'd check ids and unknown CLI options/subcommands trigger a
+`did you mean: ...` suggestion before exit.
+
+### Prerequisites & graceful degradation
+
+The recommended bootstrap is `mise install` (installs Python + Node + `just`).
+A `make verify` shim is provided for users without `just`. If `just` is missing
+at run time, the `just-list.renders` check **skips with a hint** instead of
+failing — so `verify-kit verify --quick` succeeds on a freshly-cloned scaffold
+*before* `mise install` runs. The `lint.biome` / `format.biome` checks similarly
+skip when biome is not locally installed; `verify` is offline-first and will
+never call `pnpm dlx` to fetch tools on demand.
+
+### Exit codes
+
+| Code | Meaning |
+|------|---------|
+| 0    | all checks passed |
+| 1    | one or more checks failed |
+| 2    | bad input (invalid CLI flag, unknown check id, malformed config) |
+| 10   | cache corruption (`.verify/cache.db` unreadable) |
+| 11   | required external tool missing (e.g. `uv`) |
+| 12   | report write failed (supersedes 1 — missing `.verify/report.*` is higher severity than a check failure) |
+| 13   | OTel endpoint configured but unreachable |
+
+## Observability
+
+OpenTelemetry instrumentation ships with verify-kit but is **inert by default**.
+The OTel SDK is not imported at all when `OTEL_EXPORTER_OTLP_ENDPOINT` is unset
+(verified by `tests/test_phase2_otel_inert.py` in the verify-kit repo). To
+enable tracing, set the endpoint and pick a backend.
+
+### Jaeger via `just trace-up` (default)
+
+```bash
+export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317
+just trace-up           # starts Jaeger 1.76.0 all-in-one in Docker
+just verify             # spans are emitted to Jaeger
+just trace --last       # render the most recent trace as an ASCII waterfall
+just trace-down         # stop Jaeger
+```
+
+Jaeger UI is at <http://localhost:16686>.
+
+### Non-Docker alternatives
+
+For developers who prefer not to run Docker locally:
+
+1. **[otel-desktop-viewer](https://github.com/CtrlSpice/otel-desktop-viewer)** —
+   macOS menubar app; receives OTLP on `4317`/`4318`; shows traces in a browser
+   tab at <http://localhost:8000>.
+2. **[otel-tui](https://github.com/ymtdzzz/otel-tui)** — terminal-based OTLP
+   receiver with an inline waterfall renderer; best for headless / SSH sessions.
+3. **[Grafana Tempo](https://grafana.com/docs/tempo/latest/getting-started/)**
+   via Docker Compose — overkill for a solo developer; appropriate for teams
+   that already run Grafana.
+
+### `docker-compose.observability.yml` (team pattern)
+
+If your team prefers a single Compose file alongside the application stack,
+the minimal pattern is:
+
+```yaml
+services:
+  jaeger:
+    image: jaegertracing/all-in-one:1.76.0
+    ports:
+      - "16686:16686"   # UI
+      - "4317:4317"     # OTLP gRPC
+      - "4318:4318"     # OTLP HTTP
+```
+
+This is functionally equivalent to `just trace-up` and a reasonable substitute
+when you want observability infrastructure to live in `docker-compose.yml`
+beside the app services.
+{% if has_backend %}
+
+When the Backend addon is enabled, the FastAPI app reuses the same Jaeger
+endpoint — application traces and verify traces appear together in the UI.
+{% endif %}
+
 ## License
 
 {{ license }} — see LICENSE.
