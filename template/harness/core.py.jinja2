@@ -1,214 +1,150 @@
-"""harness/core.py — Source of truth for verify-kit checks.
+"""harness.core — thin facade over harness.runner.run_phase.
 
-All verify logic lives here as plain Python functions returning Pydantic models.
-The Typer CLI (cli.py) and the Phase-3 MCP server (mcp_server.py) are both thin
-facades over these functions — they never call each other.
+Phase-2 restructure (Plan 02-06, Task 1):
+
+- The Phase-1 _check_* implementations have been migrated into
+  ``harness.checks.*`` and re-registered through ``@register`` (Plan 02-04).
+- ``harness.core`` is now a **thin facade**: it does tier/check-id filtering,
+  wires up the cache + config, calls ``run_phase``, and packages results into
+  a ``VerifyReport``. No check business logic lives here.
+- Public API signatures ``verify(...)`` and ``list_checks()`` are preserved
+  for Phase-1 callers; only the implementation moved.
+
+**cwd contract (convergence-HIGH guard):** when a caller passes an explicit
+``cwd=tmp_path``, this module MUST resolve config under that path —
+``load_config(cwd / "pyproject.toml")`` — not the process CWD. Otherwise a
+caller invoking ``core.verify(cwd=tmp_path)`` from a different process CWD
+silently picks up the wrong config file.
+
+**Cache-eviction order (convergence-HIGH guard):** ``cache.evict_if_needed``
+runs **before** ``return``. Writing ``return report; cache.evict_if_needed(...)``
+makes the eviction call dead code and the cache cap is never enforced.
 """
 from __future__ import annotations
 
-import subprocess
-import tomllib
+import time
 from pathlib import Path
-from typing import Literal
 
-from pydantic import BaseModel
-
-
-class CheckResult(BaseModel):
-    """Result of a single verification check."""
-
-    check_id: str
-    status: Literal["pass", "fail", "skip"]
-    message: str = ""
-    duration_ms: int = 0
-
-
-class VerifyReport(BaseModel):
-    """Aggregate report returned by verify()."""
-
-    exit_code: int
-    checks: list[CheckResult]
-    format_version: Literal["1"] = "1"
+import harness.checks  # noqa: F401 — trigger @register side-effects (discovery)
+from harness.cache import CacheCorruptError, CacheStore
+from harness.config import HarnessConfig, load_config
+from harness.didyoumean import suggest
+from harness.logging import log
+from harness.models import VerifyReport
+from harness.registry import list_checks as registry_list_checks
+from harness.runner import run_phase
 
 
 def list_checks() -> list[str]:
-    """Return the IDs of all checks available in this phase."""
-    return ["mise-toml-valid", "copier-answers-valid", "just-list-renders"]
+    """Return the registered check ids as strings (Phase-1 signature preserved)."""
+    return [s.check_id for s in registry_list_checks()]
 
 
 def verify(
     check_ids: list[str] | None = None,
     fix: bool = False,
+    tier: str = "standard",
+    no_cache: bool = False,
+    cwd: Path = Path("."),
+    config: HarnessConfig | None = None,
 ) -> VerifyReport:
     """Run the requested checks (or all of them) and return a VerifyReport.
 
     Args:
-        check_ids: Specific check IDs to run. None means run all.
-        fix:       If True, fixers are run where available. Phase 1 has no
-                   automated fixers — this flag is wired through for the
-                   surface contract (TOOL-06) and will activate in future phases.
+        check_ids: Specific check IDs to run. ``None`` means apply tier filter
+            to the whole registry. Unknown ids raise ``ValueError`` with a
+            did-you-mean suggestion appended.
+        fix: Phase-2 metadata-only flag — see scope_fence in 02-CONTEXT. Logged
+            and ignored; broader fixer wiring lands in later phases.
+        tier: ``"quick"``, ``"standard"`` (default), or ``"full"``. Unknown
+            value raises ``ValueError``.
+        no_cache: When True, bypass the SQLite cache for this run.
+        cwd: Project root the checks operate against. Used for cache root,
+            check fn cwd argument, **and** config path resolution.
+        config: Optional pre-loaded ``HarnessConfig``. When ``None``, loaded
+            from ``cwd / "pyproject.toml"`` (cwd contract).
 
     Returns:
-        VerifyReport with per-check results and an aggregate exit_code.
+        A fully-populated ``VerifyReport`` (including ``summary``).
     """
+    # ── config (cwd contract — convergence-HIGH guard) ────────────────────────
+    # MUST be `cwd / "pyproject.toml"`, NOT the no-arg `load_config()` default
+    # which resolves under the process CWD. The unit test
+    # test_verify_cwd_contract_reads_argument_pyproject monkey-patches a process
+    # CWD that differs from `cwd` and asserts we read from `cwd`.
+    if config is None:
+        config = load_config(cwd / "pyproject.toml")
+
     if fix:
-        # No Phase-1 check has an automated fixer yet.
-        # TOOL-06: --check is default, --fix is opt-in. Log and continue.
-        import sys
-        print(  # noqa: T201
-            "--fix requested but no checks have automated fixers in Phase 1",
-            file=sys.stderr,
+        # Phase-2 scope_fence: --fix is metadata-only here; broader fixer
+        # wiring lands in later phases (per 02-CONTEXT).
+        log.warning(
+            "verify.fix_noop_phase2",
+            note="--fix is metadata-only in Phase 2; broader fixer wiring lands in later phases",
         )
 
-    all_checks = list_checks()
-    requested = check_ids if check_ids is not None else all_checks
+    # ── resolve specs ─────────────────────────────────────────────────────────
+    all_specs = registry_list_checks()
 
-    results: list[CheckResult] = []
-    for cid in requested:
-        if cid == "mise-toml-valid":
-            results.append(_check_mise_toml())
-        elif cid == "copier-answers-valid":
-            results.append(_check_copier_answers())
-        elif cid == "just-list-renders":
-            results.append(_check_just_list())
-        else:
-            results.append(
-                CheckResult(
-                    check_id=cid,
-                    status="skip",
-                    message=f"Unknown check id: {cid!r}",
+    if tier == "quick":
+        filtered = [s for s in all_specs if s.tier == "quick"]
+    elif tier == "standard":
+        filtered = [s for s in all_specs if s.tier in ("quick", "standard")]
+    elif tier == "full":
+        filtered = list(all_specs)
+    else:
+        raise ValueError(
+            f"Unknown tier {tier!r}. did you mean: one of 'quick', 'standard', 'full'?"
+        )
+
+    if check_ids is not None:
+        known_ids = [s.check_id for s in all_specs]
+        by_id = {s.check_id: s for s in all_specs}
+        selected: list = []
+        for cid in check_ids:
+            spec = by_id.get(cid)
+            if spec is None:
+                matches = suggest(cid, known_ids)
+                hint = (
+                    ", ".join(matches) if matches else "(no close match)"
                 )
-            )
+                raise ValueError(
+                    f"Unknown check id {cid!r}. did you mean: {hint}?"
+                )
+            selected.append(spec)
+        filtered = selected
 
-    # exit_code = 0 when every non-skipped check passes.
-    # Skipped checks are neutral — a clean scaffold where .copier-answers.yml
-    # legitimately does not exist must still exit 0.
-    failed = [c for c in results if c.status == "fail"]
-    exit_code = 1 if failed else 0
+    # Defense-in-depth: also filter disabled via config (runner re-checks too).
+    disabled = set(config.checks.disabled or [])
+    filtered = [s for s in filtered if s.check_id not in disabled]
 
-    return VerifyReport(exit_code=exit_code, checks=results)
+    # ── cache ────────────────────────────────────────────────────────────────
+    cache: CacheStore | None
+    if no_cache or not config.cache.enabled:
+        cache = None
+    else:
+        try:
+            cache = CacheStore((cwd / ".verify" / "cache.db"))
+        except CacheCorruptError:
+            # Surface to the CLI which maps to EXIT_CACHE_CORRUPT=10.
+            raise
 
-
-# ── Phase-1 check implementations ────────────────────────────────────────────
-
-
-def _check_mise_toml() -> CheckResult:
-    """Verify .mise.toml parses as TOML and has [tools] with python + node."""
-    import time
-
+    # ── run ──────────────────────────────────────────────────────────────────
     start = time.monotonic()
-    path = Path(".mise.toml")
+    results = run_phase(filtered, cwd=cwd, cache=cache, config=config)
+    total_ms = int((time.monotonic() - start) * 1000)
 
-    if not path.exists():
-        return CheckResult(
-            check_id="mise-toml-valid",
-            status="fail",
-            message=".mise.toml not found in current directory",
-            duration_ms=int((time.monotonic() - start) * 1000),
-        )
+    report = VerifyReport.from_checks(results, total_duration_ms=total_ms)
 
-    try:
-        data = tomllib.loads(path.read_text())
-    except tomllib.TOMLDecodeError as exc:
-        return CheckResult(
-            check_id="mise-toml-valid",
-            status="fail",
-            message=f".mise.toml is not valid TOML: {exc}",
-            duration_ms=int((time.monotonic() - start) * 1000),
-        )
+    # ── eviction (convergence-HIGH guard — MUST be before `return`) ──────────
+    # Placing this AFTER `return report` would make the call dead code and the
+    # cache cap would never be enforced. The unit test
+    # test_verify_evicts_before_return spies CacheStore.evict_if_needed and
+    # asserts call_count==1 at the moment verify() returns.
+    if cache is not None:
+        cache.evict_if_needed(config.cache.max_size_mb * 1_000_000)
 
-    tools = data.get("tools", {})
-    missing = [k for k in ("python", "node") if k not in tools]
-    if missing:
-        return CheckResult(
-            check_id="mise-toml-valid",
-            status="fail",
-            message=f".mise.toml [tools] is missing keys: {missing}",
-            duration_ms=int((time.monotonic() - start) * 1000),
-        )
-
-    return CheckResult(
-        check_id="mise-toml-valid",
-        status="pass",
-        message="python and node are declared in [tools]",
-        duration_ms=int((time.monotonic() - start) * 1000),
-    )
+    return report
 
 
-def _check_copier_answers() -> CheckResult:
-    """Verify .copier-answers.yml exists and has _src_path (Copier auto-emits it)."""
-    import time
-
-    start = time.monotonic()
-    path = Path(".copier-answers.yml")
-
-    if not path.exists():
-        return CheckResult(
-            check_id="copier-answers-valid",
-            status="skip",
-            message="not a Copier-scaffolded project (.copier-answers.yml absent)",
-            duration_ms=int((time.monotonic() - start) * 1000),
-        )
-
-    try:
-        import yaml  # type: ignore[import-untyped]
-
-        data = yaml.safe_load(path.read_text()) or {}
-    except Exception as exc:
-        return CheckResult(
-            check_id="copier-answers-valid",
-            status="fail",
-            message=f".copier-answers.yml is not valid YAML: {exc}",
-            duration_ms=int((time.monotonic() - start) * 1000),
-        )
-
-    if "_src_path" not in data:
-        return CheckResult(
-            check_id="copier-answers-valid",
-            status="fail",
-            message=".copier-answers.yml is missing '_src_path' key (corrupt Copier answers file)",
-            duration_ms=int((time.monotonic() - start) * 1000),
-        )
-
-    return CheckResult(
-        check_id="copier-answers-valid",
-        status="pass",
-        message=f"_src_path = {data['_src_path']!r}",
-        duration_ms=int((time.monotonic() - start) * 1000),
-    )
-
-
-def _check_just_list() -> CheckResult:
-    """Verify `just --list` exits 0 and returns at least one recipe."""
-    import time
-
-    start = time.monotonic()
-
-    result = subprocess.run(
-        ["just", "--list"],
-        capture_output=True,
-        text=True,
-    )
-
-    if result.returncode != 0:
-        return CheckResult(
-            check_id="just-list-renders",
-            status="fail",
-            message=f"`just --list` exited {result.returncode}: {result.stderr.strip()}",
-            duration_ms=int((time.monotonic() - start) * 1000),
-        )
-
-    if not result.stdout.strip():
-        return CheckResult(
-            check_id="just-list-renders",
-            status="fail",
-            message="`just --list` exited 0 but produced no output",
-            duration_ms=int((time.monotonic() - start) * 1000),
-        )
-
-    return CheckResult(
-        check_id="just-list-renders",
-        status="pass",
-        message=f"`just --list` OK ({len(result.stdout.splitlines())} lines)",
-        duration_ms=int((time.monotonic() - start) * 1000),
-    )
+__all__ = ["verify", "list_checks"]

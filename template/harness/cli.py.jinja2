@@ -1,88 +1,440 @@
-"""harness/cli.py — Typer CLI facade for verify-kit.
+"""harness.cli — Typer multi-command surface for verify-kit (Plan 02-06).
 
-This file is a THIN facade over harness.core. Each command calls core.*()
-and exits with the returned exit code. No business logic lives here.
+Commands:
+    verify       — run checks, emit chosen format, ALWAYS write 3 disk reports.
+    list-checks  — enumerate the registered catalog (plain or JSON).
+    describe     — emit the FMT-04 envelope (JSON Schema + exit codes + checks).
+    trace        — render the most recent verify-kit trace (Jaeger HTTP API).
 
-Console entry point:  verify-kit = "harness.cli:app"
+Output discipline:
+    - Human-readable messages → stderr (errors, hints, did-you-mean).
+    - Structured/machine output → stdout, so ``verify-kit verify --format=json | jq``
+      works cleanly.
+
+Did-you-mean (review MEDIUM-4):
+    The console_script ``verify-kit`` resolves to :func:`app_entry`, which calls
+    the Typer app with ``standalone_mode=False`` so Click raises
+    ``click.UsageError`` without short-circuiting via ``ctx.exit()`` and our
+    handler is the single source of stderr output. Pure ``CliRunner.invoke``
+    does NOT route through ``app_entry`` — CLI tests that assert did-you-mean
+    must subprocess into ``python -m harness.cli`` or invoke ``app_entry``
+    directly.
+
+atexit registration is MODULE-LEVEL (review MEDIUM-5):
+    A per-callback ``atexit.register`` would stack one handler per
+    ``CliRunner.invoke`` call. We register once at import time, gated by the
+    ``_ATEXIT_REGISTERED`` sentinel.
+
+Atomic disk writes + EXIT_WRITE_FAILED precedence (review MEDIUM-6):
+    Each ``.verify/report.*`` write is tmp-file + ``os.replace``. If any of
+    them raises ``OSError``, the CLI exits ``EXIT_WRITE_FAILED=12`` even when
+    checks themselves failed — CI semantics depend on the artifact existing.
 """
 from __future__ import annotations
 
+import atexit
 import json
+import os
 import sys
+from pathlib import Path
+from typing import IO
 
+import click
 import typer
 
-from harness import core
+from harness import core as _core
+from harness.cache import CacheCorruptError
+from harness.didyoumean import suggest
+from harness.logging import configure_logging, log
+from harness.models import (
+    EXIT_BAD_INPUT,
+    EXIT_CACHE_CORRUPT,
+    EXIT_CHECK_FAIL,
+    EXIT_OK,
+    EXIT_OTEL_UNREACHABLE,
+    EXIT_TOOL_MISSING,
+    EXIT_WRITE_FAILED,
+    CheckCatalogEntry,
+    VerifyReport,
+)
+from harness.observability import shutdown
+from harness.registry import list_checks as _registry_list_checks
+from harness.reports import FORMATTERS
+
+
+# ── Module-level one-shot atexit registration (review MEDIUM-5) ──────────────
+_ATEXIT_REGISTERED = False
+_LOGGING_CONFIGURED = False
+
+
+def _register_atexit_once() -> None:
+    """Register the OTel shutdown handler exactly once per process.
+
+    Inside ``@app.callback()`` this would re-run on every CliRunner.invoke()
+    and on every subcommand dispatch, stacking duplicate handlers (the pytest
+    suite would accumulate dozens). Module-level + sentinel = exactly one.
+    """
+    global _ATEXIT_REGISTERED
+    if not _ATEXIT_REGISTERED:
+        atexit.register(shutdown)
+        _ATEXIT_REGISTERED = True
+
+
+_register_atexit_once()
+
 
 app = typer.Typer(
     help="verify-kit — self-verifying agentic-coding harness.",
     no_args_is_help=True,
+    pretty_exceptions_enable=False,
 )
+
+
+@app.callback()
+def _root_callback() -> None:
+    """App-level setup: configure logging once."""
+    global _LOGGING_CONFIGURED
+    if not _LOGGING_CONFIGURED:
+        configure_logging()
+        _LOGGING_CONFIGURED = True
+
+
+# ── Disk write helpers ───────────────────────────────────────────────────────
+
+
+def _atomic_write(path: Path, emit_fn, report: VerifyReport) -> None:
+    """Write `emit_fn(report, f)` to `path` via tmp file + os.replace."""
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    with open(tmp, "w", encoding="utf-8") as f:
+        emit_fn(report, f)
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(tmp, path)
+
+
+def _write_disk_artifacts(report: VerifyReport, cwd: Path) -> Exception | None:
+    """Write the 3 standard .verify/report.* files. Returns first OSError or None.
+
+    HARN-02 SC#2/SC#3: these files exist after every verify, independent of
+    the stdout --format choice. Atomic writes (review MEDIUM-6) keep agents
+    from reading partial artifacts.
+    """
+    verify_dir = cwd / ".verify"
+    try:
+        verify_dir.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        return exc
+
+    artifacts = [
+        ("report.json", FORMATTERS["json"]),
+        ("report.junit.xml", FORMATTERS["junit"]),
+        ("report.sarif", FORMATTERS["sarif"]),
+    ]
+    first_err: Exception | None = None
+    for name, emit_fn in artifacts:
+        try:
+            _atomic_write(verify_dir / name, emit_fn, report)
+        except OSError as exc:
+            if first_err is None:
+                first_err = exc
+            log.error(
+                "verify.disk_write_failed",
+                path=str(verify_dir / name),
+                errno=getattr(exc, "errno", None),
+                message=str(exc),
+            )
+    return first_err
+
+
+# ── verify ──────────────────────────────────────────────────────────────────
 
 
 @app.command()
 def verify(
-    fix: bool = typer.Option(
-        False,
-        "--fix",
-        help="Auto-fix issues (opt-in; --check semantics are the default).",
-    ),
+    fix: bool = typer.Option(False, "--fix/--no-fix", help="Run fixers (Phase 2: metadata-only)."),
+    quick: bool = typer.Option(False, "--quick", help="Run only tier='quick' specs."),
+    full: bool = typer.Option(False, "--full", help="Run all specs (quick + standard + slow)."),
+    no_cache: bool = typer.Option(False, "--no-cache/--cache", help="Bypass the SQLite result cache for this run."),
     output_format: str = typer.Option(
-        "pretty",
+        None,
         "--format",
-        help="Output format: pretty | json",
+        help="Output format: pretty | json | jsonl | junit | sarif | otlp. Default: auto (pretty on TTY, json piped).",
+    ),
+    check: list[str] = typer.Option(
+        None,
+        "--check",
+        help="Run only this check id (repeatable; CSV also accepted: --check=lint.ruff,format.ruff).",
     ),
 ) -> None:
-    """Run all verification checks against the current project."""
-    report = core.verify(fix=fix)
+    """Run verification checks. Always writes .verify/report.{json,junit.xml,sarif}."""
+    # ── Resolve tier ──────────────────────────────────────────────────────
+    if quick and full:
+        typer.echo("error: --quick and --full are mutually exclusive", err=True)
+        raise typer.Exit(code=EXIT_BAD_INPUT)
+    tier = "quick" if quick else ("full" if full else "standard")
 
-    if output_format == "json":
-        typer.echo(json.dumps(report.model_dump(), indent=2))
-    else:
-        _print_pretty(report)
+    # ── Resolve --check (multi-value + CSV) ───────────────────────────────
+    check_ids: list[str] | None = None
+    if check:
+        check_ids = []
+        for item in check:
+            check_ids.extend([c.strip() for c in item.split(",") if c.strip()])
+        if not check_ids:
+            check_ids = None
 
-    sys.exit(report.exit_code)
+    # ── Resolve --format ──────────────────────────────────────────────────
+    if output_format is None:
+        output_format = "pretty" if sys.stdout.isatty() else "json"
+    if output_format not in FORMATTERS:
+        matches = suggest(output_format, list(FORMATTERS.keys()))
+        msg = f"error: unknown --format={output_format!r}"
+        if matches:
+            msg += f"\n  did you mean: {' | '.join(matches)}?"
+        typer.echo(msg, err=True)
+        raise typer.Exit(code=EXIT_BAD_INPUT)
 
-
-@app.command(name="list-checks")
-def list_checks_cmd() -> None:
-    """List all check IDs available in this phase."""
-    for check_id in core.list_checks():
-        typer.echo(check_id)
-
-
-# ── Pretty printer (no rich dep in Phase 1 — plain ANSI) ─────────────────────
-
-_STATUS_ICONS = {"pass": "✓", "fail": "✗", "skip": "–"}
-_STATUS_COLORS = {
-    "pass": "\033[32m",   # green
-    "fail": "\033[31m",   # red
-    "skip": "\033[33m",   # yellow
-}
-_RESET = "\033[0m"
-
-
-def _print_pretty(report: "core.VerifyReport") -> None:  # noqa: UP037
-    for check in report.checks:
-        icon = _STATUS_ICONS.get(check.status, "?")
-        color = _STATUS_COLORS.get(check.status, "")
-        msg = f"  {check.message}" if check.message else ""
-        typer.echo(
-            f"{color}{icon}{_RESET} [{check.check_id}]{msg}"
-            + (f" ({check.duration_ms}ms)" if check.duration_ms else "")
+    # ── Call core ─────────────────────────────────────────────────────────
+    cwd = Path(".")
+    try:
+        report = _core.verify(
+            check_ids=check_ids,
+            fix=fix,
+            tier=tier,
+            no_cache=no_cache,
+            cwd=cwd,
         )
+    except ValueError as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(code=EXIT_BAD_INPUT) from exc
+    except CacheCorruptError as exc:
+        typer.echo(
+            f"error: cache is corrupt — run `just verify-clean` to reset. ({exc})",
+            err=True,
+        )
+        raise typer.Exit(code=EXIT_CACHE_CORRUPT) from exc
+    except FileNotFoundError as exc:
+        # Surface missing-tool failures (Decision 1.3 EXIT_TOOL_MISSING=11) —
+        # primarily covers the case where a required binary (uv/ruff/etc.) is
+        # absent. Most check fns swallow this internally; this is the safety net.
+        typer.echo(f"error: required tool not found: {exc}", err=True)
+        raise typer.Exit(code=EXIT_TOOL_MISSING) from exc
 
-    total = len(report.checks)
-    passed = sum(1 for c in report.checks if c.status == "pass")
-    failed = sum(1 for c in report.checks if c.status == "fail")
-    skipped = sum(1 for c in report.checks if c.status == "skip")
+    # ── Always write the 3 disk artifacts (HARN-02 SC#2) ──────────────────
+    write_err = _write_disk_artifacts(report, cwd)
+    if write_err is not None:
+        # Exit-code precedence (review MEDIUM-6): write failure supersedes
+        # EXIT_CHECK_FAIL because CI tooling depends on report.junit.xml.
+        typer.echo(
+            f"error: failed to write .verify/report.* artifacts: {write_err}",
+            err=True,
+        )
+        raise typer.Exit(code=EXIT_WRITE_FAILED)
 
-    typer.echo(
-        f"\n{passed}/{total} passed"
-        + (f", {failed} failed" if failed else "")
-        + (f", {skipped} skipped" if skipped else "")
-    )
+    # ── stdout emit (last side-effect) ────────────────────────────────────
+    FORMATTERS[output_format](report, sys.stdout)
+
+    raise typer.Exit(code=report.exit_code)
+
+
+# ── list-checks ──────────────────────────────────────────────────────────────
+
+
+@app.command("list-checks")
+def list_checks_cmd(
+    output_format: str = typer.Option(
+        "plain",
+        "--format",
+        help="plain (one id per line) | json (CheckCatalogEntry array).",
+    ),
+) -> None:
+    """List registered checks (catalog)."""
+    specs = _registry_list_checks()
+    if output_format == "json":
+        # CheckCatalogEntry is the serialization-safe twin of CheckSpec
+        # (review MEDIUM-1) — CheckSpec.fn would not serialize cleanly.
+        payload = [CheckCatalogEntry.from_spec(s).model_dump() for s in specs]
+        json.dump(payload, sys.stdout, indent=2)
+        sys.stdout.write("\n")
+    elif output_format == "plain":
+        for spec in specs:
+            typer.echo(spec.check_id)
+    else:
+        matches = suggest(output_format, ["plain", "json"])
+        msg = f"error: unknown --format={output_format!r}"
+        if matches:
+            msg += f"\n  did you mean: {' | '.join(matches)}?"
+        typer.echo(msg, err=True)
+        raise typer.Exit(code=EXIT_BAD_INPUT)
+
+
+# ── describe ─────────────────────────────────────────────────────────────────
+
+
+@app.command()
+def describe() -> None:
+    """Emit the FMT-04 introspection envelope as JSON.
+
+    Shape:
+        {
+          "version": "1",
+          "commands": [...typer command names + help],
+          "exit_codes": { name → integer },
+          "exit_code_precedence": [human-readable notes],
+          "check_catalog_schema": JSON Schema of CheckCatalogEntry,
+          "report_schema": JSON Schema of VerifyReport,
+          "checks": [CheckCatalogEntry array],
+          "jsonl_summary_marker": { summary-line shape (review LOW-1) }
+        }
+    """
+    commands_info = []
+    for cmd_name, cmd in app.registered_commands_dict().items() if hasattr(app, "registered_commands_dict") else []:
+        commands_info.append({"name": cmd_name, "help": getattr(cmd, "help", "")})
+    if not commands_info:
+        # Typer doesn't expose registered_commands_dict; fall back to a hand list.
+        commands_info = [
+            {"name": "verify", "help": "Run verification checks."},
+            {"name": "list-checks", "help": "List registered checks."},
+            {"name": "describe", "help": "Emit the introspection envelope."},
+            {"name": "trace", "help": "Render the most recent verify-kit trace."},
+        ]
+
+    payload = {
+        "version": "1",
+        "commands": commands_info,
+        "exit_codes": {
+            "EXIT_OK": EXIT_OK,
+            "EXIT_CHECK_FAIL": EXIT_CHECK_FAIL,
+            "EXIT_BAD_INPUT": EXIT_BAD_INPUT,
+            "EXIT_CACHE_CORRUPT": EXIT_CACHE_CORRUPT,
+            "EXIT_TOOL_MISSING": EXIT_TOOL_MISSING,
+            "EXIT_WRITE_FAILED": EXIT_WRITE_FAILED,
+            "EXIT_OTEL_UNREACHABLE": EXIT_OTEL_UNREACHABLE,
+        },
+        "exit_code_precedence": [
+            "EXIT_WRITE_FAILED supersedes EXIT_CHECK_FAIL when .verify/report.* cannot be written",
+        ],
+        "check_catalog_schema": CheckCatalogEntry.model_json_schema(mode="serialization"),
+        "report_schema": VerifyReport.model_json_schema(mode="serialization"),
+        "checks": [CheckCatalogEntry.from_spec(s).model_dump() for s in _registry_list_checks()],
+        "jsonl_summary_marker": {
+            "type": "summary",
+            "fields": [
+                "pass_count",
+                "fail_count",
+                "skip_count",
+                "total",
+                "duration_ms",
+                "exit_code",
+            ],
+        },
+    }
+    json.dump(payload, sys.stdout, indent=2)
+    sys.stdout.write("\n")
+
+
+# ── trace ────────────────────────────────────────────────────────────────────
+
+
+@app.command()
+def trace(
+    last: bool = typer.Option(True, "--last/--no-last", help="Render the most recent trace."),
+) -> None:
+    """Render the most recent verify-kit trace from Jaeger (--last)."""
+    if last:
+        # Lazy import so the rest of the CLI doesn't pay httpx import cost.
+        from harness import jaeger as _jaeger
+        from rich.console import Console
+
+        trace_data = _jaeger.fetch_latest_trace()
+        if trace_data is None:
+            typer.echo(
+                "no traces found — run `just verify` with OTEL_EXPORTER_OTLP_ENDPOINT "
+                "set (or `just trace-up` first) and try again",
+                err=True,
+            )
+            raise typer.Exit(code=EXIT_OTEL_UNREACHABLE)
+        _jaeger.render_trace_waterfall(trace_data, Console())
+
+
+# ── did-you-mean wrapper for the console_script entrypoint ───────────────────
+
+
+def _walk_known_options(ctx: click.Context) -> list[str]:
+    """Collect every option name (without leading dashes) visible from ctx."""
+    known: list[str] = []
+    cur: click.Context | None = ctx
+    while cur is not None:
+        for p in cur.command.params:
+            for opt in getattr(p, "opts", []) or []:
+                known.append(opt.lstrip("-"))
+            for opt in getattr(p, "secondary_opts", []) or []:
+                known.append(opt.lstrip("-"))
+        cur = cur.parent
+    return sorted(set(known))
+
+
+def app_entry() -> None:
+    """Console-script entrypoint with did-you-mean wrapping.
+
+    Wired via ``[project.scripts] verify-kit = "harness.cli:app_entry"`` in
+    pyproject.toml. ``standalone_mode=False`` keeps Click from short-circuiting
+    error output via ``ctx.exit()`` so our handler is the single stderr source
+    (review MEDIUM-4).
+    """
+    try:
+        # With standalone_mode=False, click.exceptions.Exit is caught inside
+        # Click's main loop and returned as the exit code (not re-raised). So
+        # the return value of app(...) is the exit code when the command
+        # explicitly raised typer.Exit / ctx.exit().
+        rv = app(standalone_mode=False)
+        if isinstance(rv, int) and rv != 0:
+            sys.exit(rv)
+    except click.UsageError as e:
+        msg = str(e)
+        ctx = e.ctx
+        # Unknown option: Click emits "No such option: --frmt" OR
+        # "No such option '--frmt'." depending on context. Extract the token
+        # robustly via a regex over the message tail.
+        if "No such option" in msg and ctx is not None:
+            import re
+            m = re.search(r"-{1,2}([A-Za-z0-9][A-Za-z0-9\-_]*)", msg)
+            token = m.group(1) if m else ""
+            known = _walk_known_options(ctx)
+            matches = suggest(token, known)
+            typer.echo(f"error: {msg}", err=True)
+            if matches:
+                typer.echo(
+                    f"  did you mean: {' | '.join('--' + m for m in matches)}?",
+                    err=True,
+                )
+            sys.exit(EXIT_BAD_INPUT)
+        # Unknown subcommand: "No such command 'veriy'."
+        if "No such command" in msg and ctx is not None:
+            token = msg.split("'")[1] if "'" in msg else msg.rsplit(" ", 1)[-1].rstrip(".")
+            group = ctx.command if hasattr(ctx.command, "commands") else (
+                ctx.parent.command if ctx.parent else None
+            )
+            known = list(getattr(group, "commands", {}).keys()) if group is not None else []
+            matches = suggest(token, known)
+            typer.echo(f"error: {msg}", err=True)
+            if matches:
+                typer.echo(f"  did you mean: {' | '.join(matches)}?", err=True)
+            sys.exit(EXIT_BAD_INPUT)
+        # Other UsageError (missing argument, bad value) → exit 2.
+        typer.echo(f"error: {msg}", err=True)
+        sys.exit(EXIT_BAD_INPUT)
+    except click.exceptions.Abort:
+        sys.exit(130)
+    except SystemExit:
+        raise
+    except Exception as e:
+        # Unhandled error → generic non-zero exit; surface to stderr.
+        typer.echo(f"error: {e}", err=True)
+        sys.exit(EXIT_BAD_INPUT)
 
 
 if __name__ == "__main__":
-    app()
+    app_entry()
+
+
+__all__ = ["app", "app_entry"]

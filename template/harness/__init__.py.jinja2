@@ -1,13 +1,34 @@
-"""verify-kit harness — minimal Phase 1 surface.
+"""verify-kit harness — public surface for Phase 2+.
 
-Import surface for consumers:
+Phase-1 names (``verify``, ``list_checks``, ``CheckResult``, ``VerifyReport``)
+remain importable from the top-level package, plus the new Phase-2 surface
+(``CheckSpec``, ``ErrorEnvelope``, ``ReportSummary``, ``run_check``,
+``run_phase``).
+
+Import surface for consumers::
+
     from harness import verify, list_checks, VerifyReport, CheckResult
+    from harness import CheckSpec, ErrorEnvelope, ReportSummary
+    from harness import run_check, run_phase
 """
-from harness.core import (
+from harness.core import list_checks, verify
+from harness.models import (
     CheckResult,
+    CheckSpec,
+    ErrorEnvelope,
+    ReportSummary,
     VerifyReport,
-    list_checks,
-    verify,
 )
+from harness.runner import run_check, run_phase
 
-__all__ = ["CheckResult", "VerifyReport", "list_checks", "verify"]
+__all__ = [
+    "verify",
+    "list_checks",
+    "CheckResult",
+    "VerifyReport",
+    "ErrorEnvelope",
+    "ReportSummary",
+    "CheckSpec",
+    "run_check",
+    "run_phase",
+]

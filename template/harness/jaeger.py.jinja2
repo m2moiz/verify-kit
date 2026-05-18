@@ -1,0 +1,97 @@
+"""harness.jaeger — minimal client for the Jaeger HTTP API.
+
+Phase-2 scope (per RESEARCH.md §9): fetch the most recent verify-kit trace
+and render it as a Rich tree/waterfall. ``trace --last`` reads from
+``http://localhost:16686/api/traces?service=verify-kit&limit=1``.
+
+UX-06 graceful degradation: when the Jaeger query service is unreachable
+(``httpx.RequestError`` / ``HTTPStatusError``), ``fetch_latest_trace`` returns
+``None`` — the CLI then exits ``EXIT_OTEL_UNREACHABLE`` with a hint to run
+``just trace-up`` first, never raises.
+
+Trust boundary: Jaeger is bound to localhost by ``docker run -p 16686:16686``
+(see ``justfile``). Untrusted-but-local; httpx ``timeout=2.0`` prevents hangs.
+"""
+from __future__ import annotations
+
+from typing import Any
+
+import httpx
+from rich.console import Console
+from rich.tree import Tree
+
+
+JAEGER_QUERY_URL = "http://localhost:16686/api/traces"
+
+
+def fetch_latest_trace(service: str = "verify-kit") -> dict[str, Any] | None:
+    """Return the most recent trace for ``service`` or ``None`` on miss/error.
+
+    Args:
+        service: Jaeger service name. Defaults to ``"verify-kit"`` to match the
+            tracer created in ``harness.observability``.
+
+    Returns:
+        The first trace dict from ``response["data"]`` or ``None`` when the
+        list is empty, the response is non-2xx, or the request errored out.
+    """
+    try:
+        r = httpx.get(
+            JAEGER_QUERY_URL,
+            params={"service": service, "limit": 1},
+            timeout=2.0,
+        )
+        r.raise_for_status()
+        data = r.json().get("data", []) or []
+        return data[0] if data else None
+    except (httpx.RequestError, httpx.HTTPStatusError):
+        return None
+
+
+def render_trace_waterfall(trace: dict[str, Any], console: Console | None = None) -> None:
+    """Render a single Jaeger trace as a Rich tree.
+
+    Phase-2 scope is a flat tree of spans ordered by ``startTime`` with span
+    duration shown in milliseconds. Parent threading via ``span.references``
+    (``refType == "CHILD_OF"``) is best-effort: spans without a known parent
+    attach at the root; circular reference detection is unnecessary for
+    Jaeger's emitted shape.
+    """
+    console = console or Console()
+    spans = sorted(
+        trace.get("spans", []) or [],
+        key=lambda s: s.get("startTime", 0),
+    )
+
+    trace_id = trace.get("traceID", "<unknown-trace>")
+    root = Tree(f"trace: {trace_id}")
+
+    # Index spans by spanID so we can attach children to parents.
+    nodes: dict[str, Tree] = {}
+    span_by_id: dict[str, dict[str, Any]] = {
+        s["spanID"]: s for s in spans if "spanID" in s
+    }
+
+    def _label(span: dict[str, Any]) -> str:
+        op = span.get("operationName", "<unnamed>")
+        dur_us = span.get("duration", 0) or 0
+        return f"{op} [{dur_us/1000:.1f}ms]"
+
+    for span in spans:
+        parent_id: str | None = None
+        for ref in span.get("references", []) or []:
+            if ref.get("refType") == "CHILD_OF":
+                parent_id = ref.get("spanID")
+                break
+        if parent_id and parent_id in nodes:
+            node = nodes[parent_id].add(_label(span))
+        else:
+            node = root.add(_label(span))
+        sid = span.get("spanID")
+        if sid:
+            nodes[sid] = node
+
+    console.print(root)
+
+
+__all__ = ["fetch_latest_trace", "render_trace_waterfall", "JAEGER_QUERY_URL"]
