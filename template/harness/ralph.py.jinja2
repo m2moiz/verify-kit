@@ -1,0 +1,150 @@
+"""harness.ralph — Ralph loop wrapper with iteration + cost caps.
+
+Public API: ``run(...)`` and ``status(...)``. Both take an explicit ``cwd``
+and NEVER read ``Path.cwd()`` — every path is rooted at the cwd arg
+(REVIEW-CHECKLIST §1).
+
+Canonical result shape (single source of truth — every consumer asserts this):
+
+    {
+      "status": "done" | "stuck",
+      "iters":  int >= 0,
+      "cost_usd": float >= 0.0,
+      "output_path": str,           # always str(cwd/".verify"/"ralph.json")
+      "reason": "iteration_cap" | "cost_cap",   # PRESENT ONLY WHEN status=="stuck"
+    }
+
+Cap-precedence tie-break (locked): when both ``iters >= max_iters`` AND
+``cost_usd >= cost_cap_usd`` are true on the same iteration, ``cost_cap``
+wins. This rule is depended on by T07 tests, plan 03-01 T08 integration
+test, and the MCP ``ralph_run`` tool — do not change unilaterally.
+"""
+from __future__ import annotations
+
+import json
+import subprocess
+from pathlib import Path
+from typing import Callable, Literal
+
+
+class RalphStuck(Exception):
+    """Raised by callers that want exception-based flow. The library
+    primarily returns the canonical result dict; this exception exists for
+    callers that prefer ``try/except`` over inspecting ``status``."""
+
+    def __init__(self, reason: Literal["iteration_cap", "cost_cap"], iters: int, cost_usd: float):
+        super().__init__(f"ralph stuck after {iters} iters / ${cost_usd:.4f} ({reason})")
+        self.reason = reason
+        self.iters = iters
+        self.cost_usd = cost_usd
+
+
+def _state_path(cwd: Path) -> Path:
+    # Always cwd / .verify / ralph.json -- never a bare relative literal.
+    return cwd / ".verify" / "ralph.json"
+
+
+def _default_executor(cmd: list[str], cwd: Path) -> dict:
+    """Spawn the real executor as a subprocess. Returns a parsed-usage dict.
+
+    The executor (default: ``claude``) is expected to print one JSON line per
+    iteration with at least the keys ``cost_usd`` (float) and ``done`` (bool).
+    A missing key defaults to a conservative stub (0.001 USD, done=False).
+    """
+    proc = subprocess.run(
+        cmd,
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    usage: dict = {"cost_usd": 0.001, "done": False}
+    # Parse last non-empty stdout line as JSON if possible.
+    last_line = ""
+    for line in (proc.stdout or "").splitlines():
+        if line.strip():
+            last_line = line.strip()
+    if last_line:
+        try:
+            parsed = json.loads(last_line)
+            if isinstance(parsed, dict):
+                if "cost_usd" in parsed:
+                    usage["cost_usd"] = float(parsed["cost_usd"])
+                if "done" in parsed:
+                    usage["done"] = bool(parsed["done"])
+        except (ValueError, TypeError):
+            pass
+    return usage
+
+
+def run(
+    *,
+    cwd: Path,
+    prompt: str,
+    max_iters: int = 5,
+    cost_cap_usd: float = 1.0,
+    executor: str = "claude",
+    _spawn: Callable[[list[str], Path], dict] | None = None,
+) -> dict:
+    """Run the Ralph loop until convergence, an iter cap, or a cost cap.
+
+    Writes state to ``cwd/.verify/ralph.json`` on every iteration so a
+    crash mid-iteration still leaves a recoverable file.
+
+    Returns the canonical result dict described in the module docstring.
+
+    The ``_spawn`` hook is for tests: substitute a callable
+    ``(cmd, cwd) -> {"cost_usd": float, "done": bool}`` to avoid spawning a
+    real subprocess. The default delegates to :func:`_default_executor`.
+    """
+    spawn = _spawn if _spawn is not None else _default_executor
+
+    state_file = _state_path(cwd)
+    state_file.parent.mkdir(parents=True, exist_ok=True)
+
+    iters = 0
+    cost_usd = 0.0
+
+    while True:
+        iters += 1
+        usage = spawn([executor, prompt], cwd)
+        cost_usd += float(usage.get("cost_usd", 0.0))
+        executor_signals_done = bool(usage.get("done", False))
+
+        # Cap-precedence tie-break: cost_cap wins on simultaneous fire.
+        hit_cost = cost_usd >= cost_cap_usd
+        hit_iter = iters >= max_iters
+        should_stop = executor_signals_done or hit_iter or hit_cost
+
+        result: dict = {
+            "iters": iters,
+            "cost_usd": cost_usd,
+            "output_path": str(state_file),
+        }
+        if executor_signals_done:
+            result["status"] = "done"
+        elif should_stop:
+            result["status"] = "stuck"
+            # cost_cap wins tie (locked rule); only fall back to iteration_cap.
+            result["reason"] = "cost_cap" if hit_cost else "iteration_cap"
+        else:
+            result["status"] = "running"
+
+        state_file.write_text(json.dumps(result))
+
+        if should_stop:
+            return result
+
+
+def status(*, cwd: Path) -> dict:
+    """Return parsed ``.verify/ralph.json`` or ``{"status": "no_runs"}``."""
+    state_file = _state_path(cwd)
+    if not state_file.exists():
+        return {"status": "no_runs"}
+    try:
+        return json.loads(state_file.read_text())
+    except (ValueError, OSError):
+        return {"status": "no_runs"}
+
+
+__all__ = ["run", "status", "RalphStuck"]

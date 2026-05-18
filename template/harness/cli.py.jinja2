@@ -356,6 +356,97 @@ def trace(
         _jaeger.render_trace_waterfall(trace_data, Console())
 
 
+# ── ralph (loop wrapper with iteration + cost caps) ─────────────────────────
+
+# Exit code 11 is the FMT-03 semantic code E_RALPH_STUCK (cap hit). It
+# overlaps numerically with EXIT_TOOL_MISSING for this template; the plan
+# explicitly mandates 11 for `ralph run` cap exits — both signals are
+# disambiguated by the JSON status field on stdout.
+_EXIT_RALPH_STUCK = 11
+
+ralph_app = typer.Typer(
+    help="Ralph loop wrapper (iter + USD cost caps).",
+    no_args_is_help=True,
+)
+app.add_typer(ralph_app, name="ralph")
+
+
+@ralph_app.command("run")
+def ralph_run_cmd(
+    prompt: str = typer.Argument(..., help="Prompt to drive the loop executor."),
+    max_iterations: int = typer.Option(5, "--max-iterations", help="Max executor iterations."),
+    cost_cap_usd: float = typer.Option(1.0, "--cost-cap-usd", help="Hard USD ceiling across iterations."),
+    output_format: str = typer.Option(
+        None,
+        "--format",
+        help="pretty | json. Default: auto (pretty on TTY, json piped).",
+    ),
+) -> None:
+    """Run the Ralph loop. Exit 0 on convergence; 11 on cap-hit ("stuck")."""
+    from harness import ralph as _ralph
+
+    if output_format is None:
+        output_format = "pretty" if sys.stdout.isatty() else "json"
+    if output_format not in {"pretty", "json"}:
+        typer.echo(f"error: unknown --format={output_format!r}", err=True)
+        raise typer.Exit(code=EXIT_BAD_INPUT)
+
+    cwd = Path(".")
+    result = _ralph.run(
+        cwd=cwd,
+        prompt=prompt,
+        max_iters=max_iterations,
+        cost_cap_usd=cost_cap_usd,
+    )
+
+    if output_format == "json":
+        json.dump(result, sys.stdout)
+        sys.stdout.write("\n")
+    else:
+        typer.echo(
+            f"ralph: status={result['status']} iters={result['iters']} "
+            f"cost_usd={result['cost_usd']:.4f}"
+            + (f" reason={result['reason']}" if "reason" in result else "")
+        )
+
+    raise typer.Exit(code=_EXIT_RALPH_STUCK if result["status"] == "stuck" else EXIT_OK)
+
+
+@ralph_app.command("status")
+def ralph_status_cmd(
+    output_format: str = typer.Option(
+        None,
+        "--format",
+        help="pretty | json. With --format=json the bytes are identical to the MCP ralph_status tool.",
+    ),
+) -> None:
+    """Print the last Ralph run's state (or no_runs if absent)."""
+    from harness import ralph as _ralph
+
+    if output_format is None:
+        output_format = "pretty" if sys.stdout.isatty() else "json"
+
+    cwd = Path(".")
+    data = _ralph.status(cwd=cwd)
+
+    if output_format == "json":
+        # Byte-identical with the MCP ralph_status tool (plan 03-01 T08).
+        sys.stdout.write(json.dumps(data))
+        sys.stdout.write("\n")
+    elif output_format == "pretty":
+        if data.get("status") == "no_runs":
+            typer.echo("ralph: no runs yet")
+        else:
+            typer.echo(
+                f"ralph: status={data.get('status')} iters={data.get('iters')} "
+                f"cost_usd={data.get('cost_usd')}"
+                + (f" reason={data['reason']}" if "reason" in data else "")
+            )
+    else:
+        typer.echo(f"error: unknown --format={output_format!r}", err=True)
+        raise typer.Exit(code=EXIT_BAD_INPUT)
+
+
 # ── did-you-mean wrapper for the console_script entrypoint ───────────────────
 
 
