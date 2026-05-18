@@ -14,5 +14,6 @@ jobs:
             ~/.cache/uv
             ~/.cache/pnpm
             ~/.cache/pre-commit
-{% raw %}          key: deps-${{ runner.os }}-${{ hashFiles('uv.lock','pnpm-lock.yaml','.pre-commit-config.yaml') }}{% endraw %}
+          key: {% raw %}deps-${{ runner.os }}-${{ hashFiles('uv.lock','pnpm-lock.yaml','.pre-commit-config.yaml') }}{% endraw %}
+
       - run: uv sync && just verify
