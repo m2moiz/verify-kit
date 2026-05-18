@@ -1,0 +1,123 @@
+"""harness/logging.py — structlog wrapper with three-way renderer dispatch.
+
+Decision area 3 / HARN-05: pick a renderer based on whether the output is going
+to a human terminal or to a machine consumer:
+
+- ``CI=1`` or ``LOG_FORMAT=json`` or ``not sys.stderr.isatty()`` → JSONRenderer
+- TTY with no ``NO_COLOR`` and no ``CI`` → ConsoleRenderer (colored, dev-friendly)
+- TTY with ``NO_COLOR=1`` → KeyValueRenderer (structured, no ANSI)
+
+``NO_COLOR`` alone does NOT force JSON — per the NO_COLOR spec it means "still
+pretty, just no color" (see RESEARCH.md §8 commentary).
+
+The processor chain also includes ``_add_trace_id`` which lazily pulls from the
+HARN-04 contextvar so every log line carries the active trace_id automatically.
+
+Canonical usage from any verify-kit module::
+
+    from harness.logging import log
+    log.info("starting check", check_id="mise-toml-valid")
+"""
+from __future__ import annotations
+
+import logging as _stdlib_logging
+import os
+import sys
+from typing import Any
+
+import structlog
+
+
+def _should_use_json() -> bool:
+    """True when output should be machine-readable JSON.
+
+    Order of precedence: explicit LOG_FORMAT > CI flag > stderr-is-pipe.
+    NO_COLOR is intentionally NOT a JSON trigger.
+    """
+    log_format = os.environ.get("LOG_FORMAT", "").lower()
+    if log_format.startswith("json"):
+        return True
+    if os.environ.get("CI"):
+        return True
+    if not sys.stderr.isatty():
+        return True
+    return False
+
+
+def _add_trace_id(
+    _logger: Any, _method: str, event_dict: dict[str, Any]
+) -> dict[str, Any]:
+    """Inject the HARN-04 trace_id contextvar into every log event.
+
+    Lazily imported so ``harness.logging`` does not hard-depend on
+    ``harness.trace_id`` at module load (Plan 02-01 owns trace_id; this
+    plan runs in parallel). When the import fails (very early bootstrap)
+    the processor degrades to a no-op rather than raising.
+    """
+    try:
+        from harness.trace_id import get_trace_id  # noqa: WPS433
+    except Exception:  # pragma: no cover — defensive fallback
+        return event_dict
+    event_dict["trace_id"] = get_trace_id() or None
+    return event_dict
+
+
+def configure_logging(log_level: str | None = None) -> None:
+    """Configure structlog for the current process.
+
+    Args:
+        log_level: Optional level name (e.g. ``"DEBUG"``). When None, falls
+                   back to the ``LOG_LEVEL`` env var, then to ``WARNING``.
+
+    Idempotent: safe to call more than once. Subsequent calls reconfigure
+    structlog and reset ``cache_logger_on_first_use`` semantics.
+    """
+    level_name = (log_level or os.environ.get("LOG_LEVEL") or "WARNING").upper()
+    level = getattr(_stdlib_logging, level_name, _stdlib_logging.WARNING)
+
+    shared_processors: list[Any] = [
+        structlog.contextvars.merge_contextvars,
+        structlog.stdlib.add_log_level,
+        _add_trace_id,
+        structlog.processors.TimeStamper(fmt="iso"),
+        structlog.processors.StackInfoRenderer(),
+    ]
+
+    renderer: Any
+    if _should_use_json():
+        renderer = structlog.processors.JSONRenderer()
+    elif os.environ.get("NO_COLOR"):
+        # TTY but NO_COLOR set — structured but plain text. RESEARCH.md §8:
+        # KeyValueRenderer is the right call here because ConsoleRenderer's
+        # whole job is colorized pretty-printing.
+        renderer = structlog.processors.KeyValueRenderer(
+            key_order=["level", "event", "timestamp"],
+            sort_keys=False,
+        )
+    else:
+        renderer = structlog.dev.ConsoleRenderer(
+            colors=True,
+            exception_formatter=structlog.dev.plain_traceback,
+        )
+
+    structlog.configure(
+        processors=[*shared_processors, renderer],
+        wrapper_class=structlog.make_filtering_bound_logger(level),
+        context_class=dict,
+        logger_factory=structlog.PrintLoggerFactory(file=sys.stderr),
+        cache_logger_on_first_use=True,
+    )
+
+    # Silence the OTel SDK's chatty INFO logger when OTel is enabled (R4 mitigation
+    # in RESEARCH.md §11). Done at logging config time so it survives reconfig.
+    _stdlib_logging.getLogger("opentelemetry").setLevel(_stdlib_logging.WARNING)
+
+
+# Canonical module-level logger. RESEARCH.md §8: use get_logger, never
+# wrap_logger. cache_logger_on_first_use=True in configure_logging() means
+# the first call to log.info(...) binds the configured chain — subsequent
+# reconfigure() calls only take effect for newly-obtained loggers.
+log = structlog.get_logger("harness")
+
+
+__all__ = ["configure_logging", "log"]
