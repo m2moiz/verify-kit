@@ -1,0 +1,50 @@
+"""harness.trace_id — contextvars-based request-id store.
+
+Phase 2 scope (HARN-04, RESEARCH.md §13 S1): contextvars only, no ASGI
+middleware. The middleware integration ships in Phase 4 (FastAPI backend
+addon), where it will set/reset this contextvar around each request so
+structlog can stamp `trace_id` into every emitted log line.
+
+Why contextvars and not threading.local: contextvars propagate correctly
+across `asyncio` task boundaries (the default for FastAPI), while
+threading.local does not.
+"""
+from __future__ import annotations
+
+import contextvars
+from contextlib import contextmanager
+from typing import Iterator
+
+# Module-private ContextVar. Use the helpers below — not the var directly —
+# so the import surface stays small and the contract is testable.
+_trace_id: contextvars.ContextVar[str] = contextvars.ContextVar(
+    "trace_id", default=""
+)
+
+
+def get_trace_id() -> str:
+    """Return the trace_id bound in the current context (or "" if unset)."""
+    return _trace_id.get()
+
+
+def set_trace_id(value: str) -> contextvars.Token:
+    """Bind `value` as the current trace_id and return the reset token."""
+    return _trace_id.set(value)
+
+
+def reset_trace_id(token: contextvars.Token) -> None:
+    """Restore the trace_id to its prior value using the token from set_trace_id()."""
+    _trace_id.reset(token)
+
+
+@contextmanager
+def trace_id_scope(value: str) -> Iterator[None]:
+    """Context manager: bind `value` for the lifetime of the `with` block."""
+    token = set_trace_id(value)
+    try:
+        yield
+    finally:
+        reset_trace_id(token)
+
+
+__all__ = ["get_trace_id", "set_trace_id", "reset_trace_id", "trace_id_scope"]

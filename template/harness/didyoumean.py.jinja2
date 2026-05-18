@@ -1,0 +1,21 @@
+"""harness.didyoumean — typo-suggestion helper used by CLI surfaces.
+
+Thin wrapper over `difflib.get_close_matches`. Cutoff 0.6 confirmed by the
+Phase 2 research §7 live-test results (best precision/recall on short
+command-style strings without pulling in a third-party fuzzy matcher).
+"""
+from __future__ import annotations
+
+import difflib
+
+
+def suggest(word: str, candidates: list[str], n: int = 3) -> list[str]:
+    """Return up to `n` candidates closest to `word` (cutoff 0.6).
+
+    Returns an empty list when no candidate clears the cutoff or when
+    `candidates` is empty.
+    """
+    return difflib.get_close_matches(word, candidates, n=n, cutoff=0.6)
+
+
+__all__ = ["suggest"]
