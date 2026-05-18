@@ -1,0 +1,52 @@
+"""Hypothesis round-trip test for CheckResult JSON serialization.
+
+Per RESEARCH.md §10. Generates 200 examples per run (R8 mitigation: default
+``max_examples=100`` is too low to catch Unicode/escape-sequence edge cases
+in JSON round-trip).
+"""
+from __future__ import annotations
+
+from hypothesis import given, settings
+from hypothesis import strategies as st
+
+from harness.models import CheckResult, ErrorEnvelope
+
+
+_error_strategy = st.builds(
+    ErrorEnvelope,
+    code=st.from_regex(r"[a-z]+\.[a-z]+\.[a-z0-9]+", fullmatch=True),
+    message=st.text(min_size=1, max_size=200),
+    hint=st.one_of(st.none(), st.text(max_size=100)),
+    fix_command=st.one_of(st.none(), st.text(max_size=80)),
+    docs_url=st.one_of(st.none(), st.just("https://example.com/docs")),
+)
+
+
+@given(
+    check_id=st.from_regex(r"[a-z]+\.[a-z.]+", fullmatch=True),
+    status=st.sampled_from(["pass", "fail", "skip"]),
+    message=st.text(max_size=200),
+    duration_ms=st.integers(min_value=0, max_value=60_000),
+    error=st.one_of(st.none(), _error_strategy),
+)
+@settings(max_examples=200)
+def test_check_result_json_round_trip(
+    check_id: str,
+    status: str,
+    message: str,
+    duration_ms: int,
+    error: ErrorEnvelope | None,
+) -> None:
+    """CheckResult must survive model_dump_json → model_validate_json round-trip."""
+    if status != "fail":
+        error = None  # error only meaningful on fail
+    result = CheckResult(
+        check_id=check_id,
+        status=status,  # type: ignore[arg-type]
+        message=message,
+        duration_ms=duration_ms,
+        error=error,
+    )
+    serialized = result.model_dump_json()
+    recovered = CheckResult.model_validate_json(serialized)
+    assert recovered == result
