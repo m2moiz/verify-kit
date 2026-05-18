@@ -1,0 +1,85 @@
+"""harness.checks.mise — `.mise.toml` validity check (migrated from Phase 1).
+
+Decision references:
+- Decision 1.2 (dotted error codes — `mise.toml.<reason>`)
+- Decision 3.2 (CheckSpec via @register)
+- Decision 4.1 (tier="quick" — runs <100ms; pure file read)
+- carryover-cwd: function signature `def check_xxx(cwd: Path) -> CheckResult`
+  so the cache-key root and the check's filesystem root cannot diverge.
+"""
+from __future__ import annotations
+
+import time
+import tomllib
+from pathlib import Path
+
+from harness.models import CheckResult, ErrorEnvelope
+from harness.registry import register
+
+
+@register(
+    "mise.toml.valid",
+    tier="quick",
+    category="toolchain",
+    description="Verify .mise.toml declares python and node",
+    inputs=[".mise.toml"],
+)
+def check_mise_toml(cwd: Path) -> CheckResult:
+    """Verify .mise.toml parses as TOML and has [tools] with python + node."""
+    start = time.monotonic()
+    path = cwd / ".mise.toml"
+
+    if not path.exists():
+        return CheckResult(
+            check_id="mise.toml.valid",
+            status="fail",
+            message=".mise.toml not found",
+            duration_ms=int((time.monotonic() - start) * 1000),
+            error=ErrorEnvelope(
+                code="mise.toml.missing",
+                message=".mise.toml not found in project root",
+                hint="Create .mise.toml with `mise use python@3.13 node@24`",
+                fix_command="mise use python@3.13 node@24",
+                docs_url="https://mise.jdx.dev/configuration.html",
+            ),
+        )
+
+    try:
+        data = tomllib.loads(path.read_text())
+    except tomllib.TOMLDecodeError as exc:
+        return CheckResult(
+            check_id="mise.toml.valid",
+            status="fail",
+            message=f".mise.toml is not valid TOML: {exc}",
+            duration_ms=int((time.monotonic() - start) * 1000),
+            error=ErrorEnvelope(
+                code="mise.toml.invalid-toml",
+                message=str(exc)[:200],
+                hint="Run `mise config validate` to find the parse error",
+                docs_url="https://mise.jdx.dev/configuration.html",
+            ),
+        )
+
+    tools = data.get("tools", {})
+    missing = [k for k in ("python", "node") if k not in tools]
+    if missing:
+        return CheckResult(
+            check_id="mise.toml.valid",
+            status="fail",
+            message=f".mise.toml [tools] is missing keys: {missing}",
+            duration_ms=int((time.monotonic() - start) * 1000),
+            error=ErrorEnvelope(
+                code="mise.toml.missing-tools",
+                message=f"[tools] missing: {missing}",
+                hint="Run `mise use python@3.13 node@24` to add required tools",
+                fix_command="mise use python@3.13 node@24",
+                docs_url="https://mise.jdx.dev/configuration.html",
+            ),
+        )
+
+    return CheckResult(
+        check_id="mise.toml.valid",
+        status="pass",
+        message="python and node are declared in [tools]",
+        duration_ms=int((time.monotonic() - start) * 1000),
+    )

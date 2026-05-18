@@ -1,0 +1,77 @@
+"""harness.checks.copier — `.copier-answers.yml` validity check.
+
+Migrated from Phase-1 `_check_copier_answers`. Preserves the SKIP semantics:
+a project without `.copier-answers.yml` is not a Copier scaffold and therefore
+not in scope — `verify` must not hard-fail on it.
+
+Decision references: Decision 1.2 (dotted error codes), 4.1 (quick tier),
+carryover-cwd (cwd kwarg).
+"""
+from __future__ import annotations
+
+import time
+from pathlib import Path
+
+from harness.models import CheckResult, ErrorEnvelope
+from harness.registry import register
+
+
+@register(
+    "copier.answers.valid",
+    tier="quick",
+    category="template",
+    description="Verify .copier-answers.yml exists and has _src_path",
+    inputs=[".copier-answers.yml"],
+)
+def check_copier_answers(cwd: Path) -> CheckResult:
+    """Verify .copier-answers.yml exists and has _src_path (Copier auto-emits it)."""
+    start = time.monotonic()
+    path = cwd / ".copier-answers.yml"
+
+    if not path.exists():
+        return CheckResult(
+            check_id="copier.answers.valid",
+            status="skip",
+            message="not a Copier-scaffolded project (.copier-answers.yml absent)",
+            duration_ms=int((time.monotonic() - start) * 1000),
+        )
+
+    try:
+        import yaml  # type: ignore[import-untyped]
+
+        data = yaml.safe_load(path.read_text()) or {}
+    except Exception as exc:
+        return CheckResult(
+            check_id="copier.answers.valid",
+            status="fail",
+            message=f".copier-answers.yml is not valid YAML: {exc}",
+            duration_ms=int((time.monotonic() - start) * 1000),
+            error=ErrorEnvelope(
+                code="copier.answers.invalid-yaml",
+                message=str(exc)[:200],
+                hint="Open .copier-answers.yml and fix the YAML syntax",
+                docs_url="https://copier.readthedocs.io/en/stable/configuring/",
+            ),
+        )
+
+    if not isinstance(data, dict) or "_src_path" not in data:
+        return CheckResult(
+            check_id="copier.answers.valid",
+            status="fail",
+            message=".copier-answers.yml is missing '_src_path' key",
+            duration_ms=int((time.monotonic() - start) * 1000),
+            error=ErrorEnvelope(
+                code="copier.answers.missing-src-path",
+                message="`_src_path` key not present in .copier-answers.yml",
+                hint="Re-run `copier update` from the template repo to regenerate",
+                fix_command="copier update",
+                docs_url="https://copier.readthedocs.io/en/stable/configuring/",
+            ),
+        )
+
+    return CheckResult(
+        check_id="copier.answers.valid",
+        status="pass",
+        message=f"_src_path = {data['_src_path']!r}",
+        duration_ms=int((time.monotonic() - start) * 1000),
+    )
