@@ -1,0 +1,20 @@
+---
+name: verify-kit-eval
+description: Run an LLM eval suite against the project's prompts or check the most recent eval results. Use when the user asks to "run evals", "compare model outputs", "check eval scores", or wants to know if a prompt change regressed.
+---
+
+# Skill: verify-kit-eval
+
+## When to use
+- User asks to run evals or compare two runs.
+- Before merging a prompt change.
+
+## Status (Phase 3 stub)
+The eval body is implemented in Phase 5. In Phase 3, `verify-kit eval run` and
+`verify-kit eval compare` return `{"status": "not_implemented", "available_in_phase": 5}`.
+When that JSON appears, surface the message to the user — do not silently
+proceed.
+
+## Future invocation (Phase 5)
+- `just eval` runs Promptfoo against `eval/datasets/golden.jsonl`.
+- `verify-kit eval compare run-a run-b` diffs two stored runs.

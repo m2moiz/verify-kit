@@ -1,12 +1,26 @@
 # {{ project_name }} — GitHub Copilot instructions
 
-See AGENTS.md at the repo root for project-wide rules.
+The canonical agent rules live in [AGENTS.md](../AGENTS.md). Read it first;
+the notes below are Copilot-specific supplements only.
 
-## Copilot-specific guidance
+## Copilot-specific notes
 
-- Build/test/lint command: `just verify`. Always run before suggesting a task is complete.
-- This project uses ruff (Python) and biome (JS/TS) for formatting. Match `.editorconfig`
-  for indentation and line endings.
-- Never suggest committing `.env` files or any file containing secrets. Use `.env.example`
-  as the documented template for required environment variables.
-- Stage files individually by name — never `git add .`.
+- **Enumerate before guessing.** `verify-kit list-checks` lists every check
+  this project knows about; `verify-kit describe <name>` shows its JSON
+  Schema. Use these instead of inferring check names from prose.
+
+- **`just verify` is the pre-commit gate.** Always run it before suggesting a
+  change is complete. The `--quick` flag (`just verify --quick`) runs the fast
+  slice (lint + typecheck + smoke) for in-editor iteration; the full command
+  is what CI runs.
+
+- **GitHub Actions CI runs the same `just verify`.** `.github/workflows/ci.yml`
+  shells out to `just verify` — no Copilot suggestion should require steps that
+  don't already pass that command locally. If CI fails but `just verify` passes
+  locally, the answer is almost always "match the CI Python/Node version pinned
+  by `.mise.toml`."
+
+## Where to look next
+
+- `AGENTS.md` — full project conventions (style, security, structure).
+- `verify-kit mcp serve` — MCP server for tool calls from Copilot Chat.
