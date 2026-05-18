@@ -85,13 +85,39 @@ def render_scratch_project(tmp_path: Path, **overrides: object) -> Path:
 
 
 def install_scratch_harness(scratch: Path) -> None:
-    """Run `uv pip install -e .` inside the rendered scratch project."""
+    """Create an isolated 3.13 venv in `scratch/.venv` and install harness into it.
+
+    The verify-kit repo itself runs on Python 3.11+, but rendered scratch
+    projects pin Python 3.13 (template/.mise.toml + template/pyproject.toml).
+    Reusing the verify-kit venv would fail with ``requires-python >= 3.13``.
+
+    Implementation mirrors the proven pattern from
+    ``tests/test_phase2_observability.py``: ``uv venv --python 3.13`` then
+    ``uv pip install -e .`` with ``VIRTUAL_ENV`` pointed at the new venv.
+
+    Downstream tests should invoke commands via ``uv run`` (auto-discovers
+    ``.venv``) or call ``venv_python(scratch)`` for the explicit interpreter.
+    """
+    venv = scratch / ".venv"
+    subprocess.run(
+        ["uv", "venv", "--python", "3.13", str(venv)],
+        cwd=scratch,
+        check=True,
+        capture_output=True,
+    )
+    env = {**os.environ, "VIRTUAL_ENV": str(venv)}
     subprocess.run(
         ["uv", "pip", "install", "-e", "."],
         cwd=scratch,
         check=True,
-        env={**os.environ},
+        env=env,
+        capture_output=True,
     )
+
+
+def venv_python(scratch: Path) -> str:
+    """Return absolute path to the python interpreter inside scratch/.venv."""
+    return str(scratch / ".venv" / "bin" / "python")
 
 
 def render_and_install(tmp_path: Path, **overrides: object) -> Path:
@@ -101,4 +127,9 @@ def render_and_install(tmp_path: Path, **overrides: object) -> Path:
     return scratch
 
 
-__all__ = ["render_scratch_project", "install_scratch_harness", "render_and_install"]
+__all__ = [
+    "render_scratch_project",
+    "install_scratch_harness",
+    "render_and_install",
+    "venv_python",
+]
