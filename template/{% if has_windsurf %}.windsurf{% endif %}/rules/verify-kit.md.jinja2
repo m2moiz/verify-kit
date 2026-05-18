@@ -1,11 +1,30 @@
 # {{ project_name }} — Windsurf rules
 
-See AGENTS.md at the repo root for project-wide rules.
+The canonical agent rules live in [AGENTS.md](../../AGENTS.md). Read it first.
 
-## Cascade-specific
+## Windsurf / Cascade-specific notes
 
-- Use `just verify` as the definition of "done". Do not declare a task complete until it
-  exits 0.
-- Prefer ruff over manually fixing Python formatting issues — run `just format` instead.
-- Match existing patterns; do not introduce new libraries without checking `pyproject.toml`.
-- Never read or suggest committing `.env` files. `.env.example` is safe to reference.
+Three rules matter most when working in this repo via Windsurf:
+
+1. **`just verify --quick` is the definition of "done".** Do not declare any
+   task complete until it exits 0. The full `just verify` runs the entire
+   suite; the `--quick` flag runs only the fast slice (lint, typecheck, format,
+   smoke) and is the right pre-claim gate.
+
+2. **Lint and typecheck findings are clickable in the Problems panel.**
+   `.vscode/tasks.json` ships custom problem matchers for Ruff, Pyright, tsc,
+   and Biome. Run the `verify` build task (`Ctrl+Shift+B`) and click any entry
+   in Problems to jump straight to the offending line.
+
+3. **Never write to bare relative paths from harness code.** `Path(".verify/...")`
+   is always wrong — `cwd` must be threaded through explicitly so the harness
+   works regardless of where it's invoked from. See AGENTS.md §Tool conventions
+   for the full rule and rationale.
+
+## Where to look next
+
+- `AGENTS.md` — canonical conventions (style, security, structure).
+- `verify-kit list-checks` — enumerate available checks at the CLI.
+- `verify-kit describe` — JSON Schema for every check.
+- `verify-kit mcp serve` — start the MCP server (Windsurf MCP support: see
+  https://docs.windsurf.com/windsurf/mcp).
