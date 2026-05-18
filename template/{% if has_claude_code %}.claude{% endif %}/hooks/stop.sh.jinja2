@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# verify-kit Claude Code Stop hook
+# Blocks "done" until `just verify --quick` exits 0.
+set -u
+# Bypass for explicit skip.
+[ -n "${VERIFY_KIT_SKIP:-}" ] && exit 0
+# Recursion guard: Claude sets stop_hook_active on hook-blocked re-entry.
+[ -n "${stop_hook_active:-}" ] && exit 0
+just verify --quick || {
+  echo "verify --quick failed; refusing stop. Set VERIFY_KIT_SKIP=1 to bypass." >&2
+  exit 2
+}
+exit 0
