@@ -1,0 +1,19 @@
+# .mise.toml — toolchain version pins for verify-kit scaffolded projects.
+#
+# Pinning Python 3.13+ and Node 24+ is required for the verify-kit harness:
+# - Python 3.13 is the minimum for stdlib tomllib, PEP 695 type aliases, and
+#   other harness internals.
+# - Node 24 is the minimum for ESM-first pnpm workspaces and Biome 2.x.
+# - uv handles all Python deps (uv sync / uv run); do NOT install Python deps
+#   via pip directly — uv enforces venv discipline via uv.lock.
+# - pnpm handles Node deps when JS/TS files are present; otherwise unused.
+
+[tools]
+python = "3.13"
+node = "24"
+uv = "latest"
+just = "latest"
+pnpm = "latest"
+
+[env]
+PYTHONDONTWRITEBYTECODE = "1"

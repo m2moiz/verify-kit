@@ -1,0 +1,6 @@
+# Makefile shim for users without `just` installed.
+# All real recipes live in `justfile` — this file aliases the most common target.
+# Install `just` (via mise or brew) to access the full task surface.
+.PHONY: verify
+verify:
+	just verify
