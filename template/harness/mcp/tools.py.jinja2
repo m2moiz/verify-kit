@@ -1,0 +1,222 @@
+"""harness.mcp.tools — register the 13 verify-kit MCP tools (Plan 03-01 T04).
+
+Canonical roster (set equality with MCP-02 §2.2 of 03-RESEARCH.md):
+
+    verify, verify_check, list_checks, smoke, trace_last, debug_state,
+    debug_events, eval_run, eval_compare, ralph_run, ralph_status,
+    fix_propose, describe
+
+Each tool function:
+    1. Closes over an explicit ``cwd: Path`` (passed to ``register_tools``
+       by ``harness.mcp.server.serve``). NEVER reads the process CWD.
+    2. Delegates to the same Python helper the CLI twin uses, so a CLI
+       ``--format=json`` invocation and the MCP tool's text result are
+       byte-identical after JSON normalization (Plan 03-01 T08 contract).
+    3. Sets ``ToolAnnotations(readOnlyHint=..., destructiveHint=...,
+       idempotentHint=...)`` to the §2.2 table values.
+
+After-return ordering (REVIEW-CHECKLIST §2):
+    Every tool body builds the result first, then ``return result``. No
+    statements follow ``return`` in any branch. Enforced by
+    ``tests/test_no_dead_after_return.py``.
+
+Smoke + verify_check check IDs:
+    ``smoke`` runs the registry's ``quick`` tier (no explicit filter — the
+    cheapest real registered check). ``verify_check`` defaults to
+    ``mise.toml.valid`` (Phase-2 quick check) when callers omit ``name``.
+    Both match the Plan 03-01 T08 CLI twins exactly.
+"""
+from __future__ import annotations
+
+from pathlib import Path
+
+from fastmcp import FastMCP
+from mcp.types import ToolAnnotations
+
+
+# Default check id used by ``verify_check`` and ``smoke`` when callers omit
+# the name. Picked as a real, fast Phase-2 ``tier="quick"`` registered check
+# so the byte-identical CLI twin runs are deterministic and cheap.
+_DEFAULT_CHECK_ID = "mise.toml.valid"
+
+# Phase markers for the Category-C stubs (MCP-02). These bodies are
+# placeholders — Phase 4 fills debug_*; Phase 5 fills eval_*.
+_PHASE_DEBUG = 4
+_PHASE_EVAL = 5
+
+
+def register_tools(mcp: FastMCP, *, cwd: Path) -> None:
+    """Register the 13 verify-kit tools on ``mcp``.
+
+    Args:
+        mcp: The FastMCP instance to mutate.
+        cwd: Project root. Every tool function closes over this value.
+    """
+    # Lazy imports: only the closures actually called need their helpers.
+    from harness import core as _core
+    from harness import fix as _fix
+    from harness import jaeger as _jaeger
+    from harness import ralph as _ralph
+    from harness.registry import list_checks as _registry_list_checks
+    from harness.models import CheckCatalogEntry
+
+    # ── Category A: byte-identical (7 tools) ─────────────────────────────
+
+    @mcp.tool(
+        annotations=ToolAnnotations(
+            readOnlyHint=True, destructiveHint=False, idempotentHint=True
+        )
+    )
+    def verify() -> dict:
+        """Run the full verify-kit check suite and return the JSON report."""
+        report = _core.verify(cwd=cwd)
+        result = report.model_dump(mode="json")
+        return result
+
+    @mcp.tool(
+        annotations=ToolAnnotations(
+            readOnlyHint=True, destructiveHint=False, idempotentHint=True
+        )
+    )
+    def verify_check(name: str = _DEFAULT_CHECK_ID) -> dict:
+        """Run a single registered check by id and return the JSON report."""
+        report = _core.verify(check_ids=[name], cwd=cwd)
+        result = report.model_dump(mode="json")
+        return result
+
+    @mcp.tool(
+        annotations=ToolAnnotations(
+            readOnlyHint=True, destructiveHint=False, idempotentHint=True
+        )
+    )
+    def list_checks() -> list[dict]:
+        """List every registered check as CheckCatalogEntry dicts."""
+        specs = _registry_list_checks()
+        result = [CheckCatalogEntry.from_spec(s).model_dump() for s in specs]
+        return result
+
+    @mcp.tool(
+        annotations=ToolAnnotations(
+            readOnlyHint=True, destructiveHint=False, idempotentHint=True
+        )
+    )
+    def smoke() -> dict:
+        """Run the cheapest single quick check (tier=quick, default check)."""
+        report = _core.verify(
+            check_ids=[_DEFAULT_CHECK_ID], tier="quick", cwd=cwd
+        )
+        result = report.model_dump(mode="json")
+        return result
+
+    @mcp.tool(
+        annotations=ToolAnnotations(
+            readOnlyHint=True, destructiveHint=False, idempotentHint=True
+        )
+    )
+    def trace_last() -> dict:
+        """Return the most recent verify-kit trace from Jaeger (or empty)."""
+        trace = _jaeger.fetch_latest_trace()
+        result = trace if trace is not None else {"status": "no_traces"}
+        return result
+
+    @mcp.tool(
+        annotations=ToolAnnotations(
+            readOnlyHint=True, destructiveHint=False, idempotentHint=True
+        )
+    )
+    def describe() -> dict:
+        """Emit the FMT-04 introspection envelope (commands, schemas, checks)."""
+        # Built via the same helper the CLI ``describe`` command uses, so the
+        # byte-identical CLI↔MCP equality test passes (Plan 03-01 T08).
+        from harness.mcp._describe import describe_envelope
+
+        result = describe_envelope()
+        return result
+
+    # ── Category B: shape-only (2 tools — ralph_run + fix_propose) ───────
+
+    @mcp.tool(
+        annotations=ToolAnnotations(
+            readOnlyHint=False, destructiveHint=False, idempotentHint=False
+        )
+    )
+    def ralph_run(
+        prompt: str = "noop",
+        max_iters: int = 5,
+        cost_cap_usd: float = 1.0,
+    ) -> dict:
+        """Drive the Ralph loop; returns canonical {status, iters, cost_usd, output_path[, reason]}."""
+        result = _ralph.run(
+            cwd=cwd,
+            prompt=prompt,
+            max_iters=max_iters,
+            cost_cap_usd=cost_cap_usd,
+        )
+        return result
+
+    @mcp.tool(
+        annotations=ToolAnnotations(
+            readOnlyHint=True, destructiveHint=False, idempotentHint=False
+        )
+    )
+    def fix_propose() -> dict:
+        """Return the full SARIF envelope from .verify/report.sarif (Phase 3: no LLM)."""
+        result = _fix.propose_from_sarif(cwd=cwd)
+        return result
+
+    # ── Category A continued: ralph_status (byte-identical with CLI) ─────
+
+    @mcp.tool(
+        annotations=ToolAnnotations(
+            readOnlyHint=True, destructiveHint=False, idempotentHint=True
+        )
+    )
+    def ralph_status() -> dict:
+        """Return the last Ralph run state (or {status: no_runs})."""
+        result = _ralph.status(cwd=cwd)
+        return result
+
+    # ── Category C: stubs (4 tools) ──────────────────────────────────────
+
+    @mcp.tool(
+        annotations=ToolAnnotations(
+            readOnlyHint=True, destructiveHint=False, idempotentHint=True
+        )
+    )
+    def debug_state() -> dict:
+        """Phase-4 stub: backend debug-state introspection."""
+        result = {"status": "not_implemented", "available_in_phase": _PHASE_DEBUG}
+        return result
+
+    @mcp.tool(
+        annotations=ToolAnnotations(
+            readOnlyHint=True, destructiveHint=False, idempotentHint=True
+        )
+    )
+    def debug_events() -> dict:
+        """Phase-4 stub: backend debug-events stream."""
+        result = {"status": "not_implemented", "available_in_phase": _PHASE_DEBUG}
+        return result
+
+    @mcp.tool(
+        annotations=ToolAnnotations(
+            readOnlyHint=False, destructiveHint=False, idempotentHint=False
+        )
+    )
+    def eval_run() -> dict:
+        """Phase-5 stub: run an LLM eval suite."""
+        result = {"status": "not_implemented", "available_in_phase": _PHASE_EVAL}
+        return result
+
+    @mcp.tool(
+        annotations=ToolAnnotations(
+            readOnlyHint=True, destructiveHint=False, idempotentHint=True
+        )
+    )
+    def eval_compare() -> dict:
+        """Phase-5 stub: compare two LLM eval runs."""
+        result = {"status": "not_implemented", "available_in_phase": _PHASE_EVAL}
+        return result
+
+
+__all__ = ["register_tools"]
