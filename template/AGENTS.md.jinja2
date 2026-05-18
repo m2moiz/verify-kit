@@ -1,0 +1,91 @@
+# {{ project_name }} — Agent Instructions
+
+{{ project_description }}
+
+---
+
+## Build / Test / Lint
+
+Copy-paste these commands. All tools are managed by mise — no manual installs.
+
+```sh
+# First-time setup
+mise install && uv sync
+
+# Verify everything is correct (ground truth — exit 0 = done)
+just verify
+
+# Run linters only
+just lint
+
+# Auto-format Python and JS/TS
+just format
+
+# Drop into the mise-managed project shell
+just shell
+```
+
+`just verify` is the canonical definition of "done". Before marking any task complete,
+run `just verify` and confirm it exits 0. No exceptions.
+
+---
+
+## Code Style
+
+- **Python**: Ruff defaults from `pyproject.toml`. Line length 100. 4-space indent.
+- **JS/TS** (when present): Biome defaults. 2-space indent. 100-char line length.
+- **YAML/JSON/TOML/Markdown**: 2-space indent. LF line endings. UTF-8.
+- All style rules are enforced by pre-commit hooks — run `just lint` before committing.
+- Match existing patterns in the codebase. Do not introduce new libraries without checking
+  `pyproject.toml` and `uv.lock` first.
+
+---
+
+## Security Notes
+
+**Never read, write, or commit these files:**
+- `.env`, `.env.local`, `.env.production`, or any `.env.*` variant
+- `*.pem`, `*.key`, `credentials*`, `*secret*`
+- Anything under `~/.ssh/`, `~/.aws/`, `~/.kube/`
+
+**`.env.example` IS allowed** — it is a documented template that contains no real secrets.
+Agents may read and reference `.env.example` to understand required environment variables.
+
+Additional rules:
+- Never `git add .` — always stage files individually by name to avoid committing secrets.
+- Never commit secrets. If you accidentally stage a secret, abort with `git reset HEAD <file>`.
+- Never `git push --force` to `main` or `master`.
+- Never run `curl ... | sh` or `wget ... | bash`.
+- Never `chmod 777` any file.
+
+---
+
+## Conventions
+
+- **Tests**: live in `tests/` at the project root, or next to source files (co-located).
+- **Commit messages**: use Conventional Commits — `feat:`, `fix:`, `docs:`, `refactor:`, `chore:`, `test:`.
+- **PRs**: one concern per PR. Keep diffs small and reviewable.
+- **AGENTS.md ownership**: update this file when adding a new top-level command, security rule,
+  or project convention. AGENTS.md is the single source of truth for all coding agents.
+- **No stubs**: every committed recipe and function must do real work. No `TODO: implement me`.
+
+---
+
+## Project Structure
+
+```
+harness/          — Python harness package (verify logic, core.py + cli.py + mcp_server.py)
+tests/            — pytest test suite
+.github/          — GitHub Actions workflows (ci.yml, deploy-smoke.yml)
+pyproject.toml    — Python project config + uv dependency lock
+justfile          — canonical task runner (just verify, lint, format, shell)
+.mise.toml        — toolchain pin (Python 3.13+, Node 24+)
+```
+
+---
+
+## Dual-Audience Reference
+
+> Every feature in this project serves both a human developer and an autonomous coding agent.
+> See https://github.com/m2moiz/verify-kit/blob/main/research/00-architecture-overview.md
+> for the six-row checklist that gates every new feature.

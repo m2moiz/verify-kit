@@ -1,0 +1,22 @@
+# NOTE: This workflow is scaffolded but NOT YET RUNNABLE.
+# The `just smoke` recipe lands in Phase 2 (when the harness has actual smoke checks).
+# Triggering this workflow before Phase 2 ships will fail at `just smoke` with
+# "Justfile does not contain recipe `smoke`". This is intentional — see
+# `.planning/phases/01-template-skeleton-toolchain/01-CONTEXT.md` Area 3 (no stubs).
+# Phase 2 drops a `smoke` recipe atomically and this workflow starts working.
+name: deploy-smoke
+"on":
+  workflow_dispatch:
+    inputs:
+      url:
+        description: "Deployed URL to smoke-test"
+        required: true
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: jdx/mise-action@v2
+        with:
+          cache: true
+{% raw %}      - run: just smoke ${{ inputs.url }}{% endraw %}

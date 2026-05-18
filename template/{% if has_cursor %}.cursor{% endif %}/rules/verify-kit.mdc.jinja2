@@ -1,0 +1,14 @@
+---
+description: verify-kit project conventions and verify-first workflow
+globs: ["**/*"]
+alwaysApply: true
+---
+
+See `@AGENTS.md` for project-wide rules.
+
+## Cursor-specific
+
+- Run `just verify` in the integrated terminal before marking work done. Exit 0 = done.
+- Format on save: ruff for Python, biome for JS/TS. Both are wired via pre-commit hooks.
+- Composer should respect `.editorconfig` and the `pyproject.toml` line-length setting (100).
+- Do not suggest installing packages not already in `pyproject.toml` or `uv.lock`.

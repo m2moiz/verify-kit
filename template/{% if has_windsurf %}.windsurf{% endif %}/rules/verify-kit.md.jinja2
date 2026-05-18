@@ -1,0 +1,11 @@
+# {{ project_name }} — Windsurf rules
+
+See AGENTS.md at the repo root for project-wide rules.
+
+## Cascade-specific
+
+- Use `just verify` as the definition of "done". Do not declare a task complete until it
+  exits 0.
+- Prefer ruff over manually fixing Python formatting issues — run `just format` instead.
+- Match existing patterns; do not introduce new libraries without checking `pyproject.toml`.
+- Never read or suggest committing `.env` files. `.env.example` is safe to reference.
