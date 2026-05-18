@@ -20,6 +20,13 @@ dependencies = [
     "opentelemetry-api==1.41.1",
     "opentelemetry-sdk==1.41.1",
     "opentelemetry-exporter-otlp-proto-grpc==1.41.1",
+    # MCP server (Plan 03-01). fastmcp pulls `mcp` + `starlette`; we declare
+    # them explicitly so the bearer-auth middleware import (Plan 03-01 T03)
+    # and ToolAnnotations import (Plan 03-01 T04) are always satisfiable.
+    "fastmcp>=2.0,<3.0",
+    "mcp>=1.0",
+    "starlette>=0.37",
+    "uvicorn>=0.30",
 ]
 
 [project.optional-dependencies]
