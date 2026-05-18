@@ -1,7 +1,8 @@
 ---
 phase: 2
+cycle: 2
 reviewers: [codex]
-reviewed_at: 2026-05-18T00:00:00Z
+reviewed_at: 2026-05-18T14:01:07Z
 plans_reviewed:
   - 02-01-PLAN.md
   - 02-02-PLAN.md
@@ -10,160 +11,182 @@ plans_reviewed:
   - 02-05-PLAN.md
   - 02-06-PLAN.md
   - 02-07-PLAN.md
+prior_cycle_highs: 5
+current_cycle_highs_unresolved: 4
 ---
 
-# Cross-AI Plan Review — Phase 2
+# Cross-AI Plan Review — Phase 2 (Cycle 2)
+
+This is cycle 2 of plan-review-convergence. Cycle 1 raised 5 HIGH concerns;
+the plans were replanned per `02-REVIEWS-RESPONSE.md`. This cycle re-reviews
+the updated plans.
 
 ## Codex Review
 
-## Summary
+### Summary
 
-The plan set is coherent and mostly executable: it decomposes Phase 2 into sensible dependency waves, starts with stable model/registry primitives, then layers observability, cache/config, runner/checks, emitters, CLI, and final non-functional gates. The architecture aligns well with the phase goal: a real `harness/` package with registry-based checks, multiple output formats, cache, semantic exit codes, and inert-by-default OTel. The biggest risks are not architectural; they are execution risks from over-packed plans, several test/implementation mismatches, a few dependency-order mistakes, and ambitious performance gates that may fail on real machines because subprocess startup and dependency install time dominate.
+The updated plans resolve most of the cycle-1 HIGH issues. The dependency
+ordering, `just` degradation, cache-budget split, and local-only Biome
+strategy are materially improved. Two of the original five are only
+partially resolved because the plans still contain executor-visible
+contradictions or missing file/dependency declarations.
 
-## Strengths
+The biggest new risk is in the generated test scaffold: some templated
+tests run `verify-kit` from a minimal `fake_project` that does not contain
+or install the harness package. That will likely fail in rendered projects.
 
-- Clear layering: models/registry first, then cache/config, runner, emitters, CLI, tests. This reduces circular-import risk and gives each later plan stable contracts.
-- Good preservation of locked decisions: inline `ErrorEnvelope`, three result states, dotted error codes, `[tool.verify-kit]`, SQLite WAL cache, OTel lazy import, and six report emitters are all represented.
-- Strong dual-audience thinking: pretty output, JSON/JSONL/JUnit/SARIF, `describe`, `list-checks`, and `.verify/report.*` artifacts are planned together rather than bolted on later.
-- The OTel inertness gate is correctly treated as a first-class test, not just an implementation claim.
-- Cache design is appropriately simple for v0.1: file-hash keys, SQLite, LRU, `--no-cache`, and `verify-clean` only.
-- The runner as the central choke point for spans, cache, logging, and exception normalization is the right abstraction.
-- The plans explicitly avoid some scope traps: no entry-point plugins, no full Ralph loop, no backend debug endpoints, no full fixer framework.
+### Status of Prior HIGH Concerns
 
-## Concerns
+1. **Plan 04 missing `02-03` dependency: FULLY RESOLVED**
 
-- **HIGH: Plan 04 depends on Plan 03 interfaces but does not declare `02-03` as a dependency.**
-  `runner.py` imports `harness.cache` and uses `CacheStore`, `make_cache_key`, `hash_inputs`, and `get_tool_version`, but Plan 04 only depends on `02-01` and `02-02`. In wave execution, this can break or force implicit ordering.
+   Evidence: `02-04-PLAN.md` now has `depends_on: ["02-01", "02-02", "02-03"]`,
+   `wave: 3`. The runner explicitly imports `CacheStore`, `make_cache_key`,
+   `hash_inputs`, and `get_tool_version` from Plan 03.
 
-- **HIGH: The CLI and tests assume rendered-project helpers that may not exist.**
-  Several plans reference `template_render`, `tests/test_phase2_*` files, and `tests/_helpers.py` without consistently listing them in `files_modified`. If these helpers are not already present from Phase 1, execution will stall.
+2. **Rendered-project helpers may not exist: PARTIALLY RESOLVED**
 
-- **HIGH: `verify-kit verify --quick` may fail in a fresh scaffold because `just-list.renders` shells out to `just`.**
-  The requirements assume mise+just are preinstalled for some UX gates, but the generated project also has a Makefile shim for users without just. If `just` is missing, a required quick check failing hard undermines "first run works" unless this is explicitly documented as a prerequisite or handled as skip/tool-missing.
+   Resolution: `02-01-PLAN.md` adds `tests/_helpers.py` and `tests/conftest.py`
+   with `render_scratch_project`, `install_scratch_harness`,
+   `render_and_install`. Later plans consume these helpers.
 
-- **HIGH: The <500ms cache-hit test is likely fragile if it invokes `uv run verify-kit ...` as a subprocess.**
-  Even if all checks are cached, `uv run`, Python import time, Typer startup, Rich/structlog imports, and filesystem setup can exceed 500ms on CI or cold machines. The plan should distinguish internal `report.summary.duration_ms` from wall-clock subprocess duration.
+   Remaining gap: Plan 01 says to add `copier` to verify-kit's own dev
+   dependencies "if absent," but the owning `pyproject.toml` is not listed in
+   `files_modified`. Test files `tests/test_phase2_helpers_smoke.py`,
+   `tests/test_phase2_models.py`, etc., are not listed in Plan 01 frontmatter.
+   The helper infrastructure is planned, but the execution manifest is
+   incomplete.
 
-- **HIGH: `lint.biome` / `format.biome` using `pnpm dlx` conflicts with offline-first UX.**
-  If `pnpm` exists but the network is unavailable, the check may spend time resolving/downloading Biome and fail slowly. This contradicts UX-06 unless the generated scaffold pins Biome as a local dev dependency or the check skips when Biome is not locally available.
+3. **`verify --quick` hard-requires `just`: FULLY RESOLVED**
 
-- **MEDIUM: `CheckSpec` as a Pydantic model with `fn: Callable` complicates schema generation.**
-  Even with `arbitrary_types_allowed=True`, `CheckSpec.model_json_schema()` can fail or produce poor schema unless `fn` is excluded or modeled carefully. Plan 06 says `describe` derives JSON Schema from `CheckSpec`; this needs a serialization-safe public model.
+   Evidence: `02-04-PLAN.md` registers `just-list.renders` with
+   `tool="just", skip_if_unavailable=True`; check returns `skip` with a hint
+   on `FileNotFoundError`. Plan 07 documents the Makefile shim and
+   non-failure behavior.
 
-- **MEDIUM: `CheckSpec.inputs: list[str] = field(default_factory=list)` mixes dataclasses and Pydantic vocabulary.**
-  The plan says `field(default_factory=list)` but imports are not always specified. In Pydantic models this should be `pydantic.Field(default_factory=list)`, not `dataclasses.field`.
+4. **`<500ms` cache-hit test measured via `uv run` subprocess: FULLY RESOLVED (minor wording caveat)**
 
-- **MEDIUM: Config loader handling of `[tool.verify-kit.checks.lint.ruff]` is underspecified and easy to get wrong.**
-  TOML dotted table keys like `checks.lint.ruff` naturally become nested dicts, but mapping arbitrary nested check IDs back into `per_check["lint.ruff"]` is non-trivial. The plan needs precise normalization rules and tests for multi-segment IDs.
+   Evidence: `02-07-PLAN.md` splits the budget:
+   - hard gate: `report.summary.duration_ms < 500`
+   - soft gate: subprocess wall time `<1500ms`, strict only when
+     `VERIFY_KIT_STRICT_WALL_CLOCK=1`
 
-- **MEDIUM: Unknown CLI flag did-you-mean may not work through `typer.testing.CliRunner` as written.**
-  Catching `click.UsageError` around `app()` is brittle with Typer console scripts. A custom Click command class or careful `standalone_mode=False` invocation may be needed. The plan recognizes the issue but the proposed wrapper may not catch all paths.
+   Caveat: must-haves still say "2nd run completes in <500ms" which could be
+   misread as wall-clock. Tighten must-have wording.
 
-- **MEDIUM: `atexit.register(shutdown)` inside the Typer callback may register repeatedly in tests.**
-  Repeated `CliRunner.invoke()` calls can stack atexit handlers. This is mostly test pollution, but it can produce hard-to-debug failures.
+5. **Biome via `pnpm dlx` violates offline-first UX: PARTIALLY RESOLVED**
 
-- **MEDIUM: Report file writes occur after verification, but write failure mapping can mask check failure.**
-  If checks fail and `.verify/report.*` cannot be written, should exit be `12` or `1`? The plan says `12`, which is defensible, but this should be explicitly accepted because it changes CI semantics.
+   Resolution: Plan 04 task action removes `pnpm dlx` and resolves Biome via
+   `node_modules/.bin/biome` → `shutil.which("biome")` → skip.
 
-- **MEDIUM: SARIF location fidelity is too weak for "VS Code Problems clickable" goals.**
-  Minimal location `uri: "."` satisfies schema shape but not the IDE-clickable experience implied by HARN-02/IDE requirements. Phase 2 may not need perfect locations, but the plan should mark this as partial unless checks carry file/line data.
+   Remaining issue: Plan 04's threat model is stale — still references
+   "pnpm dlx downloads from npm registry," `T-02-13` "Supply chain via
+   pnpm dlx," and "README to call out that biome runs via pnpm dlx." This
+   contradicts the implementation instructions.
 
-- **MEDIUM: `otlp.emit` shutdown behavior can terminate the tracer provider before later emits/tests.**
-  Calling `shutdown()` inside an emitter is a one-way operation for the OTel provider. If multiple commands or tests run in-process, later spans may not export. Better to centralize flush/shutdown at CLI exit.
+### New Concerns
 
-- **MEDIUM: The cache stores failed results uniformly, but the UX around cached failures may confuse users.**
-  A failed lint result cached until inputs change is consistent with the decision, but there should be visible `cached=True` output in pretty/JSON so users understand why a check failed instantly.
+- **HIGH: Generated golden test runs `verify-kit` from a non-harness fake project.**
 
-- **LOW: `jsonl` summary line shape diverges from pure one-result-per-line.**
-  The final `{"type": "summary"}` object is useful, but it should be documented in `describe` or schema output.
+  In `02-07-PLAN.md`, `template/tests/golden/test_json_output.py.jinja2`
+  runs `verify-kit verify --quick --format=json` in `tmp_project` copied
+  from `tests/fixtures/fake_project`. That fixture's `pyproject.toml` only
+  declares `name = "fake-fixture-project"` — no `harness/`,
+  `[project.scripts] verify-kit`, or deps. The smoke test was corrected but
+  the golden test still appears broken.
 
-- **LOW: README and Plan 07 add substantial documentation and slow tests before the full system has stabilized.**
-  This is acceptable, but it increases churn. Consider landing tests first, README after actual command behavior is verified.
+- **HIGH: `cwd` is passed through runner/cache but checks execute relative to process CWD.**
 
-- **LOW: Plan 07's smoke test installing `uv pip install -e .` inside `fake_project` seems wrong.**
-  The fake fixture only has a minimal `pyproject.toml` and `.mise.toml`; it likely does not contain the harness package. The test should run from a rendered scaffold project, not the fake fixture alone.
+  `run_check(spec, cwd=...)` hashes inputs using `cwd` but calls `spec.fn()`
+  without `cwd`. Check functions use relative paths and `subprocess.run(...)`
+  without `cwd=cwd`. `core.verify(cwd=some_path)` can hash one project and
+  execute checks against another. CLI works because process CWD is the
+  project, but the public API and tests are inconsistent.
 
-## Suggestions
+- **MEDIUM: SARIF still ignores new file/line/column fields.**
 
-- Add `02-03` to Plan 04 dependencies. Treat cache/config as a hard dependency for runner work.
+  Plan 01 adds `ErrorEnvelope.file/line/column/snippet` and Plan 04 says
+  Ruff/Biome populate them, but Plan 05's SARIF emitter still emits
+  `"artifactLocation": {"uri": "."}`. Clickable Problems-panel goal
+  remains only partially served.
 
-- Create a small "test infrastructure" pre-plan or include it in Plan 01: shared render helper, scratch copier invocation, and any `template_render` utility. Do not let every plan invent its own render path.
+- **MEDIUM: Config plan drifts from locked context example.**
 
-- Split `CheckSpec` into two models:
-  - Internal `CheckSpec` with `fn: Callable`
-  - Serializable `CheckCatalogEntry` without `fn`, used by `list-checks`, `describe`, JSON Schema, and tests
+  Context shows `[tool.verify-kit.checks.lint.ruff]`. Plan 03 now requires
+  `[tool.verify-kit.checks."lint.ruff"]`. If intentional, update
+  `02-CONTEXT.md` or mark it as a deliberate correction.
 
-- Replace `field(default_factory=list)` with `Field(default_factory=list)` in Pydantic models and explicitly import `Field`.
+- **MEDIUM: Truth/action contradictions remain.**
 
-- Revisit quick-check behavior for missing required tools. Either:
-  - document `mise + just + uv` as hard prerequisites for the 30-second path, or
-  - make `just-list.renders` skip with exit 0 when `just` is missing and surface a clear install hint.
+  - Plan 05 behavior says `otlp.emit` flushes via `shutdown()`; action says
+    use `force_flush()`.
+  - Plan 06 must-have says `describe` uses `CheckSpec` / `TypeAdapter`;
+    action correctly uses `CheckCatalogEntry`.
+  - Plan 05 behavior says CI uses `force_terminal=False`; action says
+    `force_terminal=True` with `no_color=True`.
 
-- Avoid `pnpm dlx` in normal verify checks. Prefer one of:
-  - local `pnpm exec biome`
-  - skip if `node_modules/.bin/biome` is absent
-  - only register Biome checks when the template actually includes a JS toolchain
+- **LOW: Plan 01 helper default answers are underspecified.**
 
-- Make the cache-hit performance gate two-tiered:
-  - hard gate: `report.summary.duration_ms < 500`
-  - soft/marked gate: subprocess wall time <500ms only in known-fast CI, or relax to <1s
+  `_DEFAULT_ANSWERS` should mirror Phase-1 `copier.yml`, then introspect and
+  fill missing defaults with `_`. Vague enough to produce brittle Copier
+  helper behavior. Prefer reading actual question names and only supplying
+  known answers.
 
-- Add file/line fields to `ErrorEnvelope` or `CheckResult` now if SARIF/JUnit/pretty output must become clickable:
-  - `file: str | None`
-  - `line: int | None`
-  - `column: int | None`
-  - `snippet: str | None`
-  This avoids parsing locations out of messages later.
+### Suggestions
 
-- Centralize OTel shutdown in CLI exit only. Let `otlp.emit` flush if available, but avoid permanently shutting down the provider from an emitter.
+- Fix `template/tests/golden/test_json_output.py.jinja2` to run from the
+  rendered scaffold root, or copy the full harness host into `tmp_path` as
+  the smoke test does.
+- Make checks cwd-aware. Pass `cwd` into check functions or wrap `spec.fn()`
+  in a `chdir(cwd)` context. Pass `cwd=cwd` to every `subprocess.run`.
+- Update SARIF emitter to use `ErrorEnvelope.file`, `line`, `column` when
+  present; keep `"."` only as fallback.
+- Remove all stale `pnpm dlx` references from Plan 04's threat model.
+- Align contradictory must-have/action text around `force_flush`,
+  `CheckCatalogEntry`, and CI console behavior.
+- Add root `pyproject.toml` to Plan 01 `files_modified` if it may add
+  `copier` to verify-kit's own dev dependencies. List new
+  `tests/test_phase2_*.py` files in Plan 01 frontmatter.
 
-- Normalize config with explicit accepted forms and tests:
-  - `[tool.verify-kit.cache] max_size_mb = 100`
-  - `[tool.verify-kit] cache.max_size_mb = 100`
-  - `[tool.verify-kit.checks."lint.ruff"] warn_as_error = false`
-  Quoted dotted check IDs are safer than inferring nested TOML paths.
+### Risk Assessment
 
-- Make report artifact writing atomic:
-  - write to `.tmp`
-  - fsync or close
-  - rename to final path
-  This prevents agents from reading partial JSON/SARIF while `verify` is running.
-
-- Add a very small public schema test for each emitter:
-  - JSON validates against internal schema
-  - JUnit parses as XML
-  - SARIF validates with `jsonschema` against schemastore schema or a minimal local schema subset
-
-- Keep slow tests opt-in and separate from normal unit tests. The 30-second test and `copier copy + install` tests should be marked clearly so normal development remains fast.
-
-## Risk Assessment
-
-**Overall risk: MEDIUM.**
-
-The architecture is sound and well aligned with Phase 2 goals, but the plan set is large and has several integration hazards: dependency-order mismatch, CLI wrapper brittleness, subprocess-driven performance gates, Biome/network behavior, and schema serialization around callable-bearing Pydantic models. None of these require changing the core direction. They do require tightening the contracts before execution, especially around test infrastructure, quick-check prerequisites, serializable models, and what exactly counts toward the <500ms budget.
+**MEDIUM.** The original HIGH concerns are mostly addressed and phase
+architecture is sound. Remaining risk is execution ambiguity: a broken
+generated golden test, cwd mismatch between cache and checks, stale Biome
+threat-model text, and a few contradictory instructions. These are fixable
+before execution without changing the core design.
 
 ---
 
 ## Consensus Summary
 
-Only one reviewer (Codex) was invoked for this cycle, so "consensus" reflects Codex's findings alone.
+Single reviewer this cycle (codex), so "consensus" reflects codex's
+synthesis against the cycle-1 baseline.
 
-### Agreed Strengths
+### Cycle-1 → Cycle-2 HIGH resolution
 
-- Clean dependency layering (models/registry → cache/config → runner → emitters → CLI → tests).
-- Locked decisions are preserved end-to-end (`ErrorEnvelope`, three result states, dotted error codes, SQLite WAL cache, lazy OTel import, six emitters).
-- OTel inertness treated as a first-class test gate, not an implementation claim.
-- Cache design intentionally simple for v0.1.
-- Scope discipline: no plugin entry points, no Ralph loop, no fixer framework.
+| # | Cycle-1 HIGH | Cycle-2 status |
+|---|---|---|
+| 1 | Plan 04 missing `02-03` dependency | FULLY RESOLVED |
+| 2 | Rendered-project helpers may not exist | PARTIALLY RESOLVED |
+| 3 | `verify --quick` hard-requires `just` | FULLY RESOLVED |
+| 4 | `<500ms` cache-hit test via `uv run` subprocess | FULLY RESOLVED |
+| 5 | Biome via `pnpm dlx` violates offline-first UX | PARTIALLY RESOLVED |
 
-### Agreed Concerns (highest priority)
+### Current HIGH Concerns (unresolved, count = 4)
 
-1. **Plan 04 missing `02-03` dependency** — runner imports cache primitives but does not list cache/config plan as a prerequisite.
-2. **Test/render helpers (`template_render`, `tests/_helpers.py`) not consistently declared in `files_modified`** — risk of stalled execution in wave runs.
-3. **`verify --quick` hard-requires `just`** — undermines "first run works" if scaffold ships a Makefile fallback path.
-4. **<500ms cache-hit gate measured via `uv run` subprocess** — likely flaky; needs split between internal `duration_ms` and wall-clock.
-5. **Biome via `pnpm dlx`** — network-dependent, violates offline-first UX requirement.
+1. **[Carryover #2 — PARTIAL]** Plan 01 execution manifest incomplete:
+   missing `pyproject.toml` and several `tests/test_phase2_*.py` in
+   `files_modified`.
+2. **[Carryover #5 — PARTIAL]** Plan 04 threat model still references
+   `pnpm dlx` despite implementation removing it; executor-visible
+   contradiction.
+3. **[NEW]** Generated golden test
+   `template/tests/golden/test_json_output.py.jinja2` runs `verify-kit`
+   inside `fake_project`, which does not install the harness.
+4. **[NEW]** `cwd` flows into `run_check` for hashing but checks execute
+   against process CWD; public API and tests are inconsistent.
 
-### Divergent Views
+### Recommendation
 
-N/A — single reviewer.
+Run one more replan cycle to address the 4 unresolved HIGHs before
+execution. All four are surgical fixes — no architectural rework needed.
