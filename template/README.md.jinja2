@@ -1,0 +1,33 @@
+# {{ project_name }}
+
+{{ project_description }}
+
+## Quickstart
+
+```bash
+mise install && uv sync && just verify
+```
+
+## What this is
+
+This project was scaffolded from [verify-kit](https://github.com/m2moiz/verify-kit) (`gh:m2moiz/verify-kit`) — a Copier-based template that bundles a self-verifiable agentic-coding harness. `just verify` is the single ground-truth command for both human developers and coding agents.
+
+## Tooling
+
+- **mise** — manages Python and Node toolchain versions via `.mise.toml`
+- **just** — canonical task runner (`just --list` for all available commands)
+- **pre-commit** — fast pre-commit hooks (ruff, biome, gitleaks, whitespace)
+{% if has_backend %}
+- **FastAPI + Postgres** — async backend with SQLAlchemy, Alembic, and Testcontainers
+{% endif %}
+{% if has_llm %}
+- **LiteLLM + Langfuse** — LLM integration with cost tracking and observability
+{% endif %}
+
+## Status
+
+> verify-kit v0.1.alpha scaffold. See ROADMAP.md in template repo for what's coming in v0.1.0.
+
+## License
+
+{{ license }} — see LICENSE.
