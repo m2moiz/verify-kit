@@ -1,0 +1,88 @@
+"""harness/cli.py — Typer CLI facade for verify-kit.
+
+This file is a THIN facade over harness.core. Each command calls core.*()
+and exits with the returned exit code. No business logic lives here.
+
+Console entry point:  verify-kit = "harness.cli:app"
+"""
+from __future__ import annotations
+
+import json
+import sys
+
+import typer
+
+from harness import core
+
+app = typer.Typer(
+    help="verify-kit — self-verifying agentic-coding harness.",
+    no_args_is_help=True,
+)
+
+
+@app.command()
+def verify(
+    fix: bool = typer.Option(
+        False,
+        "--fix",
+        help="Auto-fix issues (opt-in; --check semantics are the default).",
+    ),
+    output_format: str = typer.Option(
+        "pretty",
+        "--format",
+        help="Output format: pretty | json",
+    ),
+) -> None:
+    """Run all verification checks against the current project."""
+    report = core.verify(fix=fix)
+
+    if output_format == "json":
+        typer.echo(json.dumps(report.model_dump(), indent=2))
+    else:
+        _print_pretty(report)
+
+    sys.exit(report.exit_code)
+
+
+@app.command(name="list-checks")
+def list_checks_cmd() -> None:
+    """List all check IDs available in this phase."""
+    for check_id in core.list_checks():
+        typer.echo(check_id)
+
+
+# ── Pretty printer (no rich dep in Phase 1 — plain ANSI) ─────────────────────
+
+_STATUS_ICONS = {"pass": "✓", "fail": "✗", "skip": "–"}
+_STATUS_COLORS = {
+    "pass": "\033[32m",   # green
+    "fail": "\033[31m",   # red
+    "skip": "\033[33m",   # yellow
+}
+_RESET = "\033[0m"
+
+
+def _print_pretty(report: "core.VerifyReport") -> None:  # noqa: UP037
+    for check in report.checks:
+        icon = _STATUS_ICONS.get(check.status, "?")
+        color = _STATUS_COLORS.get(check.status, "")
+        msg = f"  {check.message}" if check.message else ""
+        typer.echo(
+            f"{color}{icon}{_RESET} [{check.check_id}]{msg}"
+            + (f" ({check.duration_ms}ms)" if check.duration_ms else "")
+        )
+
+    total = len(report.checks)
+    passed = sum(1 for c in report.checks if c.status == "pass")
+    failed = sum(1 for c in report.checks if c.status == "fail")
+    skipped = sum(1 for c in report.checks if c.status == "skip")
+
+    typer.echo(
+        f"\n{passed}/{total} passed"
+        + (f", {failed} failed" if failed else "")
+        + (f", {skipped} skipped" if skipped else "")
+    )
+
+
+if __name__ == "__main__":
+    app()

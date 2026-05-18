@@ -1,0 +1,13 @@
+"""verify-kit harness — minimal Phase 1 surface.
+
+Import surface for consumers:
+    from harness import verify, list_checks, VerifyReport, CheckResult
+"""
+from harness.core import (
+    CheckResult,
+    VerifyReport,
+    list_checks,
+    verify,
+)
+
+__all__ = ["CheckResult", "VerifyReport", "list_checks", "verify"]

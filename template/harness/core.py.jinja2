@@ -1,0 +1,214 @@
+"""harness/core.py — Source of truth for verify-kit checks.
+
+All verify logic lives here as plain Python functions returning Pydantic models.
+The Typer CLI (cli.py) and the Phase-3 MCP server (mcp_server.py) are both thin
+facades over these functions — they never call each other.
+"""
+from __future__ import annotations
+
+import subprocess
+import tomllib
+from pathlib import Path
+from typing import Literal
+
+from pydantic import BaseModel
+
+
+class CheckResult(BaseModel):
+    """Result of a single verification check."""
+
+    check_id: str
+    status: Literal["pass", "fail", "skip"]
+    message: str = ""
+    duration_ms: int = 0
+
+
+class VerifyReport(BaseModel):
+    """Aggregate report returned by verify()."""
+
+    exit_code: int
+    checks: list[CheckResult]
+    format_version: Literal["1"] = "1"
+
+
+def list_checks() -> list[str]:
+    """Return the IDs of all checks available in this phase."""
+    return ["mise-toml-valid", "copier-answers-valid", "just-list-renders"]
+
+
+def verify(
+    check_ids: list[str] | None = None,
+    fix: bool = False,
+) -> VerifyReport:
+    """Run the requested checks (or all of them) and return a VerifyReport.
+
+    Args:
+        check_ids: Specific check IDs to run. None means run all.
+        fix:       If True, fixers are run where available. Phase 1 has no
+                   automated fixers — this flag is wired through for the
+                   surface contract (TOOL-06) and will activate in future phases.
+
+    Returns:
+        VerifyReport with per-check results and an aggregate exit_code.
+    """
+    if fix:
+        # No Phase-1 check has an automated fixer yet.
+        # TOOL-06: --check is default, --fix is opt-in. Log and continue.
+        import sys
+        print(  # noqa: T201
+            "--fix requested but no checks have automated fixers in Phase 1",
+            file=sys.stderr,
+        )
+
+    all_checks = list_checks()
+    requested = check_ids if check_ids is not None else all_checks
+
+    results: list[CheckResult] = []
+    for cid in requested:
+        if cid == "mise-toml-valid":
+            results.append(_check_mise_toml())
+        elif cid == "copier-answers-valid":
+            results.append(_check_copier_answers())
+        elif cid == "just-list-renders":
+            results.append(_check_just_list())
+        else:
+            results.append(
+                CheckResult(
+                    check_id=cid,
+                    status="skip",
+                    message=f"Unknown check id: {cid!r}",
+                )
+            )
+
+    # exit_code = 0 when every non-skipped check passes.
+    # Skipped checks are neutral — a clean scaffold where .copier-answers.yml
+    # legitimately does not exist must still exit 0.
+    failed = [c for c in results if c.status == "fail"]
+    exit_code = 1 if failed else 0
+
+    return VerifyReport(exit_code=exit_code, checks=results)
+
+
+# ── Phase-1 check implementations ────────────────────────────────────────────
+
+
+def _check_mise_toml() -> CheckResult:
+    """Verify .mise.toml parses as TOML and has [tools] with python + node."""
+    import time
+
+    start = time.monotonic()
+    path = Path(".mise.toml")
+
+    if not path.exists():
+        return CheckResult(
+            check_id="mise-toml-valid",
+            status="fail",
+            message=".mise.toml not found in current directory",
+            duration_ms=int((time.monotonic() - start) * 1000),
+        )
+
+    try:
+        data = tomllib.loads(path.read_text())
+    except tomllib.TOMLDecodeError as exc:
+        return CheckResult(
+            check_id="mise-toml-valid",
+            status="fail",
+            message=f".mise.toml is not valid TOML: {exc}",
+            duration_ms=int((time.monotonic() - start) * 1000),
+        )
+
+    tools = data.get("tools", {})
+    missing = [k for k in ("python", "node") if k not in tools]
+    if missing:
+        return CheckResult(
+            check_id="mise-toml-valid",
+            status="fail",
+            message=f".mise.toml [tools] is missing keys: {missing}",
+            duration_ms=int((time.monotonic() - start) * 1000),
+        )
+
+    return CheckResult(
+        check_id="mise-toml-valid",
+        status="pass",
+        message="python and node are declared in [tools]",
+        duration_ms=int((time.monotonic() - start) * 1000),
+    )
+
+
+def _check_copier_answers() -> CheckResult:
+    """Verify .copier-answers.yml exists and has _src_path (Copier auto-emits it)."""
+    import time
+
+    start = time.monotonic()
+    path = Path(".copier-answers.yml")
+
+    if not path.exists():
+        return CheckResult(
+            check_id="copier-answers-valid",
+            status="skip",
+            message="not a Copier-scaffolded project (.copier-answers.yml absent)",
+            duration_ms=int((time.monotonic() - start) * 1000),
+        )
+
+    try:
+        import yaml  # type: ignore[import-untyped]
+
+        data = yaml.safe_load(path.read_text()) or {}
+    except Exception as exc:
+        return CheckResult(
+            check_id="copier-answers-valid",
+            status="fail",
+            message=f".copier-answers.yml is not valid YAML: {exc}",
+            duration_ms=int((time.monotonic() - start) * 1000),
+        )
+
+    if "_src_path" not in data:
+        return CheckResult(
+            check_id="copier-answers-valid",
+            status="fail",
+            message=".copier-answers.yml is missing '_src_path' key (corrupt Copier answers file)",
+            duration_ms=int((time.monotonic() - start) * 1000),
+        )
+
+    return CheckResult(
+        check_id="copier-answers-valid",
+        status="pass",
+        message=f"_src_path = {data['_src_path']!r}",
+        duration_ms=int((time.monotonic() - start) * 1000),
+    )
+
+
+def _check_just_list() -> CheckResult:
+    """Verify `just --list` exits 0 and returns at least one recipe."""
+    import time
+
+    start = time.monotonic()
+
+    result = subprocess.run(
+        ["just", "--list"],
+        capture_output=True,
+        text=True,
+    )
+
+    if result.returncode != 0:
+        return CheckResult(
+            check_id="just-list-renders",
+            status="fail",
+            message=f"`just --list` exited {result.returncode}: {result.stderr.strip()}",
+            duration_ms=int((time.monotonic() - start) * 1000),
+        )
+
+    if not result.stdout.strip():
+        return CheckResult(
+            check_id="just-list-renders",
+            status="fail",
+            message="`just --list` exited 0 but produced no output",
+            duration_ms=int((time.monotonic() - start) * 1000),
+        )
+
+    return CheckResult(
+        check_id="just-list-renders",
+        status="pass",
+        message=f"`just --list` OK ({len(result.stdout.splitlines())} lines)",
+        duration_ms=int((time.monotonic() - start) * 1000),
+    )
