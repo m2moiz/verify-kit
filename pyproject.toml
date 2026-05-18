@@ -22,6 +22,14 @@ dev = [
     # sys.path-insert those modules into the dev venv, so the dep must be
     # importable here too. (Plan 02-03)
     "structlog>=25",
+    # Plan 02-05 reports/pretty.py + Plan 02-06 jaeger.py rely on rich.
+    # tests sys.path-insert those modules into the dev venv, so the dep must
+    # be importable here too.
+    "rich>=13",
+    # Plan 02-06 jaeger.py uses httpx for the Jaeger HTTP API.
+    "httpx>=0.27",
+    # Plan 02-06 CLI uses typer; tests sys.path-insert the CLI module.
+    "typer>=0.12",
 ]
 
 [tool.hatch.build.targets.wheel]
