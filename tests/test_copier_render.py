@@ -87,6 +87,13 @@ def test_rendered_project_is_committable(template_root: Path, tmp_render_dir: Pa
     )
     assert result_init.returncode == 0, f"git init failed: {result_init.stderr.decode()}"
 
+    # Neutralize host pre-commit hooks inside synthetic test sandbox.
+    subprocess.run(
+        ["git", "config", "--local", "core.hooksPath", "/dev/null"],
+        cwd=tmp_render_dir,
+        check=True,
+    )
+
     result_add = subprocess.run(
         ["git", "add", "-A"],
         cwd=tmp_render_dir,
@@ -123,13 +130,8 @@ def test_copier_update_three_way_merge(template_root: Path, tmp_path: Path) -> N
     7. Assert the sentinel line appears in the updated README.md
     """
     sandbox = tmp_path / "template-repo"
-    shutil.copytree(
-        template_root,
-        sandbox,
-        ignore=shutil.ignore_patterns(".planning", "research", ".git", ".venv", "__pycache__", "*.pyc"),
-    )
+    sandbox.mkdir()
 
-    # Init the sandbox as a git repo and tag v1
     def _run(args: list[str], cwd: Path) -> subprocess.CompletedProcess:
         result = subprocess.run(args, cwd=cwd, capture_output=True, text=True)
         if result.returncode != 0:
@@ -138,7 +140,25 @@ def test_copier_update_three_way_merge(template_root: Path, tmp_path: Path) -> N
             )
         return result
 
+    # Copy ONLY git-tracked files from template_root — keeps the sandbox
+    # deterministic regardless of untracked local-only artifacts
+    # (CLAUDE.md, SESSION-HANDOFF.md, .planning/, etc.).
+    tracked = _run(["git", "ls-files"], template_root).stdout.splitlines()
+    for rel in tracked:
+        src = template_root / rel
+        dst = sandbox / rel
+        if not src.exists():
+            continue
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, dst)
+
+    # Init the sandbox as a git repo and tag v1.
+    # Use --local core.hooksPath=/dev/null so host pre-commit hooks
+    # (which may enforce repo-specific policies) don't fire inside the
+    # synthetic sandbox — this test exercises Copier's update mechanism,
+    # not hook compliance.
     _run(["git", "init", "-b", "main"], sandbox)
+    _run(["git", "config", "--local", "core.hooksPath", "/dev/null"], sandbox)
     _run(["git", "config", "user.name", "t"], sandbox)
     _run(["git", "config", "user.email", "t@t"], sandbox)
     _run(["git", "add", "-A"], sandbox)
@@ -162,6 +182,7 @@ def test_copier_update_three_way_merge(template_root: Path, tmp_path: Path) -> N
 
     # git-init the rendered project so copier update can track changes
     _run(["git", "init", "-b", "main"], proj)
+    _run(["git", "config", "--local", "core.hooksPath", "/dev/null"], proj)
     _run(["git", "config", "user.name", "t"], proj)
     _run(["git", "config", "user.email", "t@t"], proj)
     _run(["git", "add", "-A"], proj)
