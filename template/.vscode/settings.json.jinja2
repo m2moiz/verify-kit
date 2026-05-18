@@ -1,0 +1,40 @@
+{
+  // verify-kit project-only VS Code settings. Personal preferences belong in
+  // the user-level settings.json, not here.
+
+  // Formatters
+  "editor.formatOnSave": true,
+  "editor.rulers": [88, 100],
+  "[python]": {
+    "editor.defaultFormatter": "charliermarsh.ruff",
+    "editor.rulers": [88]
+  },
+  "[typescript]": { "editor.defaultFormatter": "biomejs.biome", "editor.rulers": [100] },
+  "[javascript]": { "editor.defaultFormatter": "biomejs.biome", "editor.rulers": [100] },
+  "[json]": { "editor.defaultFormatter": "biomejs.biome" },
+  "[jsonc]": { "editor.defaultFormatter": "biomejs.biome" },
+
+  // Python
+  "python.testing.pytestEnabled": true,
+  "python.testing.unittestEnabled": false,
+  "python.testing.pytestArgs": ["tests"],
+
+  // File hygiene
+  "files.exclude": {
+    "**/__pycache__": true,
+    "**/.pytest_cache": true,
+    "**/.ruff_cache": true,
+    "**/.mypy_cache": true,
+    "**/.verify": false,
+    "**/node_modules": true
+  },
+  "search.exclude": {
+    "**/.verify": true,
+    "**/node_modules": true,
+    "**/.mise": true
+  },
+
+  // Ruff
+  "ruff.organizeImports": true,
+  "ruff.fixAll": true
+}
