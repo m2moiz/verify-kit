@@ -271,63 +271,28 @@ def list_checks_cmd(
 
 
 @app.command()
-def describe() -> None:
+def describe(
+    output_format: str = typer.Option(
+        "json",
+        "--format",
+        help="json (default; only supported format).",
+    ),
+) -> None:
     """Emit the FMT-04 introspection envelope as JSON.
 
-    Shape:
-        {
-          "version": "1",
-          "commands": [...typer command names + help],
-          "exit_codes": { name → integer },
-          "exit_code_precedence": [human-readable notes],
-          "check_catalog_schema": JSON Schema of CheckCatalogEntry,
-          "report_schema": JSON Schema of VerifyReport,
-          "checks": [CheckCatalogEntry array],
-          "jsonl_summary_marker": { summary-line shape (review LOW-1) }
-        }
+    Byte-identical with the MCP ``describe`` tool (Plan 03-01 T08 Cat A) —
+    both go through :func:`harness.mcp._describe.describe_envelope`.
     """
-    commands_info = []
-    for cmd_name, cmd in app.registered_commands_dict().items() if hasattr(app, "registered_commands_dict") else []:
-        commands_info.append({"name": cmd_name, "help": getattr(cmd, "help", "")})
-    if not commands_info:
-        # Typer doesn't expose registered_commands_dict; fall back to a hand list.
-        commands_info = [
-            {"name": "verify", "help": "Run verification checks."},
-            {"name": "list-checks", "help": "List registered checks."},
-            {"name": "describe", "help": "Emit the introspection envelope."},
-            {"name": "trace", "help": "Render the most recent verify-kit trace."},
-        ]
+    if output_format != "json":
+        matches = suggest(output_format, ["json"])
+        msg = f"error: unknown --format={output_format!r}"
+        if matches:
+            msg += f"\n  did you mean: {' | '.join(matches)}?"
+        typer.echo(msg, err=True)
+        raise typer.Exit(code=EXIT_BAD_INPUT)
+    from harness.mcp._describe import describe_envelope
 
-    payload = {
-        "version": "1",
-        "commands": commands_info,
-        "exit_codes": {
-            "EXIT_OK": EXIT_OK,
-            "EXIT_CHECK_FAIL": EXIT_CHECK_FAIL,
-            "EXIT_BAD_INPUT": EXIT_BAD_INPUT,
-            "EXIT_CACHE_CORRUPT": EXIT_CACHE_CORRUPT,
-            "EXIT_TOOL_MISSING": EXIT_TOOL_MISSING,
-            "EXIT_WRITE_FAILED": EXIT_WRITE_FAILED,
-            "EXIT_OTEL_UNREACHABLE": EXIT_OTEL_UNREACHABLE,
-        },
-        "exit_code_precedence": [
-            "EXIT_WRITE_FAILED supersedes EXIT_CHECK_FAIL when .verify/report.* cannot be written",
-        ],
-        "check_catalog_schema": CheckCatalogEntry.model_json_schema(mode="serialization"),
-        "report_schema": VerifyReport.model_json_schema(mode="serialization"),
-        "checks": [CheckCatalogEntry.from_spec(s).model_dump() for s in _registry_list_checks()],
-        "jsonl_summary_marker": {
-            "type": "summary",
-            "fields": [
-                "pass_count",
-                "fail_count",
-                "skip_count",
-                "total",
-                "duration_ms",
-                "exit_code",
-            ],
-        },
-    }
+    payload = describe_envelope()
     json.dump(payload, sys.stdout, indent=2)
     sys.stdout.write("\n")
 
@@ -338,22 +303,42 @@ def describe() -> None:
 @app.command()
 def trace(
     last: bool = typer.Option(True, "--last/--no-last", help="Render the most recent trace."),
+    output_format: str = typer.Option(
+        None,
+        "--format",
+        help="pretty (default on TTY) | json. With --format=json bytes are identical to the MCP trace_last tool.",
+    ),
 ) -> None:
     """Render the most recent verify-kit trace from Jaeger (--last)."""
-    if last:
-        # Lazy import so the rest of the CLI doesn't pay httpx import cost.
-        from harness import jaeger as _jaeger
-        from rich.console import Console
+    if not last:
+        return
+    # Lazy import so the rest of the CLI doesn't pay httpx import cost.
+    from harness import jaeger as _jaeger
 
-        trace_data = _jaeger.fetch_latest_trace()
-        if trace_data is None:
-            typer.echo(
-                "no traces found — run `just verify` with OTEL_EXPORTER_OTLP_ENDPOINT "
-                "set (or `just trace-up` first) and try again",
-                err=True,
-            )
-            raise typer.Exit(code=EXIT_OTEL_UNREACHABLE)
-        _jaeger.render_trace_waterfall(trace_data, Console())
+    if output_format is None:
+        output_format = "pretty" if sys.stdout.isatty() else "json"
+    if output_format not in {"pretty", "json"}:
+        typer.echo(f"error: unknown --format={output_format!r}", err=True)
+        raise typer.Exit(code=EXIT_BAD_INPUT)
+
+    trace_data = _jaeger.fetch_latest_trace()
+    if output_format == "json":
+        # Byte-identical with MCP trace_last tool (Plan 03-01 T08 Cat A).
+        payload = trace_data if trace_data is not None else {"status": "no_traces"}
+        sys.stdout.write(json.dumps(payload))
+        sys.stdout.write("\n")
+        return
+    # pretty
+    if trace_data is None:
+        typer.echo(
+            "no traces found — run `just verify` with OTEL_EXPORTER_OTLP_ENDPOINT "
+            "set (or `just trace-up` first) and try again",
+            err=True,
+        )
+        raise typer.Exit(code=EXIT_OTEL_UNREACHABLE)
+    from rich.console import Console
+
+    _jaeger.render_trace_waterfall(trace_data, Console())
 
 
 # ── ralph (loop wrapper with iteration + cost caps) ─────────────────────────
@@ -445,6 +430,84 @@ def ralph_status_cmd(
     else:
         typer.echo(f"error: unknown --format={output_format!r}", err=True)
         raise typer.Exit(code=EXIT_BAD_INPUT)
+
+
+# ── mcp serve (Plan 03-01 T05) ──────────────────────────────────────────────
+
+mcp_app = typer.Typer(
+    help="verify-kit MCP server (Plan 03-01).",
+    no_args_is_help=True,
+)
+app.add_typer(mcp_app, name="mcp")
+
+
+def _parse_http_endpoint(value: str) -> tuple[str, int]:
+    """Parse ``--http`` value into ``(host, port)``.
+
+    Forms: ``:7878`` (host omitted, fall back to default), ``127.0.0.1:7878``,
+    ``localhost:7878``.
+    """
+    host_part, _, port_part = value.rpartition(":")
+    if not port_part or not port_part.isdigit():
+        raise ValueError(
+            f"--http expects '[host]:port', got {value!r}"
+        )
+    return (host_part or "127.0.0.1", int(port_part))
+
+
+@mcp_app.command("serve")
+def mcp_serve_cmd(
+    http: str = typer.Option(
+        None,
+        "--http",
+        help="Run over HTTP at [host]:port (default transport is stdio).",
+    ),
+    token: str = typer.Option(
+        None,
+        "--token",
+        help="Bearer token required for HTTP transport (MCP-05).",
+    ),
+    host: str = typer.Option(
+        "127.0.0.1",
+        "--host",
+        help="Bind address for HTTP transport (overridden by --http if its host part is non-empty).",
+    ),
+) -> None:
+    """Start the verify-kit MCP server (stdio by default, --http to expose TCP)."""
+    from harness.mcp.server import serve
+
+    cwd = Path(".")
+
+    if http is None:
+        # stdio transport — auth implicit via parent-process trust boundary.
+        serve(cwd, transport="stdio")
+        return
+
+    # HTTP transport
+    try:
+        parsed_host, parsed_port = _parse_http_endpoint(http)
+    except ValueError as exc:
+        typer.echo(f"error: E_MCP_BAD_ENDPOINT: {exc}", err=True)
+        raise typer.Exit(code=EXIT_BAD_INPUT) from exc
+
+    # If --http carried only a port (":7878"), use --host; otherwise the
+    # parsed host wins.
+    effective_host = parsed_host if parsed_host != "127.0.0.1" else host
+
+    if not token:
+        typer.echo(
+            "error: E_MCP_AUTH_REQUIRED: --http requires --token=<value>",
+            err=True,
+        )
+        raise typer.Exit(code=EXIT_BAD_INPUT)
+
+    serve(
+        cwd,
+        transport="http",
+        host=effective_host,
+        port=parsed_port,
+        token=token,
+    )
 
 
 # ── did-you-mean wrapper for the console_script entrypoint ───────────────────
