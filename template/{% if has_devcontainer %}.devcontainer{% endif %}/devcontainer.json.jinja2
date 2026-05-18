@@ -1,0 +1,21 @@
+{
+  "name": "{{ project_name }}",
+  "image": "mcr.microsoft.com/devcontainers/base:bookworm",
+  "features": {
+    "ghcr.io/jdx/mise-dev-container/mise:0": {
+      "version": "latest"
+    }
+  },
+  "postCreateCommand": "mise install && uv sync",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "charliermarsh.ruff",
+        "ms-python.python",
+        "biomejs.biome",
+        "skellock.just"
+      ]
+    }
+  },
+  "remoteUser": "vscode"
+}
