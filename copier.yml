@@ -1,14 +1,11 @@
 # verify-kit Copier configuration
 #
-# TODO (Plan 03): Replace `default: false` env-detection stubs with a real
-# `_jinja_extensions` Python extension in template_extensions/env_detect.py
-# that probes the user's home dir at prompt time. For now, all has_* agent
-# booleans default to false and the user confirms manually.
-#
 # Template structure: all generated content lives under template/ (Area 1).
 # Copier renders .jinja2-suffixed files and strips the suffix from output names.
 
 _subdirectory: template
+_jinja_extensions:
+  - template_extensions.env_detect.EnvDetectExtension
 _answers_file: .copier-answers.yml
 _templates_suffix: .jinja2
 _min_copier_version: "9.4"
@@ -65,38 +62,39 @@ package_name:
   default: "{{ project_slug | replace('-', '_') }}"
 
 # ── Group: Agent integrations ─────────────────────────────────────────────────
-# Defaults use plain `false` for now; Plan 03 replaces with env-detection.
-# Help text notes the file path that WILL trigger auto-detection post-Plan 03.
+# Defaults auto-detected from user's home directory via the env_detect Jinja filter
+# (template_extensions/env_detect.py). The common case is "press Enter" when the
+# tool is already installed.
 
 has_claude_code:
   type: bool
   help: "Include Claude Code conventions (CLAUDE.md, .claude/ hooks). Auto-detected: ~/.claude/ exists."
-  default: false
+  default: "{{ 'claude_code' | env_detect }}"
 
 has_cursor:
   type: bool
   help: "Include Cursor rules (.cursor/rules/verify-kit.mdc). Auto-detected: ~/.cursor/ exists."
-  default: false
+  default: "{{ 'cursor' | env_detect }}"
 
 has_windsurf:
   type: bool
   help: "Include Windsurf rules (.windsurf/rules/verify-kit.md). Auto-detected: ~/.codeium/windsurf/ exists."
-  default: false
+  default: "{{ 'windsurf' | env_detect }}"
 
 has_copilot:
   type: bool
-  help: "Include GitHub Copilot instructions (.github/copilot-instructions.md). Auto-detected: ~/.config/gh-copilot/ exists."
-  default: false
+  help: "Include GitHub Copilot instructions (.github/copilot-instructions.md). Auto-detected: ~/.config/github-copilot/ exists."
+  default: "{{ 'copilot' | env_detect }}"
 
 has_zed:
   type: bool
   help: "Include Zed AI context (.zed/settings.json context_servers). Auto-detected: ~/.config/zed/ exists."
-  default: false
+  default: "{{ 'zed' | env_detect }}"
 
 has_continue:
   type: bool
   help: "Include Continue MCP config (.continue/mcpServers/). Auto-detected: ~/.continue/ exists."
-  default: false
+  default: "{{ 'continue' | env_detect }}"
 
 # ── Group: Add-ons ────────────────────────────────────────────────────────────
 
