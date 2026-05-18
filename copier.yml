@@ -1,0 +1,146 @@
+# verify-kit Copier configuration
+#
+# TODO (Plan 03): Replace `default: false` env-detection stubs with a real
+# `_jinja_extensions` Python extension in template_extensions/env_detect.py
+# that probes the user's home dir at prompt time. For now, all has_* agent
+# booleans default to false and the user confirms manually.
+#
+# Template structure: all generated content lives under template/ (Area 1).
+# Copier renders .jinja2-suffixed files and strips the suffix from output names.
+
+_subdirectory: template
+_answers_file: .copier-answers.yml
+_templates_suffix: .jinja2
+_min_copier_version: "9.4"
+_envops:
+  keep_trailing_newline: true
+  lstrip_blocks: true
+  trim_blocks: true
+_message_before_copy: "Welcome to verify-kit. ~10 prompts grouped as Identity / Agent integrations / Add-ons / Optional."
+_message_after_copy: "Next: cd into your project, run `mise install`, then `just verify`."
+
+# ── Group: Identity ──────────────────────────────────────────────────────────
+
+project_name:
+  type: str
+  help: "Human-readable project name (e.g. 'My Cool App'). Used in README and docs only."
+
+project_description:
+  type: str
+  help: "One-sentence description of what this project does."
+
+author_name:
+  type: str
+  help: "Your full name (used in LICENSE and package metadata)."
+
+author_email:
+  type: str
+  help: "Your email address (used in package metadata)."
+
+license:
+  type: str
+  help: "Open-source license for the generated project."
+  choices:
+    - MIT
+    - Apache-2.0
+    - BSD-3-Clause
+    - Unlicense
+  default: MIT
+
+# Derived (computed) identity prompts — NOT shown to the user (when: false).
+# project_name is a free-form human string and is NOT a valid PEP 621 package
+# name. These two prompts derive safe identifiers from it via Jinja regex.
+# The regex_replace filter is provided by jinja2-ansible-filters (Copier 9 dep).
+
+project_slug:
+  type: str
+  help: "PEP 621 / package name slug derived from project_name (kebab-case)."
+  when: false
+  default: "{{ project_name | lower | regex_replace('[^a-z0-9]+', '-') | regex_replace('^-+|-+$', '') }}"
+
+package_name:
+  type: str
+  help: "Python import name derived from project_slug (snake_case)."
+  when: false
+  default: "{{ project_slug | replace('-', '_') }}"
+
+# ── Group: Agent integrations ─────────────────────────────────────────────────
+# Defaults use plain `false` for now; Plan 03 replaces with env-detection.
+# Help text notes the file path that WILL trigger auto-detection post-Plan 03.
+
+has_claude_code:
+  type: bool
+  help: "Include Claude Code conventions (CLAUDE.md, .claude/ hooks). Auto-detected: ~/.claude/ exists."
+  default: false
+
+has_cursor:
+  type: bool
+  help: "Include Cursor rules (.cursor/rules/verify-kit.mdc). Auto-detected: ~/.cursor/ exists."
+  default: false
+
+has_windsurf:
+  type: bool
+  help: "Include Windsurf rules (.windsurf/rules/verify-kit.md). Auto-detected: ~/.codeium/windsurf/ exists."
+  default: false
+
+has_copilot:
+  type: bool
+  help: "Include GitHub Copilot instructions (.github/copilot-instructions.md). Auto-detected: ~/.config/gh-copilot/ exists."
+  default: false
+
+has_zed:
+  type: bool
+  help: "Include Zed AI context (.zed/settings.json context_servers). Auto-detected: ~/.config/zed/ exists."
+  default: false
+
+has_continue:
+  type: bool
+  help: "Include Continue MCP config (.continue/mcpServers/). Auto-detected: ~/.continue/ exists."
+  default: false
+
+# ── Group: Add-ons ────────────────────────────────────────────────────────────
+
+has_backend:
+  type: bool
+  help: "Include FastAPI + Postgres backend add-on (phases 4+)."
+  default: true
+
+has_llm:
+  type: bool
+  help: "Include LLM integration add-on with pydantic-ai, LiteLLM, Langfuse (phases 5+)."
+  default: true
+
+has_logfire:
+  type: bool
+  help: "Enable Logfire auto-tracing for Anthropic/OpenAI calls (requires has_backend)."
+  default: false
+  when: "{{ has_backend }}"
+
+has_fastapi_mcp:
+  type: bool
+  help: "Mount verify-kit's MCP server directly into the FastAPI app (3-line setup, requires has_backend)."
+  default: false
+  when: "{{ has_backend }}"
+
+has_db:
+  type: bool
+  help: "Include SQLAlchemy + asyncpg + Alembic database layer (requires has_backend)."
+  default: true
+  when: "{{ has_backend }}"
+
+llm_backend:
+  type: str
+  help: "LLM observability backend (requires has_llm)."
+  choices:
+    - langfuse-cloud
+    - langfuse-self-host
+    - none
+  default: langfuse-cloud
+  when: "{{ has_llm }}"
+
+# ── Group: Optional ───────────────────────────────────────────────────────────
+
+has_devcontainer:
+  type: bool
+  help: "Include .devcontainer/devcontainer.json with mise Feature (opt-in only)."
+  default: false

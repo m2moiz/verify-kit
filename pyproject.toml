@@ -1,0 +1,23 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "verify-kit"
+version = "0.1.0a0"
+description = "Reusable Copier-based scaffold template with self-verifiable agentic-coding harness"
+readme = "README.md"
+license = { text = "MIT" }
+authors = [{ name = "m2moiz", email = "m.moiz1995@gmail.com" }]
+requires-python = ">=3.11"
+dependencies = []
+
+[dependency-groups]
+dev = [
+    "copier>=9.4",
+    "pytest>=8",
+    "pyyaml",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
