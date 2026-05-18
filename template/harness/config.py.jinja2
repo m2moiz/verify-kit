@@ -1,0 +1,223 @@
+"""harness.config — `[tool.verify-kit]` config loader.
+
+Single-source-of-truth config home per UX-03 / Decision 4.3:
+
+- Lives at ``[tool.verify-kit]`` in the consumer's ``pyproject.toml``
+- Parsed via stdlib ``tomllib`` (no third-party YAML, no eval)
+- Validated by Pydantic v2 with ``extra="forbid"`` so unknown keys raise
+- Unknown top-level keys are rewritten through :func:`harness.didyoumean.suggest`
+  to produce a "did you mean: cache" hint (UX-02 third surface)
+- A stray ``verify-kit.yaml`` / ``.yml`` in the project root logs a warning
+  via ``harness.logging.log`` and is otherwise ignored (Decision 4.3 —
+  warn-and-ignore; no precedence merge)
+
+**Accepted TOML forms** (normalized before validation):
+
+1. Nested tables (preferred)::
+
+       [tool.verify-kit.cache]
+       max_size_mb = 200
+
+2. Flat-dotted (quoted keys)::
+
+       [tool.verify-kit]
+       "cache.max_size_mb" = 200
+
+3. Quoted dotted check id::
+
+       [tool.verify-kit.checks."lint.ruff"]
+       warn_as_error = false
+
+Unquoted nested check IDs (``[tool.verify-kit.checks.lint.ruff]``) are
+**explicitly not supported**: ``lint`` would be ambiguous with a sub-table.
+Use the quoted form instead.
+"""
+from __future__ import annotations
+
+import tomllib
+from pathlib import Path
+from typing import Any, Literal
+
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
+
+from harness.didyoumean import suggest
+from harness.logging import log
+
+
+# ── Sub-models ───────────────────────────────────────────────────────────────
+
+
+class FormatConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    default: Literal[
+        "pretty", "json", "jsonl", "junit", "sarif", "otlp"
+    ] = "pretty"
+
+
+class CacheConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    max_size_mb: int = 100
+    enabled: bool = True
+
+
+class ChecksConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    disabled: list[str] = Field(default_factory=list)
+    per_check: dict[str, dict[str, Any]] = Field(default_factory=dict)
+
+
+class HarnessConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    format: FormatConfig = Field(default_factory=FormatConfig)
+    cache: CacheConfig = Field(default_factory=CacheConfig)
+    checks: ChecksConfig = Field(default_factory=ChecksConfig)
+
+
+# ── Normalization helpers ────────────────────────────────────────────────────
+
+
+def _flatten_dotted_keys(raw: dict[str, Any]) -> dict[str, Any]:
+    """Expand top-level dotted-string keys (e.g. ``"cache.max_size_mb"``).
+
+    Only flattens keys at the immediate top level. Nested dicts are walked
+    once to flatten their own dotted keys. Existing nested table values win
+    over flat ones if both forms appear for the same path (last-write wins,
+    flat applied first).
+    """
+    out: dict[str, Any] = {}
+    flat_entries: list[tuple[str, Any]] = []
+    for k, v in raw.items():
+        if "." in k:
+            flat_entries.append((k, v))
+        else:
+            out[k] = v
+    # Apply flat entries by drilling into out
+    for dotted_key, value in flat_entries:
+        parts = dotted_key.split(".")
+        cursor = out
+        for part in parts[:-1]:
+            if part not in cursor or not isinstance(cursor[part], dict):
+                cursor[part] = {}
+            cursor = cursor[part]
+        cursor[parts[-1]] = value
+    return out
+
+
+def _normalize_checks(raw_checks: dict[str, Any]) -> dict[str, Any]:
+    """Split ``checks`` sub-table into known fields + per_check overrides.
+
+    Keys whose names look like a check id (contain a dot) are lifted into
+    ``per_check[<id>]``. Other keys stay as ChecksConfig fields. The
+    ``per_check`` entry itself, if present in the raw input, is merged.
+    """
+    if not raw_checks:
+        return {}
+    out: dict[str, Any] = {}
+    per_check: dict[str, dict[str, Any]] = {}
+    for key, val in raw_checks.items():
+        if key == "per_check" and isinstance(val, dict):
+            per_check.update(val)
+            continue
+        if "." in key and isinstance(val, dict):
+            per_check[key] = val
+            continue
+        out[key] = val
+    if per_check:
+        out["per_check"] = per_check
+    return out
+
+
+def _suggest_for_error(unknown_key: str, model: type[BaseModel]) -> str:
+    valid = list(model.model_fields.keys())
+    matches = suggest(unknown_key, valid)
+    if matches:
+        return f"did you mean: {matches[0]}"
+    return "no close match"
+
+
+# ── Public API ──────────────────────────────────────────────────────────────
+
+
+def load_config(pyproject_path: Path = Path("pyproject.toml")) -> HarnessConfig:
+    """Load ``[tool.verify-kit]`` from the given pyproject.toml.
+
+    Args:
+        pyproject_path: Path to the consumer's ``pyproject.toml``. Callers
+            typically pass ``cwd / "pyproject.toml"``. Missing file → defaults.
+
+    Returns:
+        A fully-validated :class:`HarnessConfig`.
+
+    Raises:
+        ValueError: when an unknown top-level key is found. The message
+            includes a did-you-mean suggestion when one is close enough.
+    """
+    pyproject_path = Path(pyproject_path)
+
+    # Stray-YAML check happens regardless of whether pyproject.toml exists,
+    # because the warning is about config-source confusion.
+    project_root = pyproject_path.parent if pyproject_path.parent != Path("") else Path(".")
+    for stray in (project_root / "verify-kit.yaml", project_root / "verify-kit.yml"):
+        if stray.exists():
+            log.warning(
+                "verify-kit.yaml is not the config source; "
+                "use [tool.verify-kit] in pyproject.toml. File ignored.",
+                path=str(stray),
+            )
+
+    if not pyproject_path.exists():
+        return HarnessConfig()
+
+    try:
+        text = pyproject_path.read_text(encoding="utf-8")
+        data = tomllib.loads(text)
+    except (OSError, tomllib.TOMLDecodeError) as exc:
+        raise ValueError(f"Failed to parse {pyproject_path}: {exc}") from exc
+
+    raw = data.get("tool", {}).get("verify-kit", {})
+    if not raw:
+        return HarnessConfig()
+
+    # 1) flatten any top-level "a.b.c" = X entries into nested form
+    normalized = _flatten_dotted_keys(raw)
+
+    # 2) extract checks sub-table and lift dotted ids into per_check
+    if "checks" in normalized and isinstance(normalized["checks"], dict):
+        normalized["checks"] = _normalize_checks(normalized["checks"])
+
+    try:
+        return HarnessConfig(**normalized)
+    except ValidationError as exc:
+        # Translate the first extra_forbidden error into a did-you-mean ValueError.
+        for err in exc.errors():
+            if err.get("type") == "extra_forbidden":
+                loc = err.get("loc", ())
+                if not loc:
+                    continue
+                unknown_key = str(loc[-1])
+                # Walk the nested path to find the model the unknown key was rejected from
+                model: type[BaseModel] = HarnessConfig
+                for segment in loc[:-1]:
+                    field = model.model_fields.get(str(segment))
+                    if field is None:
+                        break
+                    annotation = field.annotation
+                    if isinstance(annotation, type) and issubclass(
+                        annotation, BaseModel
+                    ):
+                        model = annotation
+                hint = _suggest_for_error(unknown_key, model)
+                raise ValueError(
+                    f"Unknown config key {unknown_key!r}. {hint}"
+                ) from exc
+        # No extra_forbidden — re-raise as ValueError with the pydantic message
+        raise ValueError(str(exc)) from exc
+
+
+__all__ = [
+    "HarnessConfig",
+    "FormatConfig",
+    "CacheConfig",
+    "ChecksConfig",
+    "load_config",
+]
