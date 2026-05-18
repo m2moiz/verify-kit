@@ -1,0 +1,25 @@
+---
+name: verify-kit-verify
+description: Run `just verify` (or `verify-kit verify`) against the current project to confirm a slice (or all slices) of the verification suite exits 0. Use when the user asks to "check", "verify", "run tests", "make sure X works", or before declaring any task done.
+---
+
+# Skill: verify-kit-verify
+
+## When to use
+- User asks "is X working", "run the tests", "verify", "check this".
+- Before declaring any task complete.
+- When asked "what does X check".
+
+## How to invoke
+1. From project root: `just verify --quick` for the fast path; `just verify` for full.
+2. JSON output: `verify-kit verify --format=json` → `.verify/report.json`.
+3. SARIF for VS Code Problems: `.verify/report.sarif` is written after every run.
+
+## Reading results
+- Exit 0 → green. Exit 1 → check failures. Exit 2 → tool error (lint config broken etc).
+- Specific check failure: `verify-kit verify --check=<name>` to re-run one.
+- Did-you-mean: misspelled checks emit a suggestion.
+
+## What NOT to do
+- Don't bypass with `VERIFY_KIT_SKIP=1` unless explicitly authorized.
+- Don't edit `.verify/cache.db` — let the harness manage it.

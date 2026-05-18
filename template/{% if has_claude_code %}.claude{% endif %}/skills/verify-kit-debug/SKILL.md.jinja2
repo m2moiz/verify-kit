@@ -1,0 +1,21 @@
+---
+name: verify-kit-debug
+description: Investigate a recent verify failure by reading the trace, the JSON report, or the SARIF findings. Use when the user asks to "debug", "investigate", "why did X fail", "look at the trace", or to read the last verify run's details.
+---
+
+# Skill: verify-kit-debug
+
+## When to use
+- After a verify failure when the terminal output isn't enough.
+- User says "look at the trace", "what happened", "why did it fail".
+
+## How to invoke
+1. Last trace as terminal waterfall: `verify-kit trace --last`.
+2. Last trace as JSON: `verify-kit trace --last --format=json`.
+3. Last report (machine-readable): `cat .verify/report.json | jq .`.
+4. SARIF (clickable in VS Code): `code .verify/report.sarif`.
+
+## Reading the trace
+- Each check is a span. Slow spans surface first in the waterfall.
+- Span attributes carry `check.id`, `check.exit_code`, `cache.hit`, `trace_id`.
+- For backend phases (P4+): HTTP request spans share `trace_id` with their checks.
