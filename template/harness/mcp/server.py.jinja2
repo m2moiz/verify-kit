@@ -1,0 +1,89 @@
+"""harness.mcp.server — fastmcp server entry for verify-kit (Plan 03-01 T02).
+
+Public surface: ``serve(cwd, transport="stdio", host="127.0.0.1", port=7878,
+token=None) -> None``.
+
+Cwd contract (REVIEW-CHECKLIST §1):
+    The first positional argument is ``cwd: Path`` and has NO default. The
+    function NEVER reads the process CWD; every cwd-dependent operation
+    inside the tool layer is closed over this argument by
+    :func:`harness.mcp.tools.register_tools`.
+
+HTTP auth boundary (Plan 03-01 T03 review fix HIGH-#2):
+    fastmcp does NOT expose a stable per-call middleware injection point in
+    ``mcp.run(transport="http")``. The supported integration shape is:
+        app = mcp.http_app()                     # Starlette ASGI app
+        app.add_middleware(BearerAuthMiddleware, token=token)
+        uvicorn.run(app, host=host, port=port)
+    We accept either ``http_app`` or ``streamable_http_app`` to absorb the
+    fastmcp 2.x → 2.y accessor rename without breaking installs.
+
+After-return ordering (REVIEW-CHECKLIST §2):
+    The function ends with the blocking ``mcp.run(...)`` (stdio) or
+    ``uvicorn.run(app, ...)`` (http) call. No statements follow.
+"""
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Literal
+
+
+def serve(
+    cwd: Path,
+    transport: Literal["stdio", "http"] = "stdio",
+    host: str = "127.0.0.1",
+    port: int = 7878,
+    token: str | None = None,
+) -> None:
+    """Start the verify-kit MCP server.
+
+    Args:
+        cwd: Project root every tool operates against. REQUIRED — no default.
+        transport: ``"stdio"`` (default) or ``"http"``.
+        host: Bind address for HTTP transport.
+        port: TCP port for HTTP transport.
+        token: Bearer token required for HTTP transport. When ``transport ==
+            "http"``, ``token`` MUST be a non-empty string; callers (the
+            ``verify-kit mcp serve`` CLI) enforce this with miette exit-code
+            ``E_MCP_AUTH_REQUIRED`` before reaching this function.
+    """
+    # Lazy imports so the stdio fast-path doesn't drag uvicorn/starlette in
+    # for every tool author who imports ``harness.mcp`` for the ``serve``
+    # symbol.
+    from fastmcp import FastMCP
+
+    from harness.mcp.tools import register_tools
+
+    mcp = FastMCP(name="verify-kit")
+    register_tools(mcp, cwd=cwd)
+
+    if transport == "stdio":
+        # stdio: parent process owns the trust boundary; no middleware path.
+        mcp.run()
+        return
+
+    # transport == "http": ASGI app + bearer-auth middleware + uvicorn.
+    import uvicorn
+
+    from harness.mcp.auth import BearerAuthMiddleware
+
+    if not token:
+        # Defense-in-depth — CLI should have already rejected this case.
+        raise ValueError("HTTP transport requires a non-empty bearer token")
+
+    # fastmcp renamed the accessor between 2.x minors. Prefer the new name
+    # (``http_app``); fall back to the older ``streamable_http_app``.
+    app_factory = getattr(mcp, "http_app", None) or getattr(
+        mcp, "streamable_http_app", None
+    )
+    if app_factory is None:  # pragma: no cover — protective only
+        raise RuntimeError(
+            "fastmcp build does not expose http_app() or streamable_http_app(); "
+            "pin fastmcp>=2.0,<3.0 in pyproject.toml"
+        )
+    app = app_factory()
+    app.add_middleware(BearerAuthMiddleware, token=token)
+    uvicorn.run(app, host=host, port=port, log_level="warning")
+
+
+__all__ = ["serve"]

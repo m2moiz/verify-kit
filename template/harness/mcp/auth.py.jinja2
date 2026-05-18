@@ -1,0 +1,65 @@
+"""harness.mcp.auth — bearer-token middleware for HTTP transport (Plan 03-01 T03).
+
+Exports ``BearerAuthMiddleware`` — a Starlette :class:`BaseHTTPMiddleware`
+subclass installed by :func:`harness.mcp.server.serve` when running over
+HTTP. starlette ships as a peer-dep of fastmcp so the import is always
+satisfiable.
+
+Constant-time comparison (MCP-05):
+    The token check uses :func:`hmac.compare_digest` instead of ``==`` to
+    prevent timing oracles. ``compare_digest`` works on equal-length strings
+    of the same type; we coerce to ``str`` and rely on its internal
+    length-aware comparison.
+
+Health bypass:
+    Requests whose path starts with ``/health`` skip auth so external
+    liveness probes (Docker, k8s) don't need to embed the token.
+
+Redacted logging:
+    Any log line that includes the Authorization header MUST emit
+    ``Authorization: Bearer ***`` — never the raw token. This middleware
+    does NOT log at all (warning-level logging is uvicorn's job); the rule
+    matters for callers that wrap us. See ``tests/test_mcp_server.py::
+    test_http_token_not_logged``.
+"""
+from __future__ import annotations
+
+import hmac
+
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request
+from starlette.responses import JSONResponse, Response
+
+
+class BearerAuthMiddleware(BaseHTTPMiddleware):
+    """Reject HTTP requests whose ``Authorization: Bearer <x>`` doesn't match.
+
+    Args:
+        app: ASGI app to wrap (typically the fastmcp Starlette app).
+        token: Expected bearer token. Must be a non-empty string.
+    """
+
+    def __init__(self, app, token: str) -> None:
+        super().__init__(app)
+        if not token:
+            raise ValueError("BearerAuthMiddleware requires a non-empty token")
+        self._token = token
+
+    async def dispatch(self, request: Request, call_next) -> Response:
+        # Health-probe bypass — unauthenticated liveness checks are fine.
+        if request.url.path.startswith("/health"):
+            return await call_next(request)
+
+        header = request.headers.get("authorization", "")
+        prefix = "Bearer "
+        if not header.startswith(prefix):
+            return JSONResponse({"error": "unauthorized"}, status_code=401)
+        supplied = header[len(prefix):]
+        # Constant-time compare. Both args must be the same type and length;
+        # compare_digest handles the length-mismatch case safely.
+        if not hmac.compare_digest(supplied, self._token):
+            return JSONResponse({"error": "unauthorized"}, status_code=401)
+        return await call_next(request)
+
+
+__all__ = ["BearerAuthMiddleware"]

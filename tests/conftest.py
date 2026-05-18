@@ -1,6 +1,9 @@
 """
 Pytest fixtures for verify-kit template smoke tests.
 """
+import os
+import shutil
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -32,3 +35,35 @@ def scratch_project(tmp_path: Path) -> Path:
 def scratch_project_installed(tmp_path_factory: pytest.TempPathFactory) -> Path:
     """Session-scoped render + `uv pip install -e .` for slow/smoke tests."""
     return render_and_install(tmp_path_factory.mktemp("installed-scratch"))
+
+
+@pytest.fixture(scope="session")
+def mcp_installed_scratch(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """Render + install a scaffold for the MCP↔CLI contract suite (Plan 03-01).
+
+    Install command is ``uv pip install -e .`` from the rendered scaffold
+    root — NOT ``uv pip install -e harness/`` and NOT
+    ``uv pip install -e tmp_path/harness`` (Plan 03-01 acceptance).
+
+    Skips when ``uv`` is not on PATH. Session-scoped so the install cost is
+    paid once.
+    """
+    if shutil.which("uv") is None:
+        pytest.skip("uv not available on PATH")
+    root = tmp_path_factory.mktemp("mcp-byte-id")
+    scratch = render_scratch_project(root)
+    subprocess.run(
+        ["uv", "venv", "--python", "3.13", str(scratch / ".venv")],
+        cwd=scratch,
+        check=True,
+        capture_output=True,
+    )
+    env = {**os.environ, "VIRTUAL_ENV": str(scratch / ".venv")}
+    subprocess.run(
+        ["uv", "pip", "install", "-e", "."],
+        cwd=scratch,
+        check=True,
+        env=env,
+        capture_output=True,
+    )
+    return scratch

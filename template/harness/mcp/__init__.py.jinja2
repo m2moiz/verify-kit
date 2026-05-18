@@ -1,0 +1,26 @@
+"""harness.mcp — fastmcp-based MCP server for verify-kit (Plan 03-01).
+
+Public surface intentionally minimal:
+
+    from harness.mcp import serve  # CLI entry: `verify-kit mcp serve`
+    from harness.mcp import Tool   # alias for fastmcp's tool primitive
+
+The 13-tool roster is registered by ``harness.mcp.tools.register_tools``
+when ``serve`` is called. Every tool function is closed over an explicit
+``cwd: Path`` — the server NEVER reads ``Path.cwd()`` at import time or
+inside tool bodies (REVIEW-CHECKLIST §1).
+"""
+from __future__ import annotations
+
+from harness.mcp.server import serve
+
+# Re-export fastmcp's tool decorator under the local name ``Tool`` so callers
+# can write ``from harness.mcp import Tool`` without depending directly on
+# fastmcp's module layout. (Pyright resolves this through the fastmcp package
+# at the consumer's install time.)
+from fastmcp import FastMCP as _FastMCP  # noqa: F401  (re-export anchor)
+
+Tool = _FastMCP.tool  # type: ignore[assignment]
+
+
+__all__ = ["serve", "Tool"]

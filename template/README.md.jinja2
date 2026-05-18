@@ -41,6 +41,8 @@ machine-readable output formats rather than scraping pretty stdout.
 - `just verify --full` — includes slow tier.
 - `just verify --no-cache` — bypass the cache (force re-execution).
 - `just verify-clean` — wipe `.verify/` artifacts.
+- `just mcp [args]` — start the verify-kit MCP server over stdio (forward args).
+- `just mcp-http port=7878 token=<t>` — start the MCP server over HTTP with bearer-token auth.
 
 ### Output formats
 

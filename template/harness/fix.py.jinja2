@@ -1,0 +1,67 @@
+"""harness.fix — SARIF-driven fix proposal (Plan 03-01 T04).
+
+Phase-3 scope (no LLM):
+    :func:`propose_from_sarif` reads the latest SARIF report written by
+    ``verify-kit verify`` (``cwd/.verify/report.sarif``) and returns the
+    full SARIF envelope verbatim. Phase 5 will layer LLM-driven proposals
+    on top of this same shape — the SARIF envelope IS the contract.
+
+Empty-state:
+    When no SARIF report exists yet, return the canonical empty envelope:
+    ``{"version": "2.1.0", "runs": [{"tool": {"driver": ...}, "results": []}]}``.
+    This keeps the MCP ``fix_propose`` tool shape stable across "clean repo"
+    and "first-run, never verified" cases.
+
+Cwd contract (REVIEW-CHECKLIST §1):
+    Path always rooted at the explicit ``cwd`` argument; never reads the
+    process CWD.
+"""
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+
+_TOOL_NAME = "verify-kit"
+_TOOL_URI = "https://github.com/m2moiz/verify-kit"
+
+
+def _empty_envelope() -> dict:
+    return {
+        "version": "2.1.0",
+        "runs": [
+            {
+                "tool": {
+                    "driver": {
+                        "name": _TOOL_NAME,
+                        "informationUri": _TOOL_URI,
+                        "rules": [],
+                    }
+                },
+                "results": [],
+            }
+        ],
+    }
+
+
+def propose_from_sarif(*, cwd: Path) -> dict:
+    """Return the SARIF envelope from ``cwd/.verify/report.sarif`` or empty.
+
+    Phase-3 stub: pass-through. Phase-5 will replace this with an LLM that
+    transforms ``runs[].results[]`` into ``fixes[]`` proposals — but the
+    top-level envelope shape (``version`` + ``runs``) stays the contract
+    that consumers depend on (Plan 03-01 T08).
+    """
+    report_path = cwd / ".verify" / "report.sarif"
+    if not report_path.exists():
+        return _empty_envelope()
+    try:
+        data = json.loads(report_path.read_text())
+    except (ValueError, OSError):
+        return _empty_envelope()
+    if not isinstance(data, dict) or "version" not in data or "runs" not in data:
+        return _empty_envelope()
+    return data
+
+
+__all__ = ["propose_from_sarif"]
