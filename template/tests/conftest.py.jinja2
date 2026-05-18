@@ -1,0 +1,51 @@
+"""Shared pytest fixtures for the scaffolded project's test suite.
+
+Notes:
+- The ``tmp_project`` fixture intentionally renders a MINIMAL pyproject root
+  copied from ``tests/fixtures/fake_project/``. It is NOT a harness host —
+  ``subprocess.run(["verify-kit", ...], cwd=tmp_project)`` will fail because
+  ``fake_project`` does not declare the ``harness`` package or the
+  ``verify-kit`` console script. Use it for UNIT tests of config/cache
+  loaders that need a project root WITHOUT installing the harness.
+
+- For any test that needs to invoke the ``verify-kit`` console script, run
+  against the rendered scaffold root (see ``smoke/test_verify_smoke.py``
+  and ``golden/test_json_output.py`` for the canonical pattern).
+
+- The autouse ``_structlog_reset`` fixture clears structlog default config
+  between tests. Without it, ``cache_logger_on_first_use=True`` makes log
+  configuration leak across tests (RESEARCH.md §11, mitigation R4).
+"""
+from __future__ import annotations
+
+import shutil
+from pathlib import Path
+
+import pytest
+
+try:
+    import structlog
+except ImportError:  # pragma: no cover - structlog is a hard dependency
+    structlog = None  # type: ignore[assignment]
+
+
+_FIXTURE_ROOT = Path(__file__).parent / "fixtures" / "fake_project"
+
+
+@pytest.fixture
+def tmp_project(tmp_path: Path) -> Path:
+    """Copy fixtures/fake_project/* into tmp_path and return the path.
+
+    Use this for UNIT tests that need a minimal pyproject root. Do NOT use it
+    to invoke the ``verify-kit`` console script — see the module docstring.
+    """
+    dst = tmp_path / "fake_project"
+    shutil.copytree(_FIXTURE_ROOT, dst)
+    return dst
+
+
+@pytest.fixture(autouse=True)
+def _structlog_reset() -> None:
+    """Reset structlog default config before each test (RESEARCH.md §11, R4)."""
+    if structlog is not None:
+        structlog.reset_defaults()

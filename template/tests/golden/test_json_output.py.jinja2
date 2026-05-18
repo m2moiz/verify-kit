@@ -1,0 +1,86 @@
+"""Golden snapshot test: ``verify-kit verify --quick --format=json`` shape.
+
+Runs against the SCAFFOLDED project root (NOT the minimal ``fake_project``
+fixture) because we need the ``verify-kit`` console script available, and
+the fixture project does not install it. The rendered scaffold's
+``pyproject.toml`` declares ``harness`` and exposes ``verify-kit``, so
+``cwd = PROJECT_ROOT`` is the right invocation context.
+
+Snapshot bootstrapping: on first run, the snapshot file is written and the
+test skips with a "bootstrapped" reason. Re-run to verify the saved shape.
+To update an existing snapshot, DELETE ``snapshots/report_pass.json`` and
+re-run.
+
+The comparison is SHAPE-only:
+- Top-level keys match exactly
+- ``summary`` keys match exactly
+- ``format_version`` is byte-equal
+- The set of ``check_id`` values matches the snapshot's set
+- Every status is in the allowed set (``pass``, ``skip``) — environments
+  where ``just`` is missing degrade to ``skip``, not ``fail``
+
+Marked ``@pytest.mark.slow`` (subprocess-heavy, same gate as smoke).
+"""
+from __future__ import annotations
+
+import json
+import os
+import subprocess
+from pathlib import Path
+
+import pytest
+
+
+SNAPSHOT = Path(__file__).parent / "snapshots" / "report_pass.json"
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+
+
+@pytest.mark.slow
+@pytest.mark.skipif(
+    not os.environ.get("RUN_SLOW_TESTS"),
+    reason="set RUN_SLOW_TESTS=1 to run golden snapshot tests",
+)
+def test_json_output_shape() -> None:
+    """Report JSON shape is stable vs ``snapshots/report_pass.json``."""
+    result = subprocess.run(
+        ["uv", "run", "verify-kit", "verify", "--quick", "--format=json"],
+        cwd=PROJECT_ROOT,
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    # exit 0 (pass) or 1 (fail) both produce valid JSON; we only need to parse.
+    assert result.stdout.strip(), (
+        f"empty stdout (exit {result.returncode})\nSTDERR:\n{result.stderr}"
+    )
+    actual = json.loads(result.stdout)
+
+    if not SNAPSHOT.exists():
+        SNAPSHOT.parent.mkdir(parents=True, exist_ok=True)
+        SNAPSHOT.write_text(json.dumps(actual, indent=2, sort_keys=True))
+        pytest.skip("snapshot bootstrapped — re-run to verify")
+
+    expected = json.loads(SNAPSHOT.read_text())
+
+    # Top-level keys match exactly.
+    assert set(actual.keys()) == set(expected.keys()), (
+        f"top-level keys differ: actual={sorted(actual.keys())} "
+        f"expected={sorted(expected.keys())}"
+    )
+
+    # format_version is part of the contract — must match byte-for-byte.
+    assert actual.get("format_version") == expected.get("format_version")
+
+    # summary keys match exactly (values are timing-sensitive — shape only).
+    assert set(actual["summary"].keys()) == set(expected["summary"].keys())
+
+    # check_id set matches; statuses are restricted to pass/skip (degradation OK).
+    actual_ids = {c["check_id"] for c in actual["checks"]}
+    expected_ids = {c["check_id"] for c in expected["checks"]}
+    assert actual_ids == expected_ids, (
+        f"check_id set differs: actual={actual_ids} expected={expected_ids}"
+    )
+    statuses = {c["status"] for c in actual["checks"]}
+    assert statuses <= {"pass", "skip"}, (
+        f"unexpected non-pass/skip statuses in golden run: {statuses}"
+    )

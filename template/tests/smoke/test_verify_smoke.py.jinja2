@@ -1,0 +1,53 @@
+"""End-to-end smoke: copy harness + manifests into tmp_path, run verify --quick.
+
+This test runs inside a scaffolded project. The scaffolded project's
+``pyproject.toml`` already declares ``harness`` as the local package and
+``verify-kit`` as the console script, so we copy the harness tree and
+manifests into ``tmp_path`` and run ``uv run verify-kit verify --quick``
+there. We do NOT use the ``fake_project`` fixture — that fixture is a
+minimal pyproject root for unit tests, not a harness host.
+
+Gated by ``@pytest.mark.slow`` (same gate as Phase 1). Run with
+``RUN_SLOW_TESTS=1 uv run pytest tests/smoke/``.
+"""
+from __future__ import annotations
+
+import os
+import shutil
+import subprocess
+from pathlib import Path
+
+import pytest
+
+
+_PROJECT_ROOT = Path(__file__).resolve().parents[2]
+
+
+@pytest.mark.slow
+@pytest.mark.skipif(
+    not os.environ.get("RUN_SLOW_TESTS"),
+    reason="set RUN_SLOW_TESTS=1 to run smoke tests",
+)
+def test_verify_quick_exits_zero(tmp_path: Path) -> None:
+    """``verify-kit verify --quick`` in a copy of the project tree exits 0."""
+    # Copy the bits a verify run needs: manifests + harness package.
+    for name in ("pyproject.toml", "justfile", ".mise.toml"):
+        src = _PROJECT_ROOT / name
+        if src.exists():
+            shutil.copy2(src, tmp_path / name)
+    shutil.copytree(_PROJECT_ROOT / "harness", tmp_path / "harness")
+
+    result = subprocess.run(
+        ["uv", "run", "verify-kit", "verify", "--quick"],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    assert result.returncode == 0, (
+        f"verify-kit verify --quick failed (exit {result.returncode})\n"
+        f"STDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}"
+    )
+    assert (tmp_path / ".verify" / "report.json").exists(), (
+        "expected .verify/report.json to be written"
+    )
