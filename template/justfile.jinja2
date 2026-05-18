@@ -42,3 +42,11 @@ trace-down:
 trace *FLAGS:
     OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317 \
         uv run verify-kit trace {% raw %}{{FLAGS}}{% endraw %}
+
+# Start the verify-kit MCP server over stdio (default) or pass --http etc.
+mcp *ARGS:
+    uv run verify-kit mcp serve {% raw %}{{ARGS}}{% endraw %}
+
+# Start the verify-kit MCP server over HTTP with bearer-token auth.
+mcp-http port='7878' token='':
+    uv run verify-kit mcp serve --http :{% raw %}{{port}}{% endraw %} --token={% raw %}{{token}}{% endraw %}
