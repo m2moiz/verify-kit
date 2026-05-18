@@ -1,0 +1,115 @@
+"""harness/observability.py — lazy OpenTelemetry tracer with zero-cost null path.
+
+Decision 3.1 (OBS-01 verification gate): when ``OTEL_EXPORTER_OTLP_ENDPOINT``
+is unset, importing this module MUST NOT import any ``opentelemetry.*``
+submodule. The verification command is::
+
+    OTEL_EXPORTER_OTLP_ENDPOINT= python -X importtime \\
+        -c "import harness.observability" 2>&1 | grep -c opentelemetry  # → 0
+
+To uphold this contract, every OTel import is gated behind the
+``if _otel_enabled:`` block evaluated at module load. The fallback path uses
+in-file ``_NullSpanCtx`` / ``_NullTracer`` objects that mirror the OTel API
+surface used elsewhere in verify-kit (``start_as_current_span``,
+``set_attribute``, ``record_exception``, ``set_status``).
+
+Plan-05's OTLP report emitter calls ``force_flush()`` to drain spans without
+tearing down the provider. Plan-06's CLI registers ``shutdown()`` via
+``atexit`` for clean process exit.
+"""
+from __future__ import annotations
+
+import os
+from typing import Any
+
+# Decision 3.1 — evaluated once at import time. ANY non-empty value enables OTel.
+_otel_enabled: bool = bool(os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT"))
+
+# Will be assigned below depending on _otel_enabled. Typed as Any to dodge the
+# union-of-tracer-shapes typing tax — call sites use the documented surface only.
+tracer: Any
+_provider: Any = None
+
+
+if _otel_enabled:
+    # Real OTel path — only imported when an endpoint is configured.
+    from opentelemetry import trace
+    from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import (
+        OTLPSpanExporter,
+    )
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import BatchSpanProcessor
+
+    _provider = TracerProvider()
+    _provider.add_span_processor(
+        BatchSpanProcessor(
+            OTLPSpanExporter(
+                endpoint=os.environ["OTEL_EXPORTER_OTLP_ENDPOINT"],
+                insecure=True,
+            )
+        )
+    )
+    trace.set_tracer_provider(_provider)
+    tracer = trace.get_tracer(
+        "verify-kit",
+        schema_url="https://opentelemetry.io/schemas/1.11.0",
+    )
+else:
+    # Null path — zero opentelemetry imports. Span/tracer shapes mirror the
+    # OTel surface used by callers so the same `with tracer.start_as_current_span(...)`
+    # pattern works in both modes.
+
+    class _NullSpanCtx:
+        """No-op span object. Mirrors opentelemetry.trace.Span surface."""
+
+        def __enter__(self) -> "_NullSpanCtx":
+            return self
+
+        def __exit__(self, *exc: object) -> bool:
+            return False
+
+        def set_attribute(self, key: str, value: object) -> None:
+            return None
+
+        def record_exception(self, exc: BaseException, **kwargs: object) -> None:
+            return None
+
+        def set_status(self, *args: object, **kwargs: object) -> None:
+            return None
+
+    class _NullTracer:
+        """No-op tracer. ``start_as_current_span`` returns a context manager."""
+
+        def start_as_current_span(self, name: str, **kwargs: object) -> _NullSpanCtx:
+            return _NullSpanCtx()
+
+    tracer = _NullTracer()
+
+
+def shutdown() -> None:
+    """Flush and tear down the tracer provider. Safe to call when disabled.
+
+    Plan-06's CLI registers this via ``atexit`` so the BatchSpanProcessor
+    drains queued spans before the process exits. Calling it more than once
+    is harmless. After ``shutdown()``, no further spans will be exported —
+    callers that need a mid-run drain should use ``force_flush()`` instead
+    (see review MEDIUM-8).
+    """
+    if _otel_enabled and _provider is not None:
+        _provider.shutdown()
+
+
+def force_flush(timeout_millis: int = 2000) -> bool:
+    """Flush queued spans without tearing down the provider.
+
+    The OTLP report emitter (Plan 05) calls this on report-emit so spans are
+    visible in the tracing backend at the moment the report is written, while
+    leaving the provider live for the rest of the process. Returns True when
+    OTel is disabled (no-op success) or when the underlying flush succeeds.
+    """
+    if _otel_enabled and _provider is not None:
+        return bool(_provider.force_flush(timeout_millis=timeout_millis))
+    return True
+
+
+__all__ = ["tracer", "shutdown", "force_flush", "_otel_enabled"]
