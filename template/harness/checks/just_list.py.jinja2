@@ -1,0 +1,85 @@
+"""harness.checks.just_list — `just --list` smoke check.
+
+Migrated from Phase-1 `_check_just_list`. UX-06 graceful degradation: when
+`just` is not installed (FileNotFoundError on subprocess.run), the check
+returns status="skip" with a helpful hint rather than failing — a fresh
+project without `mise install` run yet should not hard-fail `verify --quick`
+(review HIGH-3).
+
+cwd contract (carryover): subprocess.run passes `cwd=cwd` so `just`
+inspects the project under verification, not the process CWD.
+"""
+from __future__ import annotations
+
+import subprocess
+import time
+from pathlib import Path
+
+from harness.models import CheckResult, ErrorEnvelope
+from harness.registry import register
+
+
+@register(
+    "just-list.renders",
+    tier="quick",
+    category="toolchain",
+    description="Verify `just --list` exits 0",
+    inputs=["justfile"],
+    tool="just",
+    skip_if_unavailable=True,
+)
+def check_just_list(cwd: Path) -> CheckResult:
+    """Verify `just --list` exits 0 and returns at least one recipe."""
+    start = time.monotonic()
+
+    try:
+        result = subprocess.run(
+            ["just", "--list"],
+            capture_output=True,
+            text=True,
+            cwd=cwd,
+            timeout=10,
+        )
+    except FileNotFoundError:
+        return CheckResult(
+            check_id="just-list.renders",
+            status="skip",
+            message="just not found; install via `mise install just` or use the Makefile shim",
+            duration_ms=int((time.monotonic() - start) * 1000),
+        )
+
+    if result.returncode != 0:
+        return CheckResult(
+            check_id="just-list.renders",
+            status="fail",
+            message=f"`just --list` exited {result.returncode}: {result.stderr.strip()[:200]}",
+            duration_ms=int((time.monotonic() - start) * 1000),
+            error=ErrorEnvelope(
+                code="just-list.nonzero-exit",
+                message=result.stderr.strip()[:200],
+                hint="Run `just --list` manually to see the error",
+                fix_command="just --list",
+                docs_url="https://just.systems/man/en/",
+            ),
+        )
+
+    if not result.stdout.strip():
+        return CheckResult(
+            check_id="just-list.renders",
+            status="fail",
+            message="`just --list` exited 0 but produced no output",
+            duration_ms=int((time.monotonic() - start) * 1000),
+            error=ErrorEnvelope(
+                code="just-list.empty-output",
+                message="`just --list` produced no recipes",
+                hint="Confirm `justfile` declares at least one recipe",
+                docs_url="https://just.systems/man/en/",
+            ),
+        )
+
+    return CheckResult(
+        check_id="just-list.renders",
+        status="pass",
+        message=f"`just --list` OK ({len(result.stdout.splitlines())} lines)",
+        duration_ms=int((time.monotonic() - start) * 1000),
+    )

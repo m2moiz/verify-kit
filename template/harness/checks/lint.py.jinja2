@@ -1,0 +1,239 @@
+"""harness.checks.lint — ruff + biome lint checks.
+
+- lint.ruff: shells out to `uv run ruff check --output-format=json .` and
+  reports each rule violation as an ErrorEnvelope with code `lint.ruff.<rule>`.
+- lint.biome: gated on local biome availability (review HIGH-5 — `pnpm dlx`
+  violates offline-first UX-06). Resolution order:
+    1. cwd/node_modules/.bin/biome (project-local install via pnpm install)
+    2. shutil.which("biome") (globally-installed binary on PATH)
+    3. status="skip" with hint to add @biomejs/biome to devDependencies
+
+NEVER use `pnpm dlx @biomejs/biome` — that requires network and contradicts
+the offline-first UX guarantee (review HIGH-5 + carryover).
+
+Decision references: Decision 1.2 (dotted codes), 3.2 (@register), 4.1
+(tier="standard"), carryover-cwd (cwd kwarg, subprocess cwd=cwd).
+"""
+from __future__ import annotations
+
+import json
+import shutil
+import subprocess
+import time
+from pathlib import Path
+
+from harness.models import CheckResult, ErrorEnvelope
+from harness.registry import register
+
+
+_BIOME_SKIP_MSG = (
+    "biome not found locally; add `@biomejs/biome` to devDependencies and run "
+    "`pnpm install`. verify-kit does not auto-fetch biome from the network "
+    "because offline-first is a hard UX requirement."
+)
+
+
+def _resolve_biome(cwd: Path) -> Path | None:
+    """Return the path to the biome binary, or None when unavailable.
+
+    Order: cwd/node_modules/.bin/biome → PATH lookup → None.
+    The chosen binary is executed with `cwd=cwd` regardless of where it
+    was found (PATH lookup is process-global but execution stays scoped).
+    """
+    local = cwd / "node_modules" / ".bin" / "biome"
+    if local.is_file():
+        return local
+    global_biome = shutil.which("biome")
+    if global_biome is not None:
+        return Path(global_biome)
+    return None
+
+
+@register(
+    "lint.ruff",
+    tier="standard",
+    category="lint",
+    description="Run `uv run ruff check` and report any issues",
+    inputs=["**/*.py", "pyproject.toml"],
+    fixable=False,
+    tool="ruff",
+)
+def check_lint_ruff(cwd: Path) -> CheckResult:
+    """Run ruff check and parse JSON output."""
+    start = time.monotonic()
+    try:
+        proc = subprocess.run(
+            ["uv", "run", "ruff", "check", "--output-format=json", "."],
+            capture_output=True,
+            text=True,
+            cwd=cwd,
+            timeout=30,
+        )
+    except FileNotFoundError:
+        return CheckResult(
+            check_id="lint.ruff",
+            status="fail",
+            message="uv not found on PATH",
+            duration_ms=int((time.monotonic() - start) * 1000),
+            error=ErrorEnvelope(
+                code="lint.ruff.tool-missing",
+                message="uv binary not found",
+                hint=(
+                    "Install uv via `curl -LsSf https://astral.sh/uv/install.sh | sh` "
+                    "or via mise"
+                ),
+                docs_url="https://docs.astral.sh/uv/getting-started/installation/",
+            ),
+        )
+
+    duration_ms = int((time.monotonic() - start) * 1000)
+
+    # Try to parse JSON. Ruff returns the JSON array on stdout for both
+    # successful runs (empty array) and failing runs (issues).
+    try:
+        issues = json.loads(proc.stdout) if proc.stdout.strip() else []
+    except json.JSONDecodeError:
+        issues = []
+
+    if proc.returncode == 0 and not issues:
+        return CheckResult(
+            check_id="lint.ruff",
+            status="pass",
+            message="ruff check clean",
+            duration_ms=duration_ms,
+        )
+
+    if not issues:
+        # Returncode != 0 but no parseable issues — surface stderr.
+        return CheckResult(
+            check_id="lint.ruff",
+            status="fail",
+            message=proc.stderr.strip()[:200] or "ruff check failed with no JSON output",
+            duration_ms=duration_ms,
+            error=ErrorEnvelope(
+                code="lint.ruff.nonzero-exit",
+                message=proc.stderr.strip()[:200] or "no diagnostics emitted",
+                hint="Run `uv run ruff check .` manually to see error",
+                fix_command="uv run ruff check .",
+                docs_url="https://docs.astral.sh/ruff/",
+            ),
+        )
+
+    first = issues[0]
+    first_code = first.get("code") or "UNKNOWN"
+    return CheckResult(
+        check_id="lint.ruff",
+        status="fail",
+        message=f"{len(issues)} issues",
+        duration_ms=duration_ms,
+        error=ErrorEnvelope(
+            code=f"lint.ruff.{first_code}",
+            message=f"{len(issues)} ruff issue(s); first: {first.get('message', '')}"[:200],
+            hint="Run `uv run ruff check --fix .` to auto-fix where possible",
+            fix_command="uv run ruff check --fix .",
+            docs_url=f"https://docs.astral.sh/ruff/rules/{first_code}/",
+            file=first.get("filename"),
+            line=(first.get("location") or {}).get("row"),
+            column=(first.get("location") or {}).get("column"),
+        ),
+    )
+
+
+@register(
+    "lint.biome",
+    tier="standard",
+    category="lint",
+    description="Run biome check (gated on local biome install)",
+    inputs=[
+        "**/*.js",
+        "**/*.ts",
+        "**/*.tsx",
+        "**/*.jsx",
+        "**/*.json",
+    ],
+    fixable=False,
+    tool="biome",
+    skip_if_unavailable=True,
+)
+def check_lint_biome(cwd: Path) -> CheckResult:
+    """Run biome check via the locally-installed binary, or skip."""
+    start = time.monotonic()
+    biome = _resolve_biome(cwd)
+    if biome is None:
+        return CheckResult(
+            check_id="lint.biome",
+            status="skip",
+            message=_BIOME_SKIP_MSG,
+            duration_ms=int((time.monotonic() - start) * 1000),
+        )
+
+    try:
+        proc = subprocess.run(
+            [str(biome), "check", "--reporter=json", "."],
+            capture_output=True,
+            text=True,
+            cwd=cwd,
+            timeout=30,
+        )
+    except FileNotFoundError:
+        return CheckResult(
+            check_id="lint.biome",
+            status="skip",
+            message=_BIOME_SKIP_MSG,
+            duration_ms=int((time.monotonic() - start) * 1000),
+        )
+
+    duration_ms = int((time.monotonic() - start) * 1000)
+
+    if proc.returncode == 0:
+        return CheckResult(
+            check_id="lint.biome",
+            status="pass",
+            message="biome check clean",
+            duration_ms=duration_ms,
+        )
+
+    # Try to parse diagnostics. Biome's JSON reporter shape may vary; we
+    # extract a best-effort first diagnostic.
+    diags: list[dict] = []
+    try:
+        payload = json.loads(proc.stdout) if proc.stdout.strip() else {}
+        if isinstance(payload, dict):
+            diags = payload.get("diagnostics") or []
+        elif isinstance(payload, list):
+            diags = payload
+    except json.JSONDecodeError:
+        diags = []
+
+    if diags:
+        first = diags[0]
+        category = first.get("category") or "unknown"
+        return CheckResult(
+            check_id="lint.biome",
+            status="fail",
+            message=f"{len(diags)} biome diagnostic(s)",
+            duration_ms=duration_ms,
+            error=ErrorEnvelope(
+                code=f"lint.biome.{category}",
+                message=str(first.get("description") or first.get("message") or "")[:200],
+                hint="Run `biome check .` manually for full details",
+                fix_command="pnpm exec biome check --write .",
+                docs_url="https://biomejs.dev/linter/",
+                file=(first.get("location") or {}).get("path"),
+                line=(first.get("location") or {}).get("line"),
+                column=(first.get("location") or {}).get("column"),
+            ),
+        )
+
+    return CheckResult(
+        check_id="lint.biome",
+        status="fail",
+        message=proc.stderr.strip()[:200] or "biome check failed",
+        duration_ms=duration_ms,
+        error=ErrorEnvelope(
+            code="lint.biome.nonzero-exit",
+            message=proc.stderr.strip()[:200] or "biome non-zero exit",
+            hint="Run `biome check .` manually for full details",
+            docs_url="https://biomejs.dev/linter/",
+        ),
+    )
