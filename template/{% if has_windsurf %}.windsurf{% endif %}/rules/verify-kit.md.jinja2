@@ -6,20 +6,17 @@ The canonical agent rules live in [AGENTS.md](../../AGENTS.md). Read it first.
 
 Three rules matter most when working in this repo via Windsurf:
 
-1. **`just verify --quick` is the definition of "done".** Do not declare any
-   task complete until it exits 0. The full `just verify` runs the entire
-   suite; the `--quick` flag runs only the fast slice (lint, typecheck, format,
-   smoke) and is the right pre-claim gate.
+1. **`just verify --quick` is the definition of "done".** Do not declare a
+   task complete until it exits 0. `--quick` runs the fast slice (lint,
+   typecheck, format, smoke) — the right pre-claim gate.
 
-2. **Lint and typecheck findings are clickable in the Problems panel.**
-   `.vscode/tasks.json` ships custom problem matchers for Ruff, Pyright, tsc,
-   and Biome. Run the `verify` build task (`Ctrl+Shift+B`) and click any entry
-   in Problems to jump straight to the offending line.
+2. **Findings are clickable in the Problems panel.** `.vscode/tasks.json`
+   ships problem matchers for Ruff, Pyright, tsc, Biome. Run the `verify`
+   task (`Ctrl+Shift+B`); click any entry to jump to the line.
 
-3. **Never write to bare relative paths from harness code.** `Path(".verify/...")`
-   is always wrong — `cwd` must be threaded through explicitly so the harness
-   works regardless of where it's invoked from. See AGENTS.md §Tool conventions
-   for the full rule and rationale.
+3. **Never write bare relative paths from harness code.** `Path(".verify/...")`
+   is wrong — thread `cwd` explicitly so the harness works regardless of
+   invocation directory. See AGENTS.md §Tool conventions.
 
 ## Where to look next
 
