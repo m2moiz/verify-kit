@@ -1,0 +1,184 @@
+"""harness.models — leaf-level Pydantic models and exit-code constants.
+
+This module imports zero harness.* siblings so it cannot participate in
+circular imports. Every downstream module (registry, runner, cache, emitters,
+CLI) imports from here.
+
+Decision references:
+- Decision 1.1 (ErrorEnvelope inline shape)
+- Decision 1.3 (exit-code matrix)
+- Decision 1.4 (three CheckResult states: pass/fail/skip)
+- Decision 3.2 (CheckSpec backs @register)
+"""
+from __future__ import annotations
+
+from typing import Callable, Literal
+
+from pydantic import BaseModel, ConfigDict, Field
+
+# ── Type aliases ──────────────────────────────────────────────────────────────
+
+CheckStatus = Literal["pass", "fail", "skip"]
+CheckTier = Literal["quick", "standard", "slow"]
+
+# ── Exit-code constants (Decision 1.3 / FMT-03) ───────────────────────────────
+
+EXIT_OK = 0
+EXIT_CHECK_FAIL = 1
+EXIT_BAD_INPUT = 2
+EXIT_CACHE_CORRUPT = 10
+EXIT_TOOL_MISSING = 11
+EXIT_WRITE_FAILED = 12
+EXIT_OTEL_UNREACHABLE = 13
+
+
+# ── ErrorEnvelope ─────────────────────────────────────────────────────────────
+
+
+class ErrorEnvelope(BaseModel):
+    """Structured error attached to a failing CheckResult.
+
+    Location fields (file/line/column/snippet) are optional so SARIF/JUnit/
+    pretty output can become IDE-clickable when the underlying check produces
+    them (e.g. ruff JSON). Phase 2 checks may leave them None; emitters tolerate
+    None.
+    """
+
+    code: str
+    message: str
+    hint: str | None = None
+    fix_command: str | None = None
+    docs_url: str | None = None
+    file: str | None = None
+    line: int | None = None
+    column: int | None = None
+    snippet: str | None = None
+
+
+# ── CheckResult ──────────────────────────────────────────────────────────────
+
+
+class CheckResult(BaseModel):
+    """Result of a single verification check (Decision 1.4)."""
+
+    check_id: str
+    status: CheckStatus
+    message: str = ""
+    duration_ms: int = 0
+    error: ErrorEnvelope | None = None
+    cached: bool = False
+
+
+# ── ReportSummary ─────────────────────────────────────────────────────────────
+
+
+class ReportSummary(BaseModel):
+    """Tallied counts + total duration. Required by JUnit emitter (S4)."""
+
+    pass_count: int
+    fail_count: int
+    skip_count: int
+    total: int
+    duration_ms: int
+
+    @classmethod
+    def from_checks(
+        cls, checks: list[CheckResult], total_duration_ms: int
+    ) -> ReportSummary:
+        p = sum(1 for c in checks if c.status == "pass")
+        f = sum(1 for c in checks if c.status == "fail")
+        s = sum(1 for c in checks if c.status == "skip")
+        return cls(
+            pass_count=p,
+            fail_count=f,
+            skip_count=s,
+            total=p + f + s,
+            duration_ms=total_duration_ms,
+        )
+
+
+# ── VerifyReport ──────────────────────────────────────────────────────────────
+
+
+class VerifyReport(BaseModel):
+    """Aggregate report returned by verify(). Extends Phase 1 shape with summary."""
+
+    exit_code: int
+    checks: list[CheckResult]
+    summary: ReportSummary
+    format_version: Literal["1"] = "1"
+
+    @classmethod
+    def from_checks(
+        cls, checks: list[CheckResult], total_duration_ms: int
+    ) -> VerifyReport:
+        summary = ReportSummary.from_checks(checks, total_duration_ms)
+        exit_code = EXIT_CHECK_FAIL if summary.fail_count > 0 else EXIT_OK
+        return cls(exit_code=exit_code, checks=list(checks), summary=summary)
+
+
+# ── CheckSpec (internal — carries fn) ─────────────────────────────────────────
+
+
+class CheckSpec(BaseModel):
+    """Internal registration record. Carries the live function pointer.
+
+    NOT serialization-safe: the `fn` field is a Callable. For JSON output
+    (list-checks --format=json, describe, etc.) use CheckCatalogEntry instead.
+    """
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    check_id: str
+    fn: Callable
+    tier: CheckTier = "standard"
+    category: str = "misc"
+    description: str = ""
+    inputs: list[str] = Field(default_factory=list)
+    fixable: bool = False
+    tool: str | None = None
+    skip_if_unavailable: bool = False
+
+
+# ── CheckCatalogEntry (serialization-safe twin of CheckSpec) ──────────────────
+
+
+class CheckCatalogEntry(BaseModel):
+    """Serialization-safe twin of CheckSpec with the `fn` field removed.
+
+    This is what `list-checks --format=json`, the `describe` command, and any
+    JSON-dump path consume. CheckCatalogEntry.model_json_schema() is the public
+    schema; CheckSpec.model_json_schema() is NOT used externally.
+    """
+
+    check_id: str
+    tier: CheckTier = "standard"
+    category: str = "misc"
+    description: str = ""
+    inputs: list[str] = Field(default_factory=list)
+    fixable: bool = False
+    tool: str | None = None
+    skip_if_unavailable: bool = False
+
+    @classmethod
+    def from_spec(cls, spec: CheckSpec) -> CheckCatalogEntry:
+        return cls(**{k: v for k, v in spec.model_dump(exclude={"fn"}).items()})
+
+
+__all__ = [
+    "CheckStatus",
+    "CheckTier",
+    "ErrorEnvelope",
+    "CheckResult",
+    "ReportSummary",
+    "VerifyReport",
+    "CheckSpec",
+    "CheckCatalogEntry",
+    "EXIT_OK",
+    "EXIT_CHECK_FAIL",
+    "EXIT_BAD_INPUT",
+    "EXIT_CACHE_CORRUPT",
+    "EXIT_TOOL_MISSING",
+    "EXIT_WRITE_FAILED",
+    "EXIT_OTEL_UNREACHABLE",
+]
