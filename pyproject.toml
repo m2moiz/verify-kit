@@ -19,5 +19,16 @@ dev = [
     "pyyaml",
 ]
 
+[tool.hatch.build.targets.wheel]
+# verify-kit is a Copier template repo — no Python source package to ship.
+packages = ["src/verify_kit"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "copier.yml",
+    "template/**",
+    "README.md",
+]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
