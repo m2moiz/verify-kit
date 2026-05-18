@@ -1,0 +1,43 @@
+# Fast-only pre-commit hooks. Anything >3s belongs in CI (DEV-02).
+# To skip a single hook for one commit: SKIP=<hook-id> git commit
+# To skip gitleaks on large staged diffs: SKIP=gitleaks git commit
+# Full-repo scans (type-check, test runner, linters) run in .github/workflows/ci.yml only.
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+      - id: check-yaml
+      - id: check-toml
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: [--maxkb=500]
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.6.9
+    hooks:
+      - id: ruff
+        args: [--fix]
+      - id: ruff-format
+
+  {% if has_llm %}
+  # Biome pre-commit lands when LLM add-on brings JSON/eval config files.
+  # When backend add-on lands in Phase 4, it injects its own block here.
+  - repo: https://github.com/biomejs/pre-commit
+    rev: v0.6.1
+    hooks:
+      - id: biome-check
+        files: \.(js|jsx|ts|tsx|json)$
+  {% endif %}
+
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.21.0
+    hooks:
+      - id: gitleaks
+        # Fast path: gitleaks runs incrementally on staged files by default,
+        # honoring the DEV-02 <3s budget on normal-sized diffs. Users with
+        # very large staged changes can run `SKIP=gitleaks git commit` to
+        # bypass for one commit, or move gitleaks to manual stage:
+        #   stages: [manual]  (then invoke via `pre-commit run --hook-stage manual gitleaks`)
+        # CI re-runs the full-repo scan in .github/workflows/ci.yml.
