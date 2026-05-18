@@ -1,0 +1,35 @@
+# Cross-platform line-ending normalization.
+# All text files are stored with LF in the repo; checkout is native on each OS.
+* text=auto eol=lf
+
+# Explicit text overrides
+*.py    text
+*.toml  text
+*.yml   text
+*.yaml  text
+*.md    text
+*.json  text
+*.sh    text eol=lf
+*.bash  text eol=lf
+
+# Binary files — never apply line-ending conversion or diffs
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.ico   binary
+*.pdf   binary
+*.zip   binary
+*.gz    binary
+*.tar   binary
+*.whl   binary
+
+# Lockfiles: mark as -diff to suppress huge noise in `git diff`
+pnpm-lock.yaml  -diff
+uv.lock         -diff
+
+# Jinja2 template source files — tell GitHub's Linguist what they are
+*.jinja2 linguist-language=Jinja
+
+# Template directory is our source code, not vendored third-party code
+template/** linguist-vendored=false

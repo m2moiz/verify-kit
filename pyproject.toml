@@ -20,8 +20,9 @@ dev = [
 ]
 
 [tool.hatch.build.targets.wheel]
-# verify-kit is a Copier template repo — no Python source package to ship.
-packages = ["src/verify_kit"]
+# template_extensions ships the Copier Jinja extensions (env_detect, etc.)
+# that run at scaffold time. src/verify_kit is the future verify-kit Python package.
+packages = ["template_extensions"]
 
 [tool.hatch.build.targets.sdist]
 include = [
