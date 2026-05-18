@@ -21,6 +21,12 @@ _envops:
 _message_before_copy: "Welcome to verify-kit. ~10 prompts grouped as Identity / Agent integrations / Add-ons / Optional."
 _message_after_copy: "Next: cd into your project, run `mise install`, then `just verify`."
 
+# Post-render: ensure shipped shell scripts are executable. The 2>/dev/null
+# || true swallows the case where has_claude_code=false makes the hook paths
+# absent. The scripts/ralph.sh wrapper is shipped unconditionally.
+_tasks:
+  - "chmod +x .claude/hooks/post-tool-use.sh .claude/hooks/stop.sh scripts/ralph.sh 2>/dev/null || true"
+
 # ── Group: Identity ──────────────────────────────────────────────────────────
 
 project_name:
