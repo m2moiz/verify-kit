@@ -1,0 +1,163 @@
+"""harness.runner — span-wrapping + cache-aware check execution.
+
+The runner is the single choke point where caching, OTel tracing, structured
+logging, and error-envelope construction converge (Decision 3.4). Check
+authors write zero of this code — they just decorate `def check_xxx(cwd)`
+with `@register(...)` and the runner does the rest.
+
+Surface:
+    run_check(spec, cwd=Path("."), cache=None, config=None) -> CheckResult
+    run_phase(specs=None, cwd=Path("."), cache=None, config=None) -> list[CheckResult]
+
+cwd contract (carryover-cwd): every check function accepts `cwd: Path` as a
+keyword argument. The runner calls `spec.fn(cwd=cwd)` so cache-key hashing
+(also rooted at `cwd`) and the check's filesystem/subprocess view cannot
+diverge. Public API `core.verify(cwd=p)` therefore both hashes inputs under
+`p` AND executes checks against `p`.
+"""
+from __future__ import annotations
+
+import time
+from pathlib import Path
+from typing import Any
+
+from harness.cache import (
+    CacheStore,
+    get_tool_version,
+    hash_inputs,
+    make_cache_key,
+)
+from harness.logging import log
+from harness.models import CheckResult, CheckSpec, ErrorEnvelope
+from harness.observability import tracer
+
+
+def run_check(
+    spec: CheckSpec,
+    cwd: Path = Path("."),
+    cache: CacheStore | None = None,
+    config: Any = None,
+) -> CheckResult:
+    """Run a single check inside an OTel span + cache layer.
+
+    Args:
+        spec: CheckSpec from the registry.
+        cwd: Project root the check operates against. Forwarded to
+            spec.fn(cwd=cwd) AND used to compute the cache key so the
+            cache root and the execution root stay synchronized.
+        cache: Optional CacheStore. When provided, cache.get is consulted
+            before invocation and cache.put is called on miss.
+        config: Optional HarnessConfig (currently unused at run_check level;
+            run_phase filters disabled checks before calling here).
+
+    Returns:
+        A CheckResult — pass/fail/skip status plus optional ErrorEnvelope.
+        Never raises: uncaught exceptions are converted to status="fail"
+        with code=f"{check_id}.unhandled".
+    """
+    with tracer.start_as_current_span(f"check:{spec.check_id}") as span:
+        span.set_attribute("check.id", spec.check_id)
+        span.set_attribute("check.category", spec.category)
+        span.set_attribute("check.tier", spec.tier)
+        span.set_attribute("check.fixable", spec.fixable)
+        log.info("check.start", check_id=spec.check_id, tier=spec.tier)
+        start = time.monotonic()
+
+        key: str | None = None
+        # ── cache lookup ──────────────────────────────────────────────────
+        if cache is not None:
+            key = make_cache_key(
+                spec.check_id,
+                hash_inputs(spec.inputs, cwd),
+                get_tool_version(spec.tool),
+                [],
+            )
+            cached = cache.get(spec.check_id, key)
+            if cached is not None:
+                span.set_attribute("check.cached", True)
+                span.set_attribute("check.status", cached.status)
+                span.set_attribute("check.duration_ms", cached.duration_ms)
+                log.info(
+                    "check.complete",
+                    check_id=spec.check_id,
+                    status=cached.status,
+                    cached=True,
+                    duration_ms=cached.duration_ms,
+                )
+                return cached
+
+        # ── run (cwd-aware invocation contract; carryover-cwd) ────────────
+        # NEVER call spec.fn() without forwarding cwd — that would let the
+        # cache key (hashed under `cwd`) drift from the check's process CWD.
+        try:
+            result = spec.fn(cwd=cwd)
+        except Exception as exc:
+            span.record_exception(exc)
+            result = CheckResult(
+                check_id=spec.check_id,
+                status="fail",
+                duration_ms=int((time.monotonic() - start) * 1000),
+                error=ErrorEnvelope(
+                    code=f"{spec.check_id}.unhandled",
+                    message=str(exc)[:200],
+                    hint="Uncaught exception in check; see traceback in stderr",
+                ),
+            )
+            log.exception("check.crashed", check_id=spec.check_id)
+
+        # ── write-through cache ───────────────────────────────────────────
+        if cache is not None and key is not None:
+            try:
+                cache.put(spec.check_id, key, result)
+            except Exception:
+                log.warning("check.cache_put_failed", check_id=spec.check_id)
+
+        span.set_attribute("check.cached", False)
+        span.set_attribute("check.status", result.status)
+        span.set_attribute("check.duration_ms", result.duration_ms)
+        log.info(
+            "check.complete",
+            check_id=spec.check_id,
+            status=result.status,
+            cached=False,
+            duration_ms=result.duration_ms,
+        )
+        return result
+
+
+def run_phase(
+    specs: list[CheckSpec] | None = None,
+    cwd: Path = Path("."),
+    cache: CacheStore | None = None,
+    config: Any = None,
+) -> list[CheckResult]:
+    """Run every spec sequentially and return a list of CheckResults.
+
+    When `specs` is None, imports `harness.checks` (triggering @register for
+    every in-tree check) and then enumerates the full registry.
+
+    When `config` is provided, specs whose `check_id` appears in
+    `config.checks.disabled` are filtered out before execution.
+
+    Sequential execution is intentional in Phase 2 — checks are short
+    I/O-bound subprocess calls and concurrency would complicate the
+    span/cache ordering. Parallelism is deferred until profile-driven need
+    emerges (see deferred items).
+    """
+    if specs is None:
+        import harness.checks  # noqa: F401  (trigger @register side-effects)
+        from harness.registry import list_checks
+
+        specs = list_checks()
+
+    if config is not None and getattr(config, "checks", None) is not None:
+        disabled = set(getattr(config.checks, "disabled", []) or [])
+        specs = [s for s in specs if s.check_id not in disabled]
+
+    results: list[CheckResult] = []
+    for spec in specs:
+        results.append(run_check(spec, cwd=cwd, cache=cache, config=config))
+    return results
+
+
+__all__ = ["run_check", "run_phase"]
