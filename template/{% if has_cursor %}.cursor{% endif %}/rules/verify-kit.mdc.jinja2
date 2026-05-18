@@ -1,14 +1,18 @@
 ---
-description: verify-kit project conventions and verify-first workflow
-globs: ["**/*"]
+description: verify-kit harness conventions — always-applied rules for this repo.
 alwaysApply: true
 ---
 
-See `@AGENTS.md` for project-wide rules.
+# verify-kit conventions
 
-## Cursor-specific
+The canonical agent rules live in [AGENTS.md](../../AGENTS.md). Cursor-specific notes:
 
-- Run `just verify` in the integrated terminal before marking work done. Exit 0 = done.
-- Format on save: ruff for Python, biome for JS/TS. Both are wired via pre-commit hooks.
-- Composer should respect `.editorconfig` and the `pyproject.toml` line-length setting (100).
-- Do not suggest installing packages not already in `pyproject.toml` or `uv.lock`.
+- Run `just verify --quick` before claiming any change is "done".
+- `verify-kit list-checks` enumerates available checks; `verify-kit describe`
+  shows the JSON Schema for every check.
+- Lint/typecheck failures are clickable in the Problems panel via the
+  `.vscode/tasks.json` problem matchers — open it via `Ctrl+Shift+B`.
+- MCP tools are available via `verify-kit mcp serve` — see `.cursor/mcp.json`
+  for the auto-registered server.
+- Do not write to relative paths from harness code (`Path(".verify/...")` is
+  always wrong); always thread `cwd` through. See AGENTS.md §Tool conventions.
