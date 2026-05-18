@@ -5,7 +5,12 @@
 
 _subdirectory: template
 _jinja_extensions:
-  - template_extensions.env_detect.EnvDetectExtension
+  # Use copier-templates-extensions loader so the env_detect extension can live
+  # adjacent to copier.yml without requiring users to pip-install
+  # template_extensions globally. Users must install Copier with this companion:
+  #   uv tool install copier --with copier-templates-extensions
+  - copier_templates_extensions.TemplateExtensionLoader
+  - template_extensions/env_detect.py:EnvDetectExtension
 _answers_file: .copier-answers.yml
 _templates_suffix: .jinja2
 _min_copier_version: "9.4"
