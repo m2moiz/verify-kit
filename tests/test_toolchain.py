@@ -132,9 +132,11 @@ def test_justfile_verify_recipe_passes_flags_literally(
 def test_justfile_lists_only_phase_1_recipes(
     template_root: Path, tmp_path: Path
 ) -> None:
-    """Rendered justfile must expose exactly the Phase-1 recipes and no stubs.
+    """Rendered justfile must expose Phase-1 + Phase-2 (Plan 02-06) recipes and no stubs.
 
     Skips if `just` binary is not installed (CI may run this job without mise).
+
+    Phase-2 (Plan 02-06) adds verify-clean, trace-up, trace-down, trace.
     """
     if not shutil.which("just"):
         pytest.skip("just binary not installed — mise install required")
@@ -154,16 +156,25 @@ def test_justfile_lists_only_phase_1_recipes(
 
     output = result.stdout.lower()
 
-    # Expected Phase-1 recipes
-    for recipe in ("verify", "lint", "format", "shell"):
+    # Expected Phase-1 + Phase-2 recipes
+    for recipe in (
+        "verify",
+        "lint",
+        "format",
+        "shell",
+        "verify-clean",
+        "trace-up",
+        "trace-down",
+        "trace",
+    ):
         assert recipe in output, (
             f"Expected recipe '{recipe}' in `just --list` output.\nOutput:\n{result.stdout}"
         )
 
     # Forbidden stubs (Area 3 compliance — no stubs for unbuilt targets)
-    for stub in ("smoke", "eval", "trace-up", "mutation"):
+    for stub in ("smoke", "eval", "mutation"):
         assert stub not in output, (
-            f"Stub recipe '{stub}' must NOT appear in Phase-1 `just --list` output.\n"
+            f"Stub recipe '{stub}' must NOT appear in `just --list` output.\n"
             f"Output:\n{result.stdout}"
         )
 

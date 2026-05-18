@@ -3,7 +3,7 @@
 
 set shell := ["bash", "-uc"]
 
-# Run all available checks (Phase 1: mise validity, copier-answers validity, just-list integrity)
+# Run verification (Phase 2: --quick, --full, --no-cache, --format, --check)
 verify *FLAGS:
     uv run verify-kit verify {% raw %}{{FLAGS}}{% endraw %}
 
@@ -20,3 +20,25 @@ format:
 # Drop into a subshell with the mise-managed env activated
 shell:
     mise exec -- $SHELL
+
+# Wipe the cache and report files (Phase 2: .verify/)
+verify-clean:
+    rm -rf .verify
+
+# Start Jaeger all-in-one for trace inspection at http://localhost:16686
+trace-up:
+    @echo "Starting Jaeger UI at http://localhost:16686 ..."
+    docker run -d --rm \
+        --name verify-kit-jaeger \
+        -e COLLECTOR_OTLP_ENABLED=true \
+        -p 16686:16686 -p 4317:4317 -p 4318:4318 \
+        jaegertracing/all-in-one:1.76.0
+
+# Stop the Jaeger container
+trace-down:
+    docker stop verify-kit-jaeger 2>/dev/null || true
+
+# Render the most recent verify-kit trace (requires `just trace-up` first)
+trace *FLAGS:
+    OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317 \
+        uv run verify-kit trace {% raw %}{{FLAGS}}{% endraw %}
