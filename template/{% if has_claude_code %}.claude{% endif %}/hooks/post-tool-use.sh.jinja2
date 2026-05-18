@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# verify-kit Claude Code PostToolUse hook
+# Triggered on Edit | Write | MultiEdit | NotebookEdit.
+set -u
+# Run lint + typecheck. Exit 2 blocks the tool result; exit 0 lets Claude continue.
+just lint || exit 2
+just typecheck || exit 2
+exit 0
