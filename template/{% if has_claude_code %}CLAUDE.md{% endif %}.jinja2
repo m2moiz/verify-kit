@@ -1,0 +1,14 @@
+# {{ project_name }} — Claude Code project rules
+
+See @AGENTS.md for project-wide rules.
+
+## Claude-specific supplements
+
+- Use `just verify` (exit 0 = done) before claiming any task complete. This is the only
+  ground truth — do not substitute test output or lint output alone.
+- Hooks land in Phase 3: `PostToolUse` runs lint + typecheck; `Stop` runs `just verify --quick`.
+  Override with `VERIFY_KIT_SKIP=1` when you need to stage work-in-progress.
+- Skills land in Phase 3 under `.claude/skills/verify-kit-{verify,debug,eval}/`.
+- Use `bd` (beads) for any multi-step task tracking — never inline TODO files or TodoWrite.
+- Never read `.env`, `*.pem`, `*.key`, or credential files. `.env.example` is safe to read.
+- Never `git add .` — always stage files individually by name.

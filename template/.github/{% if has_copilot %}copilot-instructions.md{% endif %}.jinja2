@@ -1,0 +1,12 @@
+# {{ project_name }} — GitHub Copilot instructions
+
+See AGENTS.md at the repo root for project-wide rules.
+
+## Copilot-specific guidance
+
+- Build/test/lint command: `just verify`. Always run before suggesting a task is complete.
+- This project uses ruff (Python) and biome (JS/TS) for formatting. Match `.editorconfig`
+  for indentation and line endings.
+- Never suggest committing `.env` files or any file containing secrets. Use `.env.example`
+  as the documented template for required environment variables.
+- Stage files individually by name — never `git add .`.
