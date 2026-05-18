@@ -1,0 +1,260 @@
+"""harness.cache — SQLite-backed file-hash result cache.
+
+Implements HARN-08 and Decisions 2.1–2.4:
+
+- STRICT SQLite table at `.verify/cache.db` enforces column types
+- Cache key = sha256(check_id + sorted file_hashes + tool_version + sorted args)
+- pass / fail / skip results all cached uniformly (Decision 2.3)
+- LRU eviction by ``last_hit_at`` once total ``size_bytes`` > ``max_bytes``
+- ``PRAGMA journal_mode=WAL`` on every connection so concurrent ``pytest -n``
+  test runs do not crash with ``database is locked`` (R3 mitigation)
+- ``sqlite3.DatabaseError`` is caught and re-raised as :class:`CacheCorruptError`
+  so the CLI (Plan 02-06) can map it to ``EXIT_CACHE_CORRUPT = 10``
+
+Public surface: ``CacheStore``, ``make_cache_key``, ``hash_inputs``,
+``get_tool_version``, ``CacheCorruptError``.
+"""
+from __future__ import annotations
+
+import glob as _glob
+import hashlib
+import sqlite3
+import subprocess
+import time
+from contextlib import contextmanager
+from pathlib import Path
+from typing import Iterator
+
+from harness.models import CheckResult
+
+
+# ── SQL constants (verbatim from RESEARCH.md §5) ──────────────────────────────
+
+_DDL = """
+CREATE TABLE IF NOT EXISTS results (
+  check_id    TEXT NOT NULL,
+  key         TEXT NOT NULL,
+  status      TEXT NOT NULL,
+  result_json TEXT NOT NULL,
+  size_bytes  INTEGER NOT NULL,
+  created_at  INTEGER NOT NULL,
+  last_hit_at INTEGER NOT NULL,
+  hit_count   INTEGER DEFAULT 0,
+  PRIMARY KEY (check_id, key)
+) STRICT;
+CREATE INDEX IF NOT EXISTS results_lru ON results(last_hit_at);
+"""
+
+_UPSERT = """
+INSERT INTO results(check_id, key, status, result_json, size_bytes, created_at, last_hit_at, hit_count)
+  VALUES (?,?,?,?,?,?,?,0)
+ON CONFLICT(check_id, key) DO UPDATE SET
+  status=excluded.status,
+  result_json=excluded.result_json,
+  size_bytes=excluded.size_bytes,
+  last_hit_at=excluded.last_hit_at,
+  hit_count=hit_count+1;
+"""
+
+_GET = "SELECT result_json, last_hit_at FROM results WHERE check_id=? AND key=?"
+_UPDATE_HIT = (
+    "UPDATE results SET last_hit_at=?, hit_count=hit_count+1 "
+    "WHERE check_id=? AND key=?"
+)
+_EVICT = """
+DELETE FROM results WHERE (check_id, key) IN (
+  SELECT check_id, key FROM results ORDER BY last_hit_at ASC LIMIT ?
+)
+"""
+_TOTAL_SIZE = "SELECT COALESCE(SUM(size_bytes),0) FROM results"
+
+
+# ── Exceptions ───────────────────────────────────────────────────────────────
+
+
+class CacheCorruptError(Exception):
+    """Raised when ``.verify/cache.db`` cannot be opened / read.
+
+    CLI bridge: Plan 02-06's CLI catches this and exits with
+    ``EXIT_CACHE_CORRUPT = 10`` (see ``harness.models``). The user runs
+    ``just verify-clean`` to delete the file and rebuild.
+    """
+
+
+# ── Connection helper ────────────────────────────────────────────────────────
+
+
+def _connect(db_path: Path) -> sqlite3.Connection:
+    """Open a WAL-mode SQLite connection. Raises CacheCorruptError on damage."""
+    try:
+        conn = sqlite3.connect(str(db_path), timeout=5.0)
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA synchronous=NORMAL")
+        conn.executescript(_DDL)
+        conn.commit()
+        return conn
+    except sqlite3.DatabaseError as exc:
+        raise CacheCorruptError(
+            f"Cache database at {db_path} is corrupt: {exc}. "
+            "Delete it and rerun (or use `just verify-clean`)."
+        ) from exc
+
+
+# ── Key composition ─────────────────────────────────────────────────────────
+
+
+def make_cache_key(
+    check_id: str,
+    file_hashes: dict[str, str],
+    tool_version: str,
+    check_args: list[str],
+) -> str:
+    """Decision 2.1 hash composition (deterministic; order-insensitive)."""
+    parts = [
+        check_id,
+        *sorted(f"{p}={h}" for p, h in file_hashes.items()),
+        tool_version,
+        *sorted(check_args),
+    ]
+    return hashlib.sha256("\n".join(parts).encode()).hexdigest()
+
+
+def hash_inputs(glob_patterns: list[str], cwd: Path) -> dict[str, str]:
+    """Hash every file matching any of the given globs (recursive).
+
+    Returns ``{relative_path: sha256_hex}`` for use as input to
+    :func:`make_cache_key`.
+    """
+    result: dict[str, str] = {}
+    for pattern in glob_patterns:
+        for path_str in _glob.glob(pattern, root_dir=str(cwd), recursive=True):
+            p = cwd / path_str
+            if p.is_file():
+                result[path_str] = hashlib.sha256(p.read_bytes()).hexdigest()
+    return result
+
+
+def get_tool_version(tool: str | None) -> str:
+    """Best-effort tool version string for the cache key.
+
+    Resolution order:
+      1. ``importlib.metadata.version(tool)`` (works for pip-installed CLIs)
+      2. ``{tool} --version`` subprocess (2-second timeout)
+      3. literal ``"unknown"`` on any failure
+    ``None`` short-circuits to ``"no-tool"`` (used by checks with no external
+    binary dependency).
+    """
+    if tool is None:
+        return "no-tool"
+    try:
+        from importlib.metadata import PackageNotFoundError, version
+
+        try:
+            return version(tool)
+        except PackageNotFoundError:
+            pass
+    except Exception:
+        pass
+    try:
+        r = subprocess.run(
+            [tool, "--version"], capture_output=True, text=True, timeout=2
+        )
+        if r.returncode == 0 and r.stdout.strip():
+            return r.stdout.strip().split()[-1]
+    except Exception:
+        pass
+    return "unknown"
+
+
+# ── CacheStore ───────────────────────────────────────────────────────────────
+
+
+class CacheStore:
+    """File-backed cache of :class:`harness.models.CheckResult` rows.
+
+    One row per ``(check_id, key)``. ``key`` is the hex digest from
+    :func:`make_cache_key`. The result is stored as JSON via Pydantic's
+    ``model_dump_json``.
+    """
+
+    def __init__(self, db_path: Path) -> None:
+        self.db_path = Path(db_path)
+        self.db_path.parent.mkdir(parents=True, exist_ok=True)
+
+    @contextmanager
+    def _conn(self) -> Iterator[sqlite3.Connection]:
+        conn = _connect(self.db_path)
+        try:
+            yield conn
+        finally:
+            conn.close()
+
+    def get(self, check_id: str, key: str) -> CheckResult | None:
+        """Return the cached result, or ``None`` on miss.
+
+        On hit, ``last_hit_at`` is bumped (LRU) and the returned result has
+        ``cached=True`` (set via ``model_copy`` — never mutated in place).
+        """
+        with self._conn() as conn:
+            row = conn.execute(_GET, (check_id, key)).fetchone()
+            if row is None:
+                return None
+            result_json, _ = row
+            now = int(time.time())
+            conn.execute(_UPDATE_HIT, (now, check_id, key))
+            conn.commit()
+        result = CheckResult.model_validate_json(result_json)
+        return result.model_copy(update={"cached": True})
+
+    def put(self, check_id: str, key: str, result: CheckResult) -> None:
+        """Store ``result`` under ``(check_id, key)``. Idempotent (upsert)."""
+        payload = result.model_dump_json()
+        size_bytes = len(payload.encode("utf-8"))
+        now = int(time.time())
+        with self._conn() as conn:
+            conn.execute(
+                _UPSERT,
+                (
+                    check_id,
+                    key,
+                    result.status,
+                    payload,
+                    size_bytes,
+                    now,
+                    now,
+                ),
+            )
+            conn.commit()
+
+    def clear(self) -> None:
+        """Drop all cached rows. Used by ``just verify-clean``."""
+        with self._conn() as conn:
+            conn.execute("DROP TABLE IF EXISTS results")
+            conn.executescript(_DDL)
+            conn.commit()
+
+    def evict_if_needed(self, max_bytes: int) -> int:
+        """LRU-evict the oldest 10% when total size exceeds ``max_bytes``.
+
+        Returns the number of rows evicted (0 if under cap). Called by the
+        runner facade (Plan 02-06) before returning the report so the cache
+        cannot grow without bound between runs.
+        """
+        with self._conn() as conn:
+            (total,) = conn.execute(_TOTAL_SIZE).fetchone()
+            if total <= max_bytes:
+                return 0
+            (row_count,) = conn.execute("SELECT COUNT(*) FROM results").fetchone()
+            evict_count = max(1, row_count // 10)
+            conn.execute(_EVICT, (evict_count,))
+            conn.commit()
+            return evict_count
+
+
+__all__ = [
+    "CacheStore",
+    "make_cache_key",
+    "hash_inputs",
+    "get_tool_version",
+    "CacheCorruptError",
+]

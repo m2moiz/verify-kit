@@ -18,6 +18,10 @@ dev = [
     "copier-templates-extensions>=0.3.2",
     "pytest>=8",
     "pyyaml",
+    # structlog is a runtime dep of rendered scratch harness modules; tests
+    # sys.path-insert those modules into the dev venv, so the dep must be
+    # importable here too. (Plan 02-03)
+    "structlog>=25",
 ]
 
 [tool.hatch.build.targets.wheel]
