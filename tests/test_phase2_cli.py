@@ -53,6 +53,10 @@ def _make_fixture_cwd(tmp_path: Path) -> Path:
     (tmp_path / ".copier-answers.yml").write_text(
         "_src_path: file:///fake\n", encoding="utf-8"
     )
+    # Minimal justfile so `just-list.renders` passes when `just` is installed.
+    (tmp_path / "justfile").write_text(
+        "default:\n    @echo ok\n", encoding="utf-8"
+    )
     return tmp_path
 
 
