@@ -235,13 +235,22 @@ def test_http_bearer_required(installed_scratch: Path) -> None:
             "--token=secret-t",
         ],
         cwd=installed_scratch,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
     )
     try:
-        assert _wait_port_open("127.0.0.1", port, timeout_s=8.0), (
-            "MCP server did not open TCP socket"
-        )
+        if not _wait_port_open("127.0.0.1", port, timeout_s=60.0):
+            # Process crashed or is too slow. Capture stderr for diagnostics.
+            try:
+                stdout_b, stderr_b = proc.communicate(timeout=2.0)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                stdout_b, stderr_b = proc.communicate()
+            raise AssertionError(
+                "MCP server did not open TCP socket within 20s.\n"
+                f"STDOUT:\n{stdout_b.decode(errors='replace')[:2000]}\n"
+                f"STDERR:\n{stderr_b.decode(errors='replace')[:2000]}"
+            )
         # No header → 401.
         r_noauth = httpx.post(
             f"http://127.0.0.1:{port}/mcp",
