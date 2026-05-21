@@ -54,6 +54,18 @@ dependencies = [
     # FastAPI-MCP opt-in (Plan 04-06) — mounts all routes as MCP tools
     "fastapi-mcp>=0.3",
 {% endif %}
+{% if has_llm %}
+    # LLM add-on runtime deps (Plan 05-01)
+    "pydantic-ai>=1.100,<2",
+    "instructor>=1.15,<2",
+    "litellm>=1.85,<2",
+    "tokencost>=0.1.26",
+    "autoevals>=0.2,<0.3",
+    "opentelemetry-instrumentation-httpx>=0.63b1",
+    "traceloop-sdk>=0.60,<1",
+    "claude-agent-sdk>=0.2.83",
+    "langfuse>=4.6,<5",
+{% endif %}
 ]
 
 [project.optional-dependencies]
@@ -74,6 +86,11 @@ dev = [
 {% if has_backend and has_db %}
     # Testcontainers for DB integration tests (Plan 04-03)
     "testcontainers[postgres]>=4.7",
+{% endif %}
+{% if has_llm %}
+    # LLM add-on dev deps (Plan 05-01)
+    "vcrpy>=8.1,<9",
+    "pytest-recording>=0.13.4",
 {% endif %}
 ]
 
