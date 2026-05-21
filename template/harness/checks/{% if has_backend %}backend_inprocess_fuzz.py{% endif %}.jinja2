@@ -62,6 +62,12 @@ def main() -> int:
         return 1
 
     schema = schemathesis.openapi.from_asgi("/openapi.json", app)
+    # Thread --max-examples through to the hypothesis engine. The schemathesis
+    # 4.x API surfaces max_examples on schema.config.generation, not on
+    # engine.from_schema(). Without this update the engine runs the default
+    # 100 examples per operation regardless of the CLI flag, and the success
+    # banner below misreports honored count. Phase 4 04-VALIDATION.md GAP-06.
+    schema.config.generation.update(max_examples=args.max_examples)
     engine = schemathesis.engine.from_schema(schema)
 
     # Iterate the engine event stream. Failures appear as SuiteFinished or
