@@ -131,6 +131,24 @@ def create_app(cwd: Path | None = None) -> FastAPI:
         await secure_headers.set_headers_async(response)
         return response
 
+    # has_logfire opt-in: auto-instrument FastAPI + httpx + LLM SDKs.
+    # Inert when LOGFIRE_TOKEN is unset — local stdout sink only.
+    # Addresses Codex MEDIUM (REVIEWS-RESPONSE.md — logfire boot noise).
+    {% if has_backend and has_logfire %}
+    import os as _os
+    import logfire
+    if _os.environ.get("LOGFIRE_TOKEN"):
+        logfire.configure()
+    else:
+        logfire.configure(send_to_logfire=False)  # inert: local sink only
+    logfire.instrument_fastapi(app)
+    logfire.instrument_httpx()
+    {% if has_llm %}
+    logfire.instrument_anthropic()
+    logfire.instrument_openai()
+    {% endif %}
+    {% endif %}
+
     # Routes
     app.include_router(api_router)
 
@@ -138,6 +156,13 @@ def create_app(cwd: Path | None = None) -> FastAPI:
     settings_for_mount = load_settings(cwd)
     if settings_for_mount.ENV == "dev":
         app.include_router(make_debug_router(cwd), prefix="/__debug")
+
+    {% if has_backend and has_fastapi_mcp %}
+    # Opt-in: every FastAPI route -> MCP tool (3-line mount).
+    # Mounted LAST so it picks up every route including the debug router.
+    from fastapi_mcp import FastApiMCP
+    FastApiMCP(app).mount()
+    {% endif %}
 
     return app
 
