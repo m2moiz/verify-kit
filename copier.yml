@@ -37,6 +37,18 @@ _exclude:
   - "{% if not has_db %}alembic{% endif %}"
   - "{% if not has_db %}alembic/**{% endif %}"
   - "{% if not has_db %}alembic.ini{% endif %}"
+  - "{% if not has_llm %}harness/llm.py{% endif %}"
+  - "{% if not has_llm %}harness/checks/eval.py{% endif %}"
+  - "{% if not has_llm %}eval{% endif %}"
+  - "{% if not has_llm %}eval/**{% endif %}"
+  - "{% if not has_llm %}tests/llm{% endif %}"
+  - "{% if not has_llm %}tests/llm/**{% endif %}"
+  - "{% if not has_llm %}tests/cassettes/.gitkeep{% endif %}"
+  - "{% if not has_llm %}docker-compose.langfuse.yml{% endif %}"
+  - "{% if not has_llm %}.github/workflows/nightly-eval.yml{% endif %}"
+  - "{% if not has_llm %}.env.example{% endif %}"
+  - "{% if not has_llm %}.env.example.jinja2{% endif %}"
+  - "{% if llm_backend != 'langfuse-self-host' %}docker-compose.langfuse.yml{% endif %}"
 
 _message_before_copy: "Welcome to verify-kit. ~10 prompts grouped as Identity / Agent integrations / Add-ons / Optional."
 _message_after_copy: |
