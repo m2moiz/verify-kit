@@ -1,0 +1,48 @@
+"""harness.checks.eval — optional LLM eval gate (D-15: discoverable, skip-by-default).
+
+Per D-15 the umbrella ``just verify`` command does NOT call ``just eval`` —
+LLM evals are expensive and stay opt-in. This check exists so
+``verify-kit list-checks`` advertises the eval gate (consumers learn it's
+there) while keeping ``just verify`` free and fast.
+
+When the harness runner invokes this check it returns ``status="skip"``
+with a hint that points the consumer at the real entry point (``just eval``).
+The runner exits 0 on skip; the umbrella verify therefore exits 0 too.
+"""
+from __future__ import annotations
+
+from pathlib import Path
+
+from harness.models import CheckResult, ErrorEnvelope
+from harness.registry import register
+
+
+@register(
+    "eval",
+    tier="slow",
+    category="llm",
+    description=(
+        "Optional LLM eval gate (Promptfoo). Discoverable via list-checks; "
+        "skip-by-default in `just verify` per D-15. Run `just eval` to "
+        "execute the actual eval suite."
+    ),
+    fixable=False,
+    tool="promptfoo",
+)
+def run(cwd: Path) -> CheckResult:
+    """Always return status='skip' — eval is invoked separately via `just eval`."""
+    return CheckResult(
+        check_id="eval",
+        status="skip",
+        message=(
+            "eval is opt-in (D-15). Run `just eval` to execute the Promptfoo "
+            "suite under eval/."
+        ),
+        error=ErrorEnvelope(
+            code="eval.opt-in",
+            message="eval is not part of the umbrella verify command",
+            hint="Run `just eval` to execute the Promptfoo suite.",
+            fix_command=f"cd {cwd} && just eval",
+            docs_url="https://github.com/m2moiz/verify-kit#eval-gate",
+        ),
+    )

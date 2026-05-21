@@ -17,3 +17,9 @@ from harness.checks import format as _format  # noqa: F401
 # Backend slice check (Plan 04-07) — imported for @register side-effect.
 from harness.checks import backend as _backend  # noqa: F401
 {% endif %}
+{% if has_llm %}
+# Optional eval check (Plan 05-03 / D-15) — imported for @register side-effect.
+# Returns status="skip" with a hint pointing at `just eval`; discoverable via
+# `verify-kit list-checks` but never runs in the umbrella `just verify`.
+from harness.checks import eval as _eval  # noqa: F401
+{% endif %}
