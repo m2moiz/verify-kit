@@ -5,16 +5,107 @@ description: Run an LLM eval suite against the project's prompts or check the mo
 
 # Skill: verify-kit-eval
 
-## When to use
-- User asks to run evals or compare two runs.
-- Before merging a prompt change.
+This skill is how the agent operates the LLM-eval gate shipped by verify-kit.
+The umbrella `just verify` deliberately does NOT run evals (D-15) — they are
+opt-in via `just eval` so the umbrella check stays free and fast.
 
-## Status (Phase 3 stub)
-The eval body is implemented in Phase 5. In Phase 3, `verify-kit eval run` and
-`verify-kit eval compare` return `{"status": "not_implemented", "available_in_phase": 5}`.
-When that JSON appears, surface the message to the user — do not silently
-proceed.
+## When to run evals
 
-## Future invocation (Phase 5)
-- `just eval` runs Promptfoo against `eval/datasets/golden.jsonl`.
-- `verify-kit eval compare run-a run-b` diffs two stored runs.
+Trigger `just eval` when:
+
+- The user edits a prompt file under `eval/prompts/` or anywhere downstream
+  that affects LLM-facing instruction text.
+- Before merging a PR whose diff touches LLM logic, prompt strings, or any
+  file under `harness/llm.py` / the `/summarize` route handler.
+- After bumping `pydantic-ai`, `litellm`, `instructor`, or `langfuse` in
+  `pyproject.toml` — these libraries can subtly shift token counts and
+  response shapes.
+- After a `just refresh-cassettes` run, to confirm the new cassettes still
+  satisfy the scorers in `eval/datasets/golden.jsonl`.
+
+Drift between commits is also caught automatically by the weekly
+`nightly-eval.yml` workflow (Sunday 04:00 UTC) — but the agent should NOT
+wait for the nightly when the diff visibly touches LLM behavior.
+
+## How to read `.verify/eval-results.json`
+
+`just eval` invokes Promptfoo and writes results to `.verify/eval-results.json`.
+The file is the same path the `nightly-eval.yml` workflow uploads as a CI
+artifact and the same path documented in this skill — there is exactly one
+canonical eval-results path in this project.
+
+Structure (per Promptfoo's output schema):
+
+- `prompts[]` — the prompt templates that were exercised
+- `results[]` — one entry per (prompt × test row) combination
+  - `results[].score` — scorer-specific score (0.0–1.0 for graded scorers,
+    boolean for pass/fail scorers)
+  - `results[].passed` — final boolean after the scorer's threshold applied
+  - `results[].response.output` — the actual model output
+  - `results[].gradingResult` — per-assertion breakdown when the row has
+    multiple `assert:` entries
+
+Scorers shipped in the v0.1 starter dataset (`eval/datasets/golden.jsonl`):
+
+1. `factuality` — graded by a judge model; threshold defaults to 0.5
+2. `equals` — exact string match
+3. `contains` — substring presence
+4. `answer-relevance` — judge model, threshold 0.6
+5. `moderation` — pass/fail safety classifier
+
+A passing run exits 0 and writes the JSON. A failing scorer exits non-zero
+AND writes the JSON — the agent should ALWAYS inspect the file rather than
+relying on exit code alone.
+
+## Decorator-ordering rule (load-bearing — do not reorder)
+
+When stacking `@cost_budget` and `@llm_call` on the same function,
+`@cost_budget` MUST be the OUTER decorator (written above) and `@llm_call`
+MUST be the INNER decorator (written below). Decorators are applied
+bottom-up but executed top-down at call time, so this ordering guarantees
+that `@llm_call` records the cost into the contextvar accumulator BEFORE
+`@cost_budget` reads that same accumulator to decide whether to raise
+`CostBudgetExceeded`. Reversing the order (`@llm_call` OUTER + `@cost_budget`
+INNER) means `@cost_budget` checks the accumulator before any cost has been
+recorded for the current call — the budget check becomes a no-op for the
+very call it is supposed to guard.
+
+The `/summarize` route handler uses `@cost_budget` OUTER over a function
+that awaits `call_llm` (itself internally `@llm_call`-decorated). When the
+agent adds new LLM-decorated functions, the same OUTER/INNER ordering
+applies.
+
+## Proposing fixes via the `fix_propose` MCP tool
+
+The verify-kit MCP server exposes `fix_propose` as a SHAPE-ONLY tool with
+no arguments. The current signature is:
+
+```python
+def fix_propose() -> dict
+```
+
+Invoke it via the MCP `mcp_call fix_propose` no-arg form. It returns a
+shape-only response (issue/findings stub) — the agent reads that response
+and then crafts the actual fix narratively from the surrounding code
+context. Do NOT pass a JSON-string argument or keyword arguments to the
+tool — that signature does not exist in this codebase. If you need richer arguments, file an issue to
+extend `template/harness/mcp/tools.py` rather than inventing a call shape.
+
+## When to escalate to a human
+
+Escalate (stop work, ask the user) when:
+
+- `CostBudgetExceeded` fires during `just eval` or any `/summarize` call.
+  The budget ceiling is human policy, not an agent decision — never edit
+  `@cost_budget(usd=...)` without explicit approval.
+- Eval results regress below threshold despite two or more `fix_propose`
+  iterations. Persistent drift means the prompt's contract has changed in
+  a way the agent should NOT silently reshape.
+- The claude-agent-sdk routing path reports `cost_usd=0.0` AND the operator
+  expects a non-zero cost. This usually means the SDK quietly took over a
+  call site the operator intended to route through `ANTHROPIC_API_KEY` —
+  a routing misconfiguration per Pitfall 5. Surface the asymmetry rather
+  than papering over it.
+- A scorer in `eval/datasets/golden.jsonl` repeatedly fails on rows the
+  user just edited — they may want the row removed or rescored, not the
+  prompt changed.
