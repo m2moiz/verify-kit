@@ -1,0 +1,140 @@
+"""harness.checks.backend — backend slice (schemathesis + smoke + integration).
+
+Registered with the harness check registry when has_backend=true. The check
+exits 0 (status="pass") when all sub-steps pass, status="fail" on any failure.
+NEVER reads Path.cwd() — every subprocess takes explicit cwd from the harness
+runner's CheckSpec.fn(cwd=cwd) call contract.
+"""
+from __future__ import annotations
+import subprocess
+import time
+from pathlib import Path
+
+from harness.models import CheckResult, ErrorEnvelope
+from harness.registry import register
+
+
+@register(
+    "backend",
+    tier="standard",
+    category="backend",
+    description=(
+        "Runs pytest backend tests, then schemathesis fuzz against the live "
+        "OpenAPI (over-network when app reachable on :8000, in-process via "
+        "ASGITransport otherwise), and smoke-tests /healthz."
+    ),
+    fixable=False,
+    tool="uv",
+)
+def run(cwd: Path) -> CheckResult:
+    """Execute the backend slice. cwd is the scaffold root — passed by the harness runner."""
+    start = time.monotonic()
+
+    # Step 1: pytest unit + integration (Testcontainers handles its own DB).
+    r = subprocess.run(
+        ["uv", "run", "pytest", "tests/backend/", "-q", "--tb=short"],
+        cwd=cwd, capture_output=True, text=True, timeout=600,
+    )
+    if r.returncode != 0:
+        return CheckResult(
+            check_id="backend",
+            status="fail",
+            message=f"backend pytest failed:\n{r.stdout}\n{r.stderr}",
+            duration_ms=int((time.monotonic() - start) * 1000),
+            error=ErrorEnvelope(
+                code="backend.pytest-fail",
+                message=f"backend pytest failed:\n{r.stdout}\n{r.stderr}",
+                fix_command=f"cd {cwd} && uv run pytest tests/backend/ -v",
+                docs_url="https://github.com/m2moiz/verify-kit#backend-slice",
+            ),
+        )
+
+    # Step 2: schemathesis schema-fuzz. Cycle-3 fix (HIGH F / cycle-2 PARTIAL #4):
+    # the cycle-2 plan SKIPPED schemathesis when the live app was unreachable,
+    # so `just verify` (which does NOT start docker) never ran the fuzz — API-18
+    # was unproven. The umbrella check now ALWAYS runs schemathesis. If the live
+    # app is reachable, we fuzz the LIVE OpenAPI (over-network — the canonical
+    # path). If not, we fall back to the IN-PROCESS path: invoke the
+    # harness.checks.backend_inprocess_fuzz helper (T07's file) so requests
+    # never leave the process.
+    try:
+        import httpx
+        httpx.get("http://localhost:8000/healthz", timeout=2.0)
+        app_running = True
+    except Exception:
+        app_running = False
+
+    if app_running:
+        # Over-network path: schemathesis against the LIVE running app.
+        r2 = subprocess.run(
+            [
+                "uv", "run", "schemathesis", "run",
+                "http://localhost:8000/openapi.json",
+                "--checks", "all",
+                "--max-examples", "20",
+                "--hypothesis-deadline=2000",
+            ],
+            cwd=cwd, capture_output=True, text=True, timeout=300,
+        )
+        if r2.returncode != 0:
+            return CheckResult(
+                check_id="backend",
+                status="fail",
+                message=f"schemathesis (live) found schema/auth issues:\n{r2.stdout}\n{r2.stderr}",
+                duration_ms=int((time.monotonic() - start) * 1000),
+                error=ErrorEnvelope(
+                    code="backend.schemathesis-live-fail",
+                    message=(
+                        f"schemathesis (live) found schema/auth issues:\n"
+                        f"{r2.stdout}\n{r2.stderr}"
+                    ),
+                    fix_command=(
+                        f"cd {cwd} && uv run schemathesis run "
+                        "http://localhost:8000/openapi.json --checks all"
+                    ),
+                    docs_url="https://schemathesis.readthedocs.io/",
+                ),
+            )
+    else:
+        # In-process path: fuzz via ASGITransport using the T07 helper.
+        # Calls harness.checks.backend_inprocess_fuzz (the sibling file
+        # written by Plan 04-07 T07). Using subprocess keeps the heavy
+        # hypothesis engine isolated from the harness runner process.
+        r2 = subprocess.run(
+            [
+                "uv", "run", "python", "-m",
+                "harness.checks.backend_inprocess_fuzz",
+                "--max-examples", "10",
+                "--cwd", str(cwd),
+            ],
+            cwd=cwd, capture_output=True, text=True, timeout=300,
+        )
+        if r2.returncode != 0:
+            return CheckResult(
+                check_id="backend",
+                status="fail",
+                message=(
+                    f"schemathesis (in-process) found schema/auth issues:\n"
+                    f"{r2.stdout}\n{r2.stderr}"
+                ),
+                duration_ms=int((time.monotonic() - start) * 1000),
+                error=ErrorEnvelope(
+                    code="backend.schemathesis-inprocess-fail",
+                    message=(
+                        f"schemathesis (in-process) found schema/auth issues:\n"
+                        f"{r2.stdout}\n{r2.stderr}"
+                    ),
+                    fix_command=(
+                        f"cd {cwd} && uv run python -m "
+                        "harness.checks.backend_inprocess_fuzz"
+                    ),
+                    docs_url="https://schemathesis.readthedocs.io/",
+                ),
+            )
+
+    return CheckResult(
+        check_id="backend",
+        status="pass",
+        message="backend slice OK",
+        duration_ms=int((time.monotonic() - start) * 1000),
+    )
