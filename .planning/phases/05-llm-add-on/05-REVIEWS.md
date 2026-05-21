@@ -106,3 +106,148 @@ The manual fix in commit 823b71c **partially resolved** the two cycle-3 HIGHs:
 - HIGH #2 (cassette path glob): the canonical-path direction is right, but the manual edit introduced a NEW REVIEW-CHECKLIST §1 violation (bare relative `Path("tests/llm/cassettes")`).
 
 **Recommendation:** apply a second surgical manual fix to (a) tighten the 05-03 verify block for HIGH #1 and (b) anchor the rglob on `Path(__file__).parent` for HIGH #2; then re-run this adversarial pass. Do NOT proceed to `/gsd:execute-phase 5` with current_high=2.
+
+---
+
+# Cycle 5 — Adversarial Re-Review of Manual Fix (commit 8366ac9)
+
+**Reviewer:** Codex (independent semantic re-review per rule 08, second round)
+**Reviewed at:** 2026-05-21
+**Subject:** Manual fix in 8366ac9 addressing the 2 cycle-4 HIGHs (verify-block weakness + rglob cwd-leak)
+**Trajectory:** ∞ → 8 → 5 → 2 → **1**
+
+## Vectors Hunted
+
+1. Does the new verify block at 05-03 Task 2 actually force the new gate semantics?
+2. Did the rglob path correctly anchor on `Path(__file__).parent / "cassettes"` everywhere?
+3. Did edits introduce NEW REVIEW-CHECKLIST violations?
+4. Cross-plan drift in 05-04 / 05-05?
+5. Any HIGH missed by the prior 4 review cycles + 2 manual fix rounds?
+
+## Codex Findings
+
+### HIGH #1 (NEW) — 05-03 Task 2 verify block is still self-defeating
+
+At `05-03-PLAN.md:184-191`, the strengthened verify block is **still too weak**:
+
+- `assert '!=' in text and '"none"' in text or "'none'" in text` is **precedence-broken**: Python evaluates this as `('!=' in text and '"none"' in text) or "'none'" in text`, so any implementation containing the single-quoted `'none'` (e.g. a comment) passes even if it never compares `record_mode != "none"`.
+- Even with parentheses, substring checks can be satisfied by **comments** or by **dead/wrong-order code**.
+- `pytest --collect-only --record-mode=once` does **not execute autouse fixtures**, so collection-only cannot prove `_skip_when_no_cassette` actually avoids skipping during cassette refresh.
+
+**Adversary's worked counter-example** — the OLD self-defeating shape still passes the new verify block:
+
+```python
+if not cassette_path.exists():
+    pytest.skip("cassette missing")
+record_mode = request.config.getoption("--record-mode")
+if record_mode != "none":
+    return
+```
+
+That string contains `record_mode`, `!=`, and `"none"`, and `--collect-only` succeeds — but `just refresh-cassettes` still skips before recording. The verification gate does not detect the bug it was added to catch.
+
+**Fix:** replace the substring-and-collect-only check with an **executing probe test** in the scratch render:
+
+- write a temporary `tests/llm/test_record_mode_probe.py` with a trivial `@pytest.mark.vcr` test that makes no real network call
+- run `uv run pytest -q --record-mode=once tests/llm/test_record_mode_probe.py -rs` and assert it is NOT skipped (autouse fixture must have bypassed the skip)
+- run it without `--record-mode=once` and assert it IS skipped when the cassette is absent
+- both assertions together force the semantics the plan claims
+
+## Per-Vector Reasoning
+
+1. **Verify-block semantics:** **HIGH found.** Substring checks + `--collect-only` do not force the new semantics. See above.
+2. **rglob anchoring:** **CLEAN.** `05-03-PLAN.md:228` explicitly requires `(Path(__file__).parent / "cassettes").rglob("*.yaml")` and the verify block at line ~230 forbids the bare-relative `pathlib.Path("tests/llm/cassettes")` form. No residual cwd-leak found.
+3. **New REVIEW-CHECKLIST violations:** The verify-block weakness above is the only new violation. No new dead-code-after-return, no new subprocess-without-cwd, no new broken Jinja patterns introduced by 8366ac9.
+4. **Cross-plan drift:** **CLEAN.** 05-04 `just refresh-cassettes` recipe targets `tests/llm/cassettes/` with `--record-mode=once`; 05-05 references `just eval` (not the old `just verify --check=eval`). Both aligned with 05-03's canonical path and mode.
+5. **Other missed HIGHs:** **None beyond #1 above.**
+
+## Outcome
+
+The manual fix in 8366ac9 successfully resolved cycle-4 HIGH #2 (rglob cwd-leak) but **only partially resolved cycle-4 HIGH #1** (verify-block weakness). The new verify block tightens the surface area but does not actually force the executable behavior — a sufficiently determined planner-agent regression could re-introduce the old bug and still pass the gate.
+
+**Recommendation:** apply a third surgical fix to 05-03 Task 2 replacing the substring + collect-only check with an **executing probe test** as described in the HIGH above. After that fix, run one more adversarial re-review to confirm closure. Do NOT proceed to `/gsd:execute-phase 5` with current_high=1.
+
+CYCLE_SUMMARY: current_high=1
+
+---
+
+# Cross-AI Plan Review — Phase 5 (Cycle 6, Adversarial)
+
+**Cycle:** 6
+**Reviewer:** codex (independent session, adversarial framing)
+**Reviewed at:** 2026-05-21T21:30:00Z
+**Plans reviewed:** 05-01..05-05 PLAN.md
+**Under review:** commit 26625c5 (cycle-5 fix — executing probe test for record_mode gate)
+**Trajectory:** infinity → 8 → 5 → 2 → 1 → **3 HIGH (cycle 6)**
+
+## Codex Review
+
+**Verdicts**
+
+1. **Probe soundness, case (a): MEDIUM**  
+   The default-mode assertion at [05-03-PLAN.md:200-202](/Users/moiz/Documents/code/verify-kit/.planning/phases/05-llm-add-on/05-03-PLAN.md:200) is mostly sound for “one selected probe test skipped with the cassette reason.” Pytest conftest/collection errors normally exit nonzero, and “no tests ran” exits nonzero. But it does not prove `pytest-recording` is installed; the custom skip fixture can still see `@pytest.mark.vcr` as marker metadata even if the plugin is absent.
+
+2. **Probe soundness, case (b): HIGH**  
+   [05-03-PLAN.md:204-209](/Users/moiz/Documents/code/verify-kit/.planning/phases/05-llm-add-on/05-03-PLAN.md:204) accepts any nonzero pytest exit as success as long as “skipped” is absent. That includes usage error for missing `--record-mode`, collection errors, import errors, fixture errors, and zero fixture execution.
+
+3. **Can the old self-defeating shape still pass?: HIGH**  
+   With `pytest-recording` absent, `--record-mode=once` is unrecognized before fixture execution. The old broken “always skip when cassette missing” fixture can pass case (a), then case (b) exits nonzero from CLI usage with no “skipped” text, satisfying the current assertions.
+
+4. **cwd / path / env leaks: HIGH**  
+   Both probe subprocesses use `uv run --no-project pytest ...` with `cwd` but no clean `env` at [05-03-PLAN.md:200](/Users/moiz/Documents/code/verify-kit/.planning/phases/05-llm-add-on/05-03-PLAN.md:200) and [05-03-PLAN.md:204](/Users/moiz/Documents/code/verify-kit/.planning/phases/05-llm-add-on/05-03-PLAN.md:204). This conflicts with REVIEW-CHECKLIST §8 at [REVIEW-CHECKLIST.md:74](/Users/moiz/Documents/code/verify-kit/.planning/REVIEW-CHECKLIST.md:74). Worse, `--no-project` ignores the scratch pyproject where `pytest-recording` is only planned as a dev optional dependency in [05-01-PLAN.md:169](/Users/moiz/Documents/code/verify-kit/.planning/phases/05-llm-add-on/05-01-PLAN.md:169).
+
+5. **Race conditions and cleanup: LOW**  
+   `probe.unlink()` is not in `finally`, so failed assertions leak the probe file within the scratch dir. The next run’s `rm -rf` cleans it, and it does not affect `.gitkeep`; not HIGH.
+
+6. **Vestigial assertion: LOW**  
+   [05-03-PLAN.md:206](/Users/moiz/Documents/code/verify-kit/.planning/phases/05-llm-add-on/05-03-PLAN.md:206) is a no-op because of `or True`. It is deceptive and should be removed, but it is not load-bearing.
+
+7. **Cross-plan drift: PASS**  
+   `reset_cost_accumulator` is produced by 05-02 at [05-02-PLAN.md:166](/Users/moiz/Documents/code/verify-kit/.planning/phases/05-llm-add-on/05-02-PLAN.md:166) and consumed consistently by 05-03. 05-04’s `refresh-cassettes` uses the same `tests/llm/cassettes` path and `--record-mode=once` at [05-04-PLAN.md:182](/Users/moiz/Documents/code/verify-kit/.planning/phases/05-llm-add-on/05-04-PLAN.md:182). No 05-05 conftest interaction issue found.
+
+8. **REVIEW-CHECKLIST patterns: HIGH**  
+   §8 env leak applies directly. §2 dead-code concern applies only as LOW for the no-op assertion. §3/§4 drift, §5/§6 Jinja, and §7 recursive pytest do not add another HIGH here.
+
+**HIGH FOUND**
+
+- [05-03-PLAN.md:204](/Users/moiz/Documents/code/verify-kit/.planning/phases/05-llm-add-on/05-03-PLAN.md:204), [05-03-PLAN.md:207](/Users/moiz/Documents/code/verify-kit/.planning/phases/05-llm-add-on/05-03-PLAN.md:207)  
+  Category: probe false-positive.  
+  Asserted shape: any nonzero `--record-mode=once` run plus no “skipped” text proves the fixture did not skip.  
+  Why HIGH: missing `pytest-recording`, usage errors, collection errors, and import errors all pass without exercising `_skip_when_no_cassette`.  
+  Proposed fix shape: install/sync the scratch project with dev extras, assert `pytest --help` contains `--record-mode`, then make case (b) fail via a sentinel body exception and assert that exact sentinel appears.
+
+- [05-03-PLAN.md:200](/Users/moiz/Documents/code/verify-kit/.planning/phases/05-llm-add-on/05-03-PLAN.md:200), [05-03-PLAN.md:204](/Users/moiz/Documents/code/verify-kit/.planning/phases/05-llm-add-on/05-03-PLAN.md:204)  
+  Category: scratch dependency/env isolation.  
+  Asserted shape: `uv run --no-project pytest` from scratch is a valid test of scratch behavior.  
+  Why HIGH: it ignores scratch dependencies and can use ambient pytest/plugins or lack required plugins entirely.  
+  Proposed fix shape: use a `_CLEAN_ENV`, run scratch project commands without `--no-project`, install dev dependencies, and reject pytest exit codes 2/3/4/5 explicitly.
+
+## Consensus Summary
+
+Cycle 6 escalates rather than converges. Three independent HIGHs surfaced:
+
+1. **Case (b) probe is a false-positive sieve** — any non-zero exit without the substring "skipped" passes, including `pytest-recording` not installed (returncode 4, usage error), collection errors, ImportErrors, fixture errors. The OLD self-defeating shape can satisfy the assertion without the fixture ever running.
+2. **`uv run --no-project`** bypasses scratch's pyproject — `pytest-recording` is declared as a dev optional dependency in 05-01-PLAN.md:169 but `--no-project` ignores it. The probe may be exercising ambient pytest, not the scratch-rendered toolchain.
+3. **Env leak** — REVIEW-CHECKLIST §8 (Phase 4 incident). Neither subprocess passes a cleaned `env=`, so outer `VIRTUAL_ENV` / `UV_PROJECT_ENVIRONMENT` leaks in.
+
+### Fix shape proposed by reviewer
+
+- Install scratch project with dev extras (drop `--no-project`).
+- Assert `pytest --help` lists `--record-mode` BEFORE running probes (proves pytest-recording is loaded).
+- Replace case (b)'s "non-zero exit" assertion with a **sentinel body exception** in the probe (raise a uniquely-named error inside the test body) and grep the output for that exact sentinel — proves the fixture did NOT short-circuit.
+- Pass `env=_CLEAN_ENV` to every subprocess.
+- Reject pytest exit codes 2/3/4/5 explicitly (collection, usage, internal error, no-tests-collected).
+
+### Recommendation
+
+Per rule 08, two cycles of HIGH≥2 trigger restructure consideration. The substring/probe vector has now produced HIGHs across cycles 4, 5, and 6 — three consecutive cycles of churn on the same gate. Options:
+
+- **Manual fix** (per rule 08 max-cycles=3 guidance): hand-patch the three issues in the verify block of 05-03 Task 2, then run an independent re-review to confirm fix-without-new-drift.
+- **Restructure**: move the record-mode gate test from a verify-block probe into a real unit test inside the scratch render (`tests/llm/test_skip_fixture_gates_on_record_mode.py`) that 05-03 Task 3 produces, with the producer (05-03) owning the contract — per REVIEW-CHECKLIST §3 (contracts live with producers). The verify block then just checks that test file exists; the test itself is the gate.
+
+The restructure is the cleaner path because:
+- The verify block is a poor place for behavioral assertions — it runs inside the planning pre-flight, not inside the test suite.
+- A real test file participates in normal test isolation, env handling, and developer workflow.
+- The current churn shows the substring+probe shape is structurally fragile.
+
+User decision required: manual-fix-and-reverify, or restructure-and-replan.
