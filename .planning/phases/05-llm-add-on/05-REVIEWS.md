@@ -1,7 +1,8 @@
 ---
 phase: 5
+cycle: 2
 reviewers: [codex]
-reviewed_at: 2026-05-21T18:15:23Z
+reviewed_at: 2026-05-21T18:40:42Z
 plans_reviewed:
   - 05-01-PLAN.md
   - 05-02-PLAN.md
@@ -10,115 +11,112 @@ plans_reviewed:
   - 05-05-PLAN.md
 ---
 
-# Cross-AI Plan Review — Phase 5
+# Cross-AI Plan Review — Phase 5 (Cycle 2)
+
+This cycle re-reviews commit `bb201fd` which addressed the 8 HIGH concerns from Cycle 1.
 
 ## Codex Review
 
-## Summary
+**Summary**
 
-Overall risk: **HIGH**. The plans are thoughtful and cover the right Phase 5 surface area, but several load-bearing contracts do not line up with the current repo or with each other. The biggest blockers are: `has_llm=true` without `has_backend=true` has nowhere to render `.env.example`; `harness/llm.py` defines routing helpers but the decorator does not actually route calls through `claude-agent-sdk` vs LiteLLM; Promptfoo artifacts do not produce the `.verify/eval-results.json` that the skill documents; and the nightly “cost cap” only checks that a variable exists, not that estimated cost is under cap.
+Overall risk remains **HIGH**. Cycle 2 resolves several prior contract mismatches on paper, especially `tokenx-core`, `promptfoo prompts:`, `.verify/eval-results.json`, and no-arg `fix_propose()`. But the current plan still has execution blockers and new contract drift: it references a missing `.env.example` source file, uses unsafe Jinja path shapes for `tests/llm`, omits primary `_exclude` coverage for the new root `.env.example`, and under-specifies the required LLM span attributes.
 
-## Strengths
+**Strengths**
 
-- Strong polarity discipline overall: most plans explicitly test `has_llm=false` and `llm_backend` branches.
-- Good attention to previously caught drift patterns: `@register`, `CheckResult(status=...)`, `result.output`, `tokenx-core`, Jinja line-boundary risks, and cassette secret scrubbing are all called out.
-- The phase decomposition is mostly sensible: dependency/path gates first, harness abstraction second, tests/eval artifacts next, integration/docs last.
-- Security posture around VCR header scrubbing and Langfuse loopback binding is well specified.
+- Prior HIGHs #3, #4, #5, and #6 are substantially addressed.
+- 05-02 now introduces a real `call_llm()` routing entry point and makes `/summarize` consume it.
+- 05-04 now has a prompt producer file and a consistent `.verify/eval-results.json` path.
+- 05-05 adds polarity tests intended to force the prior HIGHs, which is the right direction.
 
-## Concerns
+**Concerns**
 
-- **HIGH — LLM `.env.example` only exists when `has_backend=true`.** Plan 05-01 modifies [template/{% if has_backend %}app{% endif %}/.env.example.jinja2](/Users/moiz/Documents/code/verify-kit/template/{% if has_backend %}app{% endif %}/.env.example.jinja2:1), but LLM-10 requires `has_llm=true` to write credential slots regardless of backend. In `has_llm=true, has_backend=false`, no LLM env artifact is planned.
+- **HIGH — 05-01 still references a missing app `.env.example` template.**  
+  05-01 Task 4 says to read and append `template/{% if has_backend %}app{% endif %}/.env.example.jinja2`, but `rg --files template | rg 'env|\\.env'` shows no such file exists. The plan says “append, do not rewrite,” so execution will fail or force the executor to invent a new file outside the plan. Source: current template has no `.env.example`; only `template/{% if has_db %}alembic{% endif %}/env.py.jinja2` exists.
 
-- **HIGH — 05-02 does not actually implement D-03 routing.** It adds `_routing_path()` and `call_claude_code_sdk()`, but `@llm_call` still just awaits the wrapped function. The planned `/summarize` function directly uses `pydantic_ai.Agent.run()`, so `claude-agent-sdk` is never used as the call path. That misses D-01/D-03.
+- **HIGH — 05-03 uses an unsafe Jinja path shape for `tests/llm`.**  
+  Planned paths like `template/tests/{% if has_llm %}llm{% endif %}/test_llm_call.py.jinja2` put the conditional on a directory segment under universal `tests/`. Existing Phase 4 safe pattern uses concrete parent dirs plus filename-level gates, e.g. `template/tests/backend/{% if has_backend %}test_app.py{% endif %}.jinja2`. If `has_llm=false`, the planned shape risks rendering files into `tests/` rather than `tests/llm/`, and `_exclude: tests/llm/**` would not catch that. This violates the two-guard path contract.
 
-- **HIGH — Current pyproject has no `[dependency-groups]` table.** Plan 05-01 says to append dev deps under `[dependency-groups] dev = [...]`, but the actual template uses `[project.optional-dependencies] dev = [...]` at [template/pyproject.toml.jinja2](/Users/moiz/Documents/code/verify-kit/template/pyproject.toml.jinja2:59). Executor will either fail or introduce a second dependency convention.
+- **HIGH — root `.env.example` lacks a primary `_exclude` gate.**  
+  05-01 adds `template/{% if has_llm and not has_backend %}.env.example{% endif %}.jinja2`, but Task 2 does not add a matching `_exclude` entry for `.env.example`. This is a new root-level LLM artifact and should be covered by the primary gate in [copier.yml](/Users/moiz/Documents/code/verify-kit/copier.yml:26), not only by a conditional filename.
 
-- **HIGH — Promptfoo config is incomplete for `just eval`.** Plan 05-04 specifies provider + `tests`, but no `prompts` entry. Promptfoo generally needs prompts to evaluate. The research example includes a `prompts:` section; the plan action dropped it, so `just eval` is unlikely to run.
+- **HIGH — 05-02 does not meet the stated `@llm_call` span contract.**  
+  The phase success criteria require prompt/response/cost/latency/retry-count and `gen_ai.*` attributes. 05-02 only requires `gen_ai.operation.name`, `verify_kit.cost_usd`, `verify_kit.latency_ms`, and `verify_kit.routing_path`. It omits at least `gen_ai.request.model`, `gen_ai.response.model`, `gen_ai.usage.input_tokens`, `gen_ai.usage.output_tokens`, and `verify_kit.retry_count`.
 
-- **HIGH — Eval output path drift: `.verify/eval-results.json` vs `.promptfoo/`.** Plan 05-05 SKILL.md documents `.verify/eval-results.json`, but 05-04 uploads `./.promptfoo/` and never writes/copies `.verify/eval-results.json`. No current source produces that file.
+- **HIGH — pydantic-ai is installed but no longer actually used as the primary framework.**  
+  05-02’s production path uses raw LiteLLM, and 05-05 explicitly forbids `/summarize` from importing `pydantic_ai.Agent`. That addresses routing, but it conflicts with LLM-02’s “pydantic-ai as primary agent/typed-call framework” requirement. Current plans mostly prove pydantic-ai imports, not that verify-kit scaffolds around it.
 
-- **HIGH — `fix_propose` signature drift.** Plan 05-05 tells agents to call `fix_propose '{"target": "eval", ...}'`, but current MCP tool is `def fix_propose() -> dict` with no args at [template/harness/mcp/tools.py.jinja2](/Users/moiz/Documents/code/verify-kit/template/harness/mcp/tools.py.jinja2:162).
+- **MEDIUM — cassette skip/recording behavior is underspecified and may fight `refresh-cassettes`.**  
+  05-03 sets `vcr_config["record_mode"] = "none"` while 05-04 expects `pytest --record-mode=once` to re-record. That may work depending on pytest-recording precedence, but the plan should explicitly verify that CLI `--record-mode=once` overrides the fixture. Otherwise `just refresh-cassettes` could still skip or refuse recording.
 
-- **HIGH — VCR tests will fail on a clean scaffold.** 05-03 sets `record_mode="none"` and adds `@pytest.mark.vcr` tests requiring cassettes, but no cassette is seeded before running generated tests. On first clean render, cassette-backed tests should fail loudly, which violates the scaffold “works on first run” goal.
+- **MEDIUM — `test_instructor_patch` may depend on an unpinned `anthropic` package.**  
+  05-03 plans `instructor.from_anthropic(anthropic.Anthropic())`, but `anthropic` is not explicitly added in 05-01. It may arrive transitively, but this is not grounded in the repo or plan.
 
-- **HIGH — Nightly eval cost cap is not enforced.** The workflow only checks `EVAL_BUDGET_USD` is non-empty. It does not estimate or cap Promptfoo cost, so it does not satisfy “refusing to start if the cap would be exceeded.”
+- **MEDIUM — README migration verification suggests a skipped check.**  
+  05-05 says verify migration with `just verify --check=eval`, but 05-03’s eval check intentionally returns `status="skip"` and only points to `just eval`. That command will not prove a Langfuse trace or eval run.
 
-- **MEDIUM — `template/{% if has_llm %}harness/llm.py{% endif %}.jinja2` is the wrong path-gating shape.** `harness/` is universal, so this should be filename-level gating under `template/harness/`, not a conditional path containing `harness/llm.py`. The safer shape is `template/harness/{% if has_llm %}llm.py{% endif %}.jinja2`.
+**Prior HIGH Status**
 
-- **MEDIUM — 05-02 depends on 05-01 but declares no dependency.** It creates gated files whose safety relies on 05-01 `_exclude` entries. That should be an explicit `depends_on: ["05-01"]`.
+| Prior HIGH | Status | Evidence |
+|---|---:|---|
+| LLM `.env.example` missing for `has_llm=true, has_backend=false` | PARTIAL | 05-01 Task 5 adds root `.env.example`, but Task 4 references a missing app env file and root env lacks `_exclude`. |
+| 05-02 did not implement D-03 routing | FULLY | 05-02 Task 2 adds `call_llm()` dispatching via `_routing_path()`; 05-05 Task 1 requires `/summarize` to call it. |
+| Wrong `[dependency-groups]` table | FULLY | 05-01 Task 3 explicitly uses `[project.optional-dependencies].dev` and forbids `[dependency-groups]`. |
+| Promptfoo config lacked `prompts:` | FULLY | 05-04 Task 1 adds `prompts:` and `eval/prompts/summarize.txt`. |
+| Eval output path drift | FULLY | 05-04 Tasks 2–3 and 05-05 Task 2 align on `.verify/eval-results.json`. |
+| `fix_propose` signature drift | FULLY | 05-05 Task 2 documents no-arg `fix_propose()` matching [tools.py](/Users/moiz/Documents/code/verify-kit/template/harness/mcp/tools.py.jinja2:162). |
+| VCR tests fail on clean scaffold | PARTIAL | 05-03 adds skip-when-no-cassette, but path-gating and record-mode precedence remain risky. |
+| Nightly cost cap only checked env var | PARTIAL | 05-04 adds an estimator, but it is static/coarse and may not reflect actual prompt/model costs. |
 
-- **MEDIUM — `_CLEAN_ENV` is referenced but not present.** [tests/_helpers.py](/Users/moiz/Documents/code/verify-kit/tests/_helpers.py:72) exposes `render_scratch_project`, but no `_CLEAN_ENV`. 05-05 says to add it if absent, but `tests/_helpers.py` is not listed in `files_modified`.
-
-- **MEDIUM — 05-02 TDD claims behavior tests but creates no tests.** The actual behavior tests are deferred to 05-03, while 05-02 verification is mostly grep-based. That is okay if intentional, but then mark 05-02 `tdd=false` or make it produce a focused unit test.
-
-## Suggestions
-
-- Add a root-level `template/.env.example.jinja2` or universal env file strategy for LLM-only projects. If backend also needs `app/.env.example`, avoid duplicating conflicting env docs.
-- Redesign `harness/llm.py` so routing is an explicit callable API, e.g. `await call_llm(prompt, model=...)`, and make examples use it. The decorator alone cannot route arbitrary wrapped functions.
-- Change 05-01 dev deps to append under `[project.optional-dependencies].dev`.
-- Add `prompts:` to `promptfoo.config.yaml`, plus a starter `eval/prompts/*.txt` file, or make the config fully inline.
-- Decide one eval results location. If the skill should read `.verify/eval-results.json`, make `just eval` write/copy Promptfoo JSON there.
-- Either seed safe cassettes in the template or make cassette-backed tests skipped unless cassettes exist. Do not make first-run `pytest` depend on live recording.
-- Replace the nightly cost check with a real preflight estimate or set Promptfoo’s native budget/cost controls if available. If unavailable, reword the requirement and plan honestly.
-- Update 05-05 to either use current no-arg `fix_propose()` or add a separate plan that extends MCP/CLI fix APIs with the documented arguments.
-- Add `tests/_helpers.py` to 05-05 `files_modified` if `_CLEAN_ENV` is required.
-
-## Source-Grounding Pass
+**Source-Grounding Pass**
 
 | Symbol / Path | Status | Evidence |
 |---|---:|---|
-| `has_llm`, `llm_backend` Copier prompts | VERIFIED | [copier.yml](/Users/moiz/Documents/code/verify-kit/copier.yml:144), [copier.yml](/Users/moiz/Documents/code/verify-kit/copier.yml:167) |
-| `_exclude` existing block | VERIFIED | [copier.yml](/Users/moiz/Documents/code/verify-kit/copier.yml:26) |
-| `[project.optional-dependencies].dev` | VERIFIED | [template/pyproject.toml.jinja2](/Users/moiz/Documents/code/verify-kit/template/pyproject.toml.jinja2:59) |
-| `[dependency-groups] dev` | MISSING | No matching table in current template pyproject |
-| `tracer` export | VERIFIED | [template/harness/observability.py.jinja2](/Users/moiz/Documents/code/verify-kit/template/harness/observability.py.jinja2:53) |
-| `_otel_enabled` block | VERIFIED | [template/harness/observability.py.jinja2](/Users/moiz/Documents/code/verify-kit/template/harness/observability.py.jinja2:34) |
-| `log = structlog.get_logger("harness")` | VERIFIED | [template/harness/logging.py.jinja2](/Users/moiz/Documents/code/verify-kit/template/harness/logging.py.jinja2:120) |
-| `get_trace_id`, `set_trace_id` | VERIFIED | [template/harness/trace_id.py.jinja2](/Users/moiz/Documents/code/verify-kit/template/harness/trace_id.py.jinja2:25), [template/harness/trace_id.py.jinja2](/Users/moiz/Documents/code/verify-kit/template/harness/trace_id.py.jinja2:30) |
-| `@register` signature | VERIFIED | [template/harness/registry.py.jinja2](/Users/moiz/Documents/code/verify-kit/template/harness/registry.py.jinja2:19) |
-| `CheckResult(status=...)` | VERIFIED | [template/harness/models.py.jinja2](/Users/moiz/Documents/code/verify-kit/template/harness/models.py.jinja2:61) |
-| `CheckTier` values | VERIFIED | [template/harness/models.py.jinja2](/Users/moiz/Documents/code/verify-kit/template/harness/models.py.jinja2:22) |
-| `harness/checks/__init__.py` registration site | VERIFIED | [template/harness/checks/__init__.py.jinja2](/Users/moiz/Documents/code/verify-kit/template/harness/checks/__init__.py.jinja2:11) |
-| Existing `/healthz`, `/echo`, `/events/stream` | VERIFIED | [template/app/api.py.jinja2](/Users/moiz/Documents/code/verify-kit/template/{% if has_backend %}app{% endif %}/api.py.jinja2:12), [api.py](/Users/moiz/Documents/code/verify-kit/template/{% if has_backend %}app{% endif %}/api.py.jinja2:18), [api.py](/Users/moiz/Documents/code/verify-kit/template/{% if has_backend %}app{% endif %}/api.py.jinja2:33) |
-| `render_scratch_project` | VERIFIED | [tests/_helpers.py](/Users/moiz/Documents/code/verify-kit/tests/_helpers.py:72) |
-| `_CLEAN_ENV` | MISSING | Not present in [tests/_helpers.py](/Users/moiz/Documents/code/verify-kit/tests/_helpers.py:1) |
-| MCP `fix_propose()` | VERIFIED, no args | [template/harness/mcp/tools.py.jinja2](/Users/moiz/Documents/code/verify-kit/template/harness/mcp/tools.py.jinja2:162) |
-| MCP `eval_run`, `eval_compare` stubs | VERIFIED | [template/harness/mcp/tools.py.jinja2](/Users/moiz/Documents/code/verify-kit/template/harness/mcp/tools.py.jinja2:206), [tools.py](/Users/moiz/Documents/code/verify-kit/template/harness/mcp/tools.py.jinja2:216) |
-| CLI `verify --check` | VERIFIED | [template/harness/cli.py.jinja2](/Users/moiz/Documents/code/verify-kit/template/harness/cli.py.jinja2:163) |
-| CLI `trace --last` | VERIFIED | [template/harness/cli.py.jinja2](/Users/moiz/Documents/code/verify-kit/template/harness/cli.py.jinja2:303) |
-| `.verify/eval-results.json` producer | MISSING | No source match found |
-| `harness/llm.py`, `llm_call`, `cost_budget` | NEW / not source-verifiable | Planned artifact, not currently present |
-| `claude_agent_sdk.query`, `pydantic_ai.Agent`, Promptfoo schemas | AMBIGUOUS | External APIs; not verifiable from repo source alone |
+| `has_llm`, `llm_backend` | VERIFIED | [copier.yml](/Users/moiz/Documents/code/verify-kit/copier.yml:144), [copier.yml](/Users/moiz/Documents/code/verify-kit/copier.yml:167) |
+| `_exclude` block | VERIFIED | [copier.yml](/Users/moiz/Documents/code/verify-kit/copier.yml:26) |
+| `[project.optional-dependencies].dev` | VERIFIED | [pyproject](/Users/moiz/Documents/code/verify-kit/template/pyproject.toml.jinja2:59) |
+| `[dependency-groups]` | MISSING | Not present; 05-01 correctly avoids it. |
+| `template/{% if has_backend %}app{% endif %}/.env.example.jinja2` | MISSING | No `.env.example` template exists under `template/`. |
+| Existing `app/api.py.jinja2` route structure | VERIFIED | [api.py.jinja2](/Users/moiz/Documents/code/verify-kit/template/{% if has_backend %}app{% endif %}/api.py.jinja2:1) |
+| `/healthz`, `/echo`, `/events/stream` | VERIFIED | [api.py.jinja2](/Users/moiz/Documents/code/verify-kit/template/{% if has_backend %}app{% endif %}/api.py.jinja2:12) |
+| `tracer`, `_otel_enabled` | VERIFIED | [observability.py](/Users/moiz/Documents/code/verify-kit/template/harness/observability.py.jinja2:26) |
+| `log` | VERIFIED | [logging.py](/Users/moiz/Documents/code/verify-kit/template/harness/logging.py.jinja2:120) |
+| `get_trace_id`, `set_trace_id` | VERIFIED | [trace_id.py](/Users/moiz/Documents/code/verify-kit/template/harness/trace_id.py.jinja2:25) |
+| `@register` | VERIFIED | [registry.py](/Users/moiz/Documents/code/verify-kit/template/harness/registry.py.jinja2:19) |
+| `CheckResult(status=...)` | VERIFIED | [models.py](/Users/moiz/Documents/code/verify-kit/template/harness/models.py.jinja2:61) |
+| `CheckTier` values | VERIFIED | [models.py](/Users/moiz/Documents/code/verify-kit/template/harness/models.py.jinja2:22) |
+| `harness/checks/__init__.py` registration side-effect | VERIFIED | [checks __init__](/Users/moiz/Documents/code/verify-kit/template/harness/checks/__init__.py.jinja2:1) |
+| CLI `verify --check` | VERIFIED | [cli.py](/Users/moiz/Documents/code/verify-kit/template/harness/cli.py.jinja2:163) |
+| MCP `fix_propose()` no args | VERIFIED | [tools.py](/Users/moiz/Documents/code/verify-kit/template/harness/mcp/tools.py.jinja2:162) |
+| `_CLEAN_ENV` | MISSING | Not present in [tests/_helpers.py](/Users/moiz/Documents/code/verify-kit/tests/_helpers.py:1); 05-05 plans to add it. |
+| `call_llm`, `llm_call`, `cost_budget` | PLANNED | Produced by 05-02. |
+| Promptfoo `-o output.json` | VERIFIED EXTERNAL | Context7 Promptfoo docs confirm `promptfoo eval -o results.json` / `--output results.json`. |
 
-I also attempted the required beads session close export, but `bd export` failed because the local Dolt server is unreachable under the current sandbox: `dial tcp 127.0.0.1:3307: connect: operation not permitted`.
+**Suggestions**
+
+- Add a 05-01 task to create the missing backend `.env.example` file, or change Task 4 from “append existing” to “create if absent” with source-grounded acceptance criteria.
+- Change `tests/llm` paths to the proven Phase 4 shape: `template/tests/llm/{% if has_llm %}test_llm_call.py{% endif %}.jinja2`.
+- Add `_exclude` entries for the root `.env.example` artifact and any gated `.gitkeep` that can otherwise collapse into `.jinja2`.
+- Update 05-02 span contract to set model, token usage, retry count, and response metadata from adapter results.
+- Either actually use pydantic-ai in the standard call path, or revise LLM-02/phase success criteria to say pydantic-ai is shipped as an optional ergonomic layer rather than primary.
+
+**Risk Assessment**
+
+**HIGH.** The replan is materially better than Cycle 1, but it still has execution blockers and path-gating hazards that can leak files into wrong scaffold cells. The missing `.env.example` source and unsafe `tests/{% if has_llm %}llm{% endif %}` shape should be fixed before execution. Also, the LLM span contract needs tightening or the phase will pass structural tests while missing key observability requirements.
+
+I attempted the required beads close commands, but both failed because the local Dolt server is unreachable in this sandbox: `dial tcp 127.0.0.1:3307: connect: operation not permitted`.
 
 ---
 
 ## Consensus Summary
 
-Single-reviewer (Codex) cycle. Findings below stand as the convergence input until additional reviewers are invoked.
+Single reviewer (Codex). Cycle 2 confirms 4 of 8 prior HIGHs are FULLY resolved (D-03 routing, `[project.optional-dependencies]`, promptfoo `prompts:`, eval output path, `fix_propose` signature). Two are PARTIALLY resolved (LLM `.env.example`, VCR cassette skip), and the replan introduced fresh HIGHs.
 
-### Agreed Strengths
-- Polarity discipline (has_llm / llm_backend branching) is consistently planned.
-- REVIEW-CHECKLIST patterns (`@register`, `CheckResult(status=...)`, `result.output`, `tokenx-core`, Jinja line-boundary risks, cassette secret scrubbing) are explicitly hunted for.
-- Phase decomposition follows dependency order: dependency/path gates → harness abstraction → tests/eval → integration/docs.
-- Security posture around VCR header scrubbing and Langfuse loopback binding is well specified.
-
-### Agreed Concerns (HIGH)
-1. `has_llm=true, has_backend=false` has no destination for the LLM `.env.example` (05-01 only edits the backend-gated env file).
-2. 05-02 does not actually route through `claude-agent-sdk` vs LiteLLM; `@llm_call` is a passthrough and `/summarize` calls `pydantic_ai.Agent.run()` directly — D-01/D-03 unmet.
-3. 05-01 appends dev deps under `[dependency-groups]`, but template uses `[project.optional-dependencies].dev` — wrong table.
-4. Promptfoo config lacks a `prompts:` entry — `just eval` likely will not run.
-5. Eval output path drift: SKILL.md references `.verify/eval-results.json`, but 05-04 only uploads `./.promptfoo/`. No producer of `.verify/eval-results.json`.
-6. `fix_propose` signature drift: 05-05 calls it with args; current MCP tool is no-arg.
-7. VCR cassette-backed tests use `record_mode="none"` without seeded cassettes — first clean render will fail.
-8. Nightly eval "cost cap" only checks env var existence; does not estimate or enforce a cap.
-
-### Agreed Concerns (MEDIUM)
-- `template/{% if has_llm %}harness/llm.py{% endif %}.jinja2` path-gating shape is wrong; should be filename-level gating under `template/harness/`.
-- 05-02 lacks explicit `depends_on: ["05-01"]`.
-- `_CLEAN_ENV` referenced in 05-05 but not present in `tests/_helpers.py`; `tests/_helpers.py` not in `files_modified`.
-- 05-02 marked TDD but produces no tests (deferred to 05-03).
+### Agreed Concerns (single reviewer)
+- 05-01 references a missing `.env.example.jinja2` source file (execution blocker).
+- 05-03 uses unsafe Jinja directory-segment gating for `tests/llm/` (violates Phase 4 two-guard pattern).
+- Root `.env.example` lacks a matching `_exclude` gate.
+- 05-02 LLM span contract is under-specified vs phase success criteria.
+- pydantic-ai is installed but not actually used as the primary framework path, conflicting with LLM-02.
 
 ### Divergent Views
-N/A — single reviewer this cycle.
+N/A (single reviewer).
