@@ -1,0 +1,41 @@
+from __future__ import annotations
+import pytest
+from dirty_equals import IsDatetime, IsInt
+from polyfactory.factories.pydantic_factory import ModelFactory
+from pydantic import BaseModel
+from sqlalchemy import select
+from app.schema import User
+
+
+pytestmark = pytest.mark.asyncio
+
+
+class UserCreate(BaseModel):
+    email: str
+
+
+class UserCreateFactory(ModelFactory[UserCreate]):
+    __model__ = UserCreate
+
+
+async def test_can_insert_and_query_user(db_session):
+    fake = UserCreateFactory.build()
+    user = User(email=fake.email)
+    db_session.add(user)
+    await db_session.commit()
+
+    result = await db_session.execute(select(User).where(User.email == fake.email))
+    row = result.scalar_one()
+    # API-13: dirty-equals demonstration — `id` is any int, `created_at` is any datetime.
+    assert row.id == IsInt
+    assert row.email == fake.email
+    assert row.created_at == IsDatetime
+
+
+async def test_unique_email_constraint(db_session):
+    db_session.add(User(email="dup@example.com"))
+    await db_session.commit()
+
+    db_session.add(User(email="dup@example.com"))
+    with pytest.raises(Exception):  # IntegrityError or its driver-wrapped form
+        await db_session.commit()
