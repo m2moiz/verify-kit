@@ -4,13 +4,13 @@ milestone: v0.1
 milestone_name: milestone
 status: executing
 last_updated: "2026-05-21T21:30:00.000Z"
-last_activity: 2026-05-21 -- Phase 5 Plan 05-01 complete (path-gating + deps + env destinations)
+last_activity: 2026-05-21 -- Phase 5 Plan 05-02 complete (harness/llm.py + Traceloop wiring)
 progress:
   total_phases: 6
   completed_phases: 2
   total_plans: 28
-  completed_plans: 18
-  percent: 35
+  completed_plans: 19
+  percent: 36
 ---
 
 # Project State
@@ -18,7 +18,7 @@ progress:
 ## Current Position
 
 Phase: 5 (llm-add-on) — EXECUTING
-Plan: 05-01 ✅ complete; next 05-02
+Plan: 05-02 ✅ complete; next 05-03
 Next phase: 5 — LLM Add-on (in progress)
 Branch: feat/phase-5-llm
 Status: Executing Phase 5
