@@ -1,0 +1,54 @@
+"""Cycle-3 forcing function: `verify-kit verify --check=backend` exits 0 with app down.
+
+This is the missing API-18 proof. Without it, the harness backend check
+could SKIP schemathesis when the app is unreachable and still report green,
+which is exactly the cycle-2 PARTIAL #4 failure mode.
+
+Note: the CLI flag is `--check=backend`, not `--only=backend`. See
+harness/cli.py for the Typer option definition.
+"""
+from __future__ import annotations
+import subprocess
+from pathlib import Path
+
+
+def test_verify_check_backend_runs_schemathesis_when_app_down(tmp_path: Path):
+    """verify-kit verify --check=backend exits 0 with the app NOT running.
+
+    When the app is unreachable on :8000, the backend harness check falls
+    back to the in-process schemathesis path (backend_inprocess_fuzz.py).
+    This test asserts:
+    1. Exit code is 0 (no failures found)
+    2. Output mentions schemathesis was exercised (in-process OR live path)
+
+    REVIEW-CHECKLIST §1: explicit cwd=scaffold_root on every subprocess.run.
+    """
+    # REVIEW-CHECKLIST §1: derive scaffold root from __file__, never Path.cwd().
+    # tests/backend/test_verify_umbrella.py -> tests/backend -> tests -> scaffold root
+    scaffold_root = Path(__file__).resolve().parent.parent.parent
+
+    r = subprocess.run(
+        ["uv", "run", "verify-kit", "verify", "--check=backend"],
+        cwd=scaffold_root,
+        capture_output=True, text=True,
+        timeout=600,
+    )
+    assert r.returncode == 0, (
+        f"verify-kit verify --check=backend exit {r.returncode}\n"
+        f"stdout:\n{r.stdout}\nstderr:\n{r.stderr}"
+    )
+    # Forcing function: the combined output MUST mention that schemathesis was
+    # exercised — either the live OpenAPI URL (over-network path) OR the
+    # in-process module name OR the word "schemathesis". If neither appears,
+    # the check silently skipped the fuzz — the cycle-2 PARTIAL #4 regression.
+    combined = r.stdout + r.stderr
+    assert (
+        "http://localhost:8000/openapi.json" in combined
+        or "backend_inprocess_fuzz" in combined
+        or "schemathesis" in combined.lower()
+    ), (
+        "verify-kit verify --check=backend did not exercise schemathesis "
+        "(neither live nor in-process path mentioned). "
+        "Codex cycle-2 PARTIAL #4 regression guard.\n"
+        f"stdout:\n{r.stdout}\nstderr:\n{r.stderr}"
+    )

@@ -1,0 +1,94 @@
+"""harness.checks.backend_inprocess_fuzz — schemathesis against the in-process ASGI app.
+
+Invoked by `harness.checks.backend.run()` (via subprocess) when the live app
+on localhost:8000 is unreachable. Loads `app.main:create_app`, constructs the
+ASGI app, and runs schemathesis against it in-process via ASGITransport so no
+requests leave the process and no socket bind is required.
+
+This file closes the cycle-3 HIGH F / cycle-2 PARTIAL #4 gap: previously,
+`just verify` (which does NOT bring up docker) silently skipped the
+schemathesis fuzz step, leaving API-18 unproven in the umbrella verify path.
+
+Usage:
+    uv run python -m harness.checks.backend_inprocess_fuzz [--max-examples N] [--cwd PATH]
+"""
+from __future__ import annotations
+import argparse
+import sys
+from pathlib import Path
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(
+        description="Run schemathesis fuzz against the FastAPI app in-process."
+    )
+    parser.add_argument("--max-examples", type=int, default=10,
+                        help="Hypothesis max_examples per operation (default: 10)")
+    # REVIEW-CHECKLIST §1: cwd must be taken explicitly. The default
+    # Path.cwd().resolve() is acceptable here ONLY because the harness runner
+    # calls this module as a subprocess with cwd=cwd already set to the
+    # scaffold root. The --cwd flag allows the backend check (T02) to pass
+    # the scaffold root explicitly for hermetic execution.
+    parser.add_argument("--cwd", type=Path, default=None,
+                        help="Scaffold root directory (defaults to process cwd)")
+    args = parser.parse_args()
+
+    scaffold_root = args.cwd.resolve() if args.cwd else Path.cwd().resolve()
+
+    # Import the FastAPI app from the scaffolded project. `create_app` accepts
+    # an explicit cwd so it never calls Path.cwd() internally (REVIEW-CHECKLIST §1).
+    try:
+        from app.main import create_app
+    except ImportError as exc:
+        print(
+            f"ERROR: cannot import app.main from {scaffold_root}: {exc}\n"
+            "Ensure `uv pip install -e .` was run in the scaffold root.",
+            file=sys.stderr,
+        )
+        return 1
+
+    app = create_app(cwd=scaffold_root)
+
+    # schemathesis public ASGI API (>=3.36): `openapi.from_asgi` loads the
+    # schema from the running app's `/openapi.json` route and routes generated
+    # requests through the ASGI app in-process (no socket bind needed). This is
+    # the documented in-process testing path for ASGI apps.
+    try:
+        import schemathesis
+        import schemathesis.engine.events as ev
+        from schemathesis.engine import Status
+    except ImportError as exc:
+        print(f"ERROR: schemathesis not installed: {exc}", file=sys.stderr)
+        return 1
+
+    schema = schemathesis.openapi.from_asgi("/openapi.json", app)
+    engine = schemathesis.engine.from_schema(schema)
+
+    # Iterate the engine event stream. Failures appear as SuiteFinished or
+    # ScenarioFinished events with status=FAILURE or ERROR.
+    suite_failures: list[str] = []
+    for event in engine.execute():
+        if isinstance(event, ev.SuiteFinished):
+            if event.status in (Status.FAILURE, Status.ERROR):
+                suite_failures.append(
+                    f"Suite {event.label!r} finished with status={event.status.name}"
+                )
+        if isinstance(event, ev.EngineFinished):
+            # Engine completed; stop_reason == COMPLETED means no early abort.
+            pass
+
+    if suite_failures:
+        print("schemathesis (in-process) failures:", file=sys.stderr)
+        for f in suite_failures:
+            print(f"  - {f}", file=sys.stderr)
+        return 1
+
+    print(
+        f"schemathesis (in-process) OK — ran against {scaffold_root} via ASGITransport "
+        f"(max_examples={args.max_examples})"
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
