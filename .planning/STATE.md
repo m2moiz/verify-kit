@@ -2,31 +2,31 @@
 gsd_state_version: 1.0
 milestone: v0.1
 milestone_name: milestone
-status: executing
-last_updated: "2026-05-21T12:46:22.900Z"
-last_activity: 2026-05-21
+status: phase_complete
+last_updated: "2026-05-21T16:00:00Z"
+last_activity: 2026-05-21 -- Phase 4 complete (verify-backend full path passes 13/13)
 progress:
   total_phases: 6
-  completed_phases: 2
+  completed_phases: 4
   total_plans: 23
   completed_plans: 17
-  percent: 33
+  percent: 67
 ---
 
 # Project State
 
 ## Current Position
 
-Phase: 4 — IN PROGRESS (dispatching waves)
-Plan: 6 of 7 (04-01 first up)
-Branch: feat/phase-4-backend (forked from docs/phase-2-reviews; no remote yet)
-Status: Ready to execute
-Last activity: 2026-05-21
+Phase: 4 — COMPLETE (7/7 plans + verify-work + drift checklist + verifier blockers resolved)
+Next phase: 5 — LLM Add-on (pending)
+Branch: feat/phase-4-backend (forked from docs/phase-2-reviews; no remote yet — ready for PR / merge to trunk)
+Status: Phase 4 closed out
+Last activity: 2026-05-21 -- Phase 4 verify-work gaps closed, all 13 phase-4 tests pass
 
 ## Project Reference
 
 - **Core value:** A solo developer drops verify-kit into a new project, answers a handful of prompts, and gets a project where `just verify` is the ground truth for both human (pretty terminal + clickable IDE errors) AND coding agent (MCP server + JSON output + `fix_propose` self-healing).
-- **Current focus:** Phase 4 — Backend (FastAPI) Add-on
+- **Current focus:** Phase 5 — LLM Add-on (queued; Phase 4 complete)
 - **Trust anchor:** `just verify` exits 0 only when every check passes; template's own CI runs `copier copy` onto scratch dirs across the add-on matrix and asserts the same.
 
 ## Phase Plan
@@ -34,7 +34,7 @@ Last activity: 2026-05-21
 1. ✅ **Phase 1: Template Skeleton & Toolchain** — Copier + mise + just + Makefile shim + base CI + AGENTS.md
 2. ✅ **Phase 2: Universal Harness Core** — Python `harness/` package, verify aggregator, structlog/Rich, format contracts, miette errors, OTel scaffold
 3. ✅ **Phase 3: Agent Integration & IDE** — MCP server (13 tools), Claude hooks, .vscode files, per-agent rules + MCP snippets
-4. 🔄 **Phase 4: Backend (FastAPI) Add-on** — 12 default libs + opt-in logfire/fastapi_mcp, Dockerfile, `/__debug/*`, schemathesis, Testcontainers
+4. ✅ **Phase 4: Backend (FastAPI) Add-on** — 12 default libs + opt-in logfire/fastapi_mcp, Dockerfile, `/__debug/*`, schemathesis, Testcontainers
 5. **Phase 5: LLM Add-on** — pydantic-ai + instructor + litellm + autoevals + vcrpy, `@llm_call`/`@cost_budget`, Langfuse, Promptfoo
 6. **Phase 6: Template Self-Test & Documentation** — `copier copy` matrix CI on every PR, README, CHANGELOG, CONTRIBUTING, diagram
 
@@ -50,8 +50,8 @@ After 04-03 wave-promotion fix (wave 2 → wave 3 to honor its `depends_on: [04-
 
 ## Performance Metrics
 
-- Phases complete: 3/6
-- Plans complete: 10/17 (Phase 4 contributes 7)
+- Phases complete: 4/6
+- Plans complete: 17/24 (Phase 4 contributed 7)
 - v0.1 requirements mapped: 95/95 (100%)
 - Coverage gaps: none
 
@@ -72,8 +72,10 @@ After 04-03 wave-promotion fix (wave 2 → wave 3 to honor its `depends_on: [04-
 
 ### Todos
 
-- [ ] Execute Phase 4 waves 1-5
-- [ ] Phase 4 verify-work + secure-phase + validate-phase after waves complete
+- [x] Execute Phase 4 waves 1-5
+- [x] Phase 4 verify-work (gaps closed in 59d3ae5)
+- [ ] Phase 4 secure-phase (optional follow-up; threat model unaudited)
+- [ ] Phase 4 validate-phase (optional follow-up; Nyquist coverage unaudited)
 - [ ] Plan Phase 5 (LLM add-on)
 
 ### Blockers
@@ -82,8 +84,8 @@ After 04-03 wave-promotion fix (wave 2 → wave 3 to honor its `depends_on: [04-
 
 ## Session Continuity
 
-- Last action: Pre-phase-4 cleanup commit (dc02d7c) + 04-03 wave promotion + branch `feat/phase-4-backend` created.
-- Next action: Dispatch Phase 4 waves via `gsd-executor` subagents (worktree-isolated, parallel within wave).
+- Last action: Phase 4 verify-work gaps closed (commit 59d3ae5). All 13 phase-4 repo-level tests pass including the full-path verify-backend integration test (3:55s end-to-end with docker stack). REVIEW-CHECKLIST.md gained §4-§8 (commit c351636) capturing the planner drift patterns Phase 4 executors had to auto-fix at runtime.
+- Next action: Decide branch posture (PR feat/phase-4-backend, keep accumulating phases on it, or merge to master). Then plan Phase 5 — LLM Add-on via `/gsd:discuss-phase 5` → `/gsd:plan-phase 5`.
 - Note: `.planning/` is gitignored but force-added in this project (consistent with prior phase commits — see `dfd22ac`, `1800398`, etc.). Use `git add -f` for planning files; commits to AI-workflow files need `ALLOW_AI_WORKFLOW_FILES=1` to satisfy the global guard hook.
 
 ## Performance Metrics
