@@ -54,6 +54,23 @@ if _otel_enabled:
         "verify-kit",
         schema_url="https://opentelemetry.io/schemas/1.11.0",
     )
+{% if has_llm %}
+    # Pitfall 7: Traceloop.init() MUST run BEFORE any LLM library (litellm /
+    # claude_agent_sdk / pydantic_ai) is imported into the process, otherwise
+    # its httpx auto-instrumentation patches will miss the already-loaded
+    # client classes and LLM spans will lack gen_ai.* attributes. Wiring it
+    # here — immediately after the TracerProvider is installed and before any
+    # module under harness.llm can be imported — guarantees correct ordering.
+    # The try/except is defense-in-depth: if traceloop-sdk is somehow missing
+    # in a has_llm render, the harness still imports cleanly with degraded LLM
+    # tracing rather than crashing.
+    try:
+        from traceloop.sdk import Traceloop
+
+        Traceloop.init(disable_batch=False)
+    except ImportError:
+        pass
+{% endif %}
 else:
     # Null path — zero opentelemetry imports. Span/tracer shapes mirror the
     # OTel surface used by callers so the same `with tracer.start_as_current_span(...)`
