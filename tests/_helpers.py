@@ -127,9 +127,28 @@ def render_and_install(tmp_path: Path, **overrides: object) -> Path:
     return scratch
 
 
+#: Outer-process env minus VIRTUAL_ENV / UV_PROJECT_ENVIRONMENT / PYTHONPATH
+#: etc. — pass via ``subprocess.run(..., env=_CLEAN_ENV)`` so the scratch
+#: project resolves its own venv, not the outer one (REVIEW-CHECKLIST §8).
+_CLEAN_ENV: dict[str, str] = {
+    k: v
+    for k, v in os.environ.items()
+    if k
+    not in {
+        "VIRTUAL_ENV",
+        "UV_PROJECT_ENVIRONMENT",
+        "PYTHONPATH",
+        "PYTHONHOME",
+        "PYTHONSTARTUP",
+        "PYTHONNOUSERSITE",
+    }
+}
+
+
 __all__ = [
     "render_scratch_project",
     "install_scratch_harness",
     "render_and_install",
     "venv_python",
+    "_CLEAN_ENV",
 ]
