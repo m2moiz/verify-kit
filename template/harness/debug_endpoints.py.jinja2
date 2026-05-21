@@ -24,13 +24,24 @@ def make_debug_router(cwd: Path) -> APIRouter:
     state_path = cwd / ".verify" / "state.json"
     events_path = cwd / ".verify" / "events.jsonl"
 
-    @router.get("/state")
+    @router.get(
+        "/state",
+        responses={
+            # Documented because schemathesis fuzz against a fresh scaffold (with
+            # no .verify/state.json yet) legitimately hits this code path.
+            404: {"description": "No state file yet — run `just verify` first"},
+        },
+    )
     async def state() -> dict:
         if not state_path.exists():
             raise HTTPException(404, "no state file yet — run `just verify` first")
         return json.loads(state_path.read_text())
 
-    @router.get("/events")
+    @router.get(
+        "/events",
+        # SSE streams text/event-stream; declare so the OpenAPI schema matches.
+        responses={200: {"content": {"text/event-stream": {}}}},
+    )
     async def events() -> EventSourceResponse:
         async def gen():
             if not events_path.exists():

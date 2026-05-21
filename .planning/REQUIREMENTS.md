@@ -140,7 +140,7 @@ Every requirement implementation must answer all six rows. If any cell is blank,
 - [x] **API-01**: Opt-in via Copier prompt `has_backend: bool` — generates only when enabled; toggling off produces zero FastAPI artifacts
 - [x] **API-02**: Ships `fastapi[standard]` baseline — gets `fastapi-cli`, `httpx`, `python-multipart`, `jinja2`; scaffolded `app/main.py` with `/healthz` and `/__debug/*` mounted
 - [x] **API-03**: Ships `pydantic-settings` for env config; `.env.example` documents every var with type and default
-- [ ] **API-04**: Ships `sqlalchemy[asyncio]` + `asyncpg` + `alembic` async DB stack with one example model + migration (opt-out via `has_db=false`)
+- [x] **API-04**: Ships `sqlalchemy[asyncio]` + `asyncpg` + `alembic` async DB stack with one example model + migration (opt-out via `has_db=false`)
 - [x] **API-05**: Ships `asgi-correlation-id` middleware threading `X-Request-ID` through every request, log line, and outbound HTTP call
 - [x] **API-06**: Ships `structlog` ASGI middleware emitting JSON access logs keyed by `request_id` (Rich pretty in TTY, JSON when piped — same contract as HARN-05)
 - [x] **API-07**: Ships `sse-starlette` for streaming responses (default pattern for AI/LLM routes)
@@ -149,8 +149,8 @@ Every requirement implementation must answer all six rows. If any cell is blank,
 - [x] **API-10**: Ships `pyinstrument` middleware enabling `?profile=true` query param → returns rendered flamegraph HTML (dev-only, env-gated)
 - [x] **API-11**: Ships `anyio` + `httpx` + `asgi-lifespan` canonical async test setup; example `tests/test_app.py` exercises lifespan + one route
 - [x] **API-12**: Ships `schemathesis` wired into `just verify` — fuzzes the live OpenAPI schema for 5xx, schema violations, auth bypasses
-- [ ] **API-13**: Ships `dirty-equals` + `polyfactory` for ergonomic test assertions and fixture factories
-- [ ] **API-14**: Ships `Testcontainers` Postgres fixture (`@pytest.fixture` returning a containerized DB) for integration tests; cached image
+- [x] **API-13**: Ships `dirty-equals` + `polyfactory` for ergonomic test assertions and fixture factories
+- [x] **API-14**: Ships `Testcontainers` Postgres fixture (`@pytest.fixture` returning a containerized DB) for integration tests; cached image
 - [x] **API-15**: Opt-in `has_logfire=true` Copier prompt — installs `logfire` (Pydantic-team OTel) which auto-traces every Anthropic/OpenAI/httpx call with token counts; composes with LLM add-on
 - [x] **API-16**: Opt-in `has_fastapi_mcp=true` Copier prompt — installs `fastapi-mcp` and adds 3-line mount turning the FastAPI app into its own MCP server (every route becomes an MCP tool)
 - [x] **API-17**: Generated project ships `Dockerfile` (multi-stage: `uv` build + slim runtime), `docker-compose.yml` (api + postgres + jaeger), and `.dockerignore` — `just docker-up` brings up the full local stack
@@ -290,7 +290,7 @@ Mapped to roadmap phases on 2026-05-18. 95/95 v0.1 requirements covered, no orph
 | API-01 | Phase 4 | Complete |
 | API-02 | Phase 4 | Complete |
 | API-03 | Phase 4 | Complete |
-| API-04 | Phase 4 | Pending |
+| API-04 | Phase 4 | Complete |
 | API-05 | Phase 4 | Complete |
 | API-06 | Phase 4 | Complete |
 | API-07 | Phase 4 | Complete |
@@ -299,8 +299,8 @@ Mapped to roadmap phases on 2026-05-18. 95/95 v0.1 requirements covered, no orph
 | API-10 | Phase 4 | Complete |
 | API-11 | Phase 4 | Complete |
 | API-12 | Phase 4 | Complete |
-| API-13 | Phase 4 | Pending |
-| API-14 | Phase 4 | Pending |
+| API-13 | Phase 4 | Complete |
+| API-14 | Phase 4 | Complete |
 | API-15 | Phase 4 | Complete |
 | API-16 | Phase 4 | Complete |
 | API-17 | Phase 4 | Complete |

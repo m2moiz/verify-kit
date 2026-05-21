@@ -22,9 +22,15 @@ _CLEAN_ENV = {k: v for k, v in os.environ.items() if k != "VIRTUAL_ENV"}
 
 
 def _docker_daemon_running() -> bool:
-    """`docker info` exits 0. Uses docker info, NOT shutil.which('docker') (Codex HIGH #9)."""
+    """`docker info` exits 0. Uses docker info, NOT shutil.which('docker') (Codex HIGH #9).
+
+    Timeout is 30s because Docker Desktop on macOS has a slow first-call path
+    (proxy warm-up + virtualization layer); a 5s timeout was producing flaky
+    'skipif: docker daemon not running' false positives when the daemon was
+    actually healthy.
+    """
     try:
-        r = subprocess.run(["docker", "info"], capture_output=True, timeout=5)
+        r = subprocess.run(["docker", "info"], capture_output=True, timeout=30)
         return r.returncode == 0
     except (FileNotFoundError, subprocess.TimeoutExpired):
         return False

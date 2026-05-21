@@ -15,9 +15,13 @@ import pytest
 
 
 def _docker_daemon_running() -> bool:
-    """`docker info` exits 0 — Codex HIGH #9 fix (vs `which docker`)."""
+    """`docker info` exits 0 — Codex HIGH #9 fix (vs `which docker`).
+
+    30s timeout (not 5s) because Docker Desktop on macOS has a slow
+    first-call path; the tight budget produced flaky skip-when-healthy.
+    """
     try:
-        r = subprocess.run(["docker", "info"], capture_output=True, timeout=5)
+        r = subprocess.run(["docker", "info"], capture_output=True, timeout=30)
         return r.returncode == 0
     except (FileNotFoundError, subprocess.TimeoutExpired):
         return False
