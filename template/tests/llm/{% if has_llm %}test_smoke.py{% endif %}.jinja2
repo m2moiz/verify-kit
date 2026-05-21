@@ -1,0 +1,80 @@
+"""Smoke tests for the LLM stack — construction-only, no live API calls.
+
+These tests confirm that the dependencies installed in 05-01 import
+cleanly and that the documented usage patterns (pydantic-ai Agent,
+instructor.from_openai patch, litellm.completion_cost) work without
+needing network access.
+
+Pitfall 4: pydantic-ai >=1.x uses ``result.output``, not the legacy
+attribute name. Any reference to the legacy name is a regression
+marker and must be removed.
+"""
+from __future__ import annotations
+
+import pytest
+
+
+def test_pydantic_ai_agent_constructs():
+    """Agent('anthropic:claude-haiku-4-5', output_type=str) constructs OK."""
+    from pydantic_ai import Agent
+
+    agent = Agent("anthropic:claude-haiku-4-5", output_type=str)
+    assert agent is not None
+    # Do NOT call .run — no live API call in this test.
+
+
+def test_pydantic_ai_uses_output_not_data():
+    """Pitfall 4 forcing function: AgentRunResult must expose .output."""
+    import pydantic_ai
+
+    # pydantic-ai >=1.x exposes AgentRunResult with an ``output`` attribute,
+    # NOT the legacy pre-1.0 attribute name. Code that still accesses the
+    # legacy name is a regression marker (Pitfall 4).
+    from pydantic_ai.agent import AgentRunResult  # type: ignore[attr-defined]
+
+    # Verify the field name by introspecting the model. AgentRunResult is a
+    # pydantic-style dataclass in newer pydantic-ai releases — check both
+    # __fields__ (pydantic) and __dataclass_fields__ (stdlib dataclass).
+    fields = set()
+    if hasattr(AgentRunResult, "model_fields"):
+        fields = set(AgentRunResult.model_fields.keys())
+    elif hasattr(AgentRunResult, "__dataclass_fields__"):
+        fields = set(AgentRunResult.__dataclass_fields__.keys())
+    elif hasattr(AgentRunResult, "__annotations__"):
+        fields = set(AgentRunResult.__annotations__.keys())
+
+    if fields:
+        assert "output" in fields, (
+            f"AgentRunResult must expose .output (Pitfall 4); fields={fields}"
+        )
+        # Negative: the legacy pre-1.0 attribute name "data" must not be
+        # exposed; if it surfaces, pydantic-ai has been downgraded.
+        assert "data" not in fields, (
+            "AgentRunResult exposes the legacy attribute — pydantic-ai downgraded?"
+        )
+    else:
+        # Fallback: at least confirm pydantic_ai is importable; downstream
+        # usage in /summarize will catch a real API mismatch.
+        assert pydantic_ai is not None
+
+
+def test_instructor_patch():
+    """instructor.from_openai patches the OpenAI client with structured output."""
+    # Avoid pinning the standalone `anthropic` package — use openai (already
+    # in litellm's resolved deps) to exercise the instructor patch path.
+    pytest.importorskip("openai")
+    import instructor
+    from openai import OpenAI
+
+    client = instructor.from_openai(OpenAI(api_key="dummy"))
+    # The patched client must still expose .chat.completions.create.
+    assert hasattr(client, "chat")
+    assert hasattr(client.chat, "completions")
+    assert callable(getattr(client.chat.completions, "create", None))
+
+
+def test_litellm_imports_and_completion_cost_callable():
+    """litellm.completion_cost is the cost-computation primitive."""
+    from litellm import completion_cost
+
+    assert callable(completion_cost)

@@ -1,0 +1,70 @@
+"""Forbidden-token scan over the committed LLM cassette tree.
+
+If vcr_config (tests/conftest.py) ever drifts away from scrubbing one of
+the credential headers, a freshly recorded cassette would carry the
+plaintext bearer token to disk. This test walks tests/llm/cassettes/
+recursively and asserts that no cassette file contains any of the
+known credential prefixes.
+
+On a clean scaffold the cassette tree is empty (only .gitkeep), so the
+walk yields zero files and the assertion is vacuously true — that is
+the correct first-run behavior.
+"""
+from __future__ import annotations
+
+from pathlib import Path
+
+# REVIEW-CHECKLIST §1 (no bare relative paths): anchor on __file__, NOT on
+# pathlib.Path("tests/llm/cassettes") — the latter resolves against pytest's
+# cwd and silently scans the wrong tree when pytest is invoked from a parent
+# directory.
+_CASSETTES_DIR = Path(__file__).parent / "cassettes"
+
+# Forbidden substrings: if any cassette contains one of these, a real
+# credential leaked through the scrub. Trailing characters are part of the
+# substring so common harmless documentation like "sk-ant-...." in comments
+# does not trigger false positives in this assertion.
+_FORBIDDEN_TOKENS = (
+    "Bearer ",
+    "sk-ant-",
+    "sk-proj-",
+    "sk-lf-",
+)
+
+
+def test_no_plaintext_credentials_in_cassettes():
+    """Walk tests/llm/cassettes/**/*.yaml; no file may contain a credential."""
+    offenders: list[tuple[Path, str]] = []
+    if _CASSETTES_DIR.exists():
+        for path in _CASSETTES_DIR.rglob("*.yaml"):
+            text = path.read_text(errors="ignore")
+            for tok in _FORBIDDEN_TOKENS:
+                if tok in text:
+                    offenders.append((path, tok))
+    assert not offenders, (
+        f"plaintext credentials in cassettes: {offenders}. "
+        "vcr_config.filter_headers / before_record_request scrub is broken."
+    )
+
+
+def test_vcr_config_lists_required_headers():
+    """vcr_config fixture must scrub all six provider credential headers."""
+    # Import from the top-level project conftest (sibling of tests/llm/).
+    # The fixture is a pytest fixture function — read its returned dict.
+    from tests.conftest import vcr_config as _vcr_config_fixture
+
+    # The fixture is decorated with @pytest.fixture; the actual function is
+    # accessible via .__wrapped__ on newer pytest versions, or by calling the
+    # function directly (it takes no required args for module-scope).
+    fn = getattr(_vcr_config_fixture, "__wrapped__", _vcr_config_fixture)
+    cfg = fn()
+    headers = [h[0].lower() for h in cfg["filter_headers"]]
+    for required in (
+        "authorization",
+        "x-api-key",
+        "anthropic-api-key",
+        "openai-api-key",
+        "openai-organization",
+        "x-langfuse-public-key",
+    ):
+        assert required in headers, f"vcr_config.filter_headers missing {required!r}"

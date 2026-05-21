@@ -1,0 +1,25 @@
+"""Autoevals scorer test — cassette-backed via @pytest.mark.vcr.
+
+On a clean scaffold the cassette is absent and the autouse
+``_skip_when_no_cassette`` fixture in conftest.py skips this test
+cleanly. After ``just refresh-cassettes`` populates the cassette, the
+test exercises the real cached scorer interaction.
+"""
+from __future__ import annotations
+
+import pytest
+
+
+@pytest.mark.vcr
+def test_autoevals_factuality_score():
+    """Factuality scorer returns a float in [0.0, 1.0]."""
+    import autoevals
+
+    scorer = autoevals.Factuality()
+    result = scorer(
+        input="What is the capital of France?",
+        output="Paris is the capital of France.",
+        expected="Paris",
+    )
+    assert isinstance(result.score, float)
+    assert 0.0 <= result.score <= 1.0
