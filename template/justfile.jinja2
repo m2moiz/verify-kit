@@ -102,3 +102,21 @@ verify-backend-quick:
         echo "[verify-backend-quick] app not running on :8000 — pytest only (use \`just verify-backend\` for full slice)"; \
     fi
 {% endif %}
+
+{% if has_llm %}
+# Opt-in eval gate (D-15) — NOT called by `just verify`. Writes machine-readable
+# results to .verify/eval-results.json for the verify-kit-eval SKILL.md to
+# consume. Requires Node + pnpm + ANTHROPIC_API_KEY.
+eval:
+    mkdir -p .verify
+    pnpm dlx promptfoo eval -c eval/promptfoo.config.yaml -o .verify/eval-results.json
+    @echo "[eval] results written to .verify/eval-results.json"
+
+# WARNING: hits the live LLM API to re-record cassettes; requires
+# ANTHROPIC_API_KEY set and consumes real tokens. After running, cassette-backed
+# tests (test_autoevals.py etc.) will be exercised instead of skipped by the
+# autouse skip-when-no-cassette guard.
+refresh-cassettes:
+    rm -rf tests/llm/cassettes/
+    uv run pytest tests/llm/ --record-mode=once
+{% endif %}
