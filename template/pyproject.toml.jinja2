@@ -23,7 +23,7 @@ dependencies = [
     # MCP server (Plan 03-01). fastmcp pulls `mcp` + `starlette`; we declare
     # them explicitly so the bearer-auth middleware import (Plan 03-01 T03)
     # and ToolAnnotations import (Plan 03-01 T04) are always satisfiable.
-    "fastmcp>=2.0,<3.0",
+    "fastmcp>=3.3,<4",  # bumped from >=2.0,<3.0 — pydantic-ai 1.100 transitively requires fastmcp>=3.3 via pydantic-ai-slim[fastmcp]; Phase 3 plans must validate against 3.x APIs when executed (bearer-auth + ToolAnnotations imports may have moved)
     "mcp>=1.0",
     "starlette>=0.37",
     "uvicorn>=0.30",
@@ -56,7 +56,7 @@ dependencies = [
 {% endif %}
 {% if has_llm %}
     # LLM add-on runtime deps (Plan 05-01)
-    "pydantic-ai>=1.100,<2",
+    "pydantic-ai-slim[anthropic,openai]>=1.100,<2",  # was "pydantic-ai" meta-pkg — that transitively pulls [mistral] which needs otel-semantic-conventions 0.60b1,<0.61 conflicting with Phase 2 otel-sdk==1.41.1 (which pins 0.62b1). Slim + explicit provider extras avoids the conflict.
     "instructor>=1.15,<2",
     "litellm>=1.85,<2",
     "tokencost>=0.1.26",
