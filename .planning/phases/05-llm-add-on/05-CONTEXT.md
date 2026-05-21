@@ -56,6 +56,15 @@ When a consumer answers `has_llm=true` to the Copier prompt, the scaffolded proj
 - **D-19:** `eval/datasets/golden.jsonl` ships with **5-10 starter rows** demonstrating each Promptfoo scorer type: factuality (1 row), relevance (1 row), safety (1 row), exact-match (1-2 rows), regex-match (1-2 rows). `just eval` runs against real content on first build, exits 0. Each row has a comment explaining the scorer it demos and the consumer is expected to replace rows with their actual use case.
 - **D-20:** Starter rows use the cheap eval model (Haiku / GPT-4o-mini per D-10) so first-build cost is negligible (<$0.005).
 
+### pydantic-ai role clarification (cycle-2 HIGH #5)
+
+- **D-21:** **Resolves cycle-2 HIGH #5.** LLM-02 says verify-kit "ships pydantic-ai as primary agent/typed-call framework". This is satisfied at the *dependency / ergonomic-layer* level, not at the *call-site routing* level. Concretely:
+  - `pydantic-ai>=1.100,<2` IS installed in the has_llm dependency block (05-01 Task 3) — consumers `import pydantic_ai` and use `Agent("...")` in their own code freely, exactly as LLM-02 contemplates.
+  - But `harness/llm.py.call_llm()` (05-02) is the canonical *routing* entry point that every verify-kit-shipped call site uses (e.g. `/summarize` in 05-05). `call_llm()` routes via `_routing_path()` to either the claude-agent-sdk adapter (D-01/D-03) or the litellm adapter (D-02). `pydantic-ai.Agent` is NOT the routing entry point — using it directly would bypass D-03's USE_CLAUDE_CODE_SDK switch and the OTel span emission contract.
+  - 05-02 `call_via_litellm` uses LiteLLM directly for the provider call rather than `pydantic_ai.Agent.run()` because (a) LiteLLM is the provider-abstraction layer named in LLM-04, (b) routing through `pydantic_ai.Agent` adds a second framework hop without ergonomic benefit when verify-kit owns the response shape, and (c) it keeps the call_llm() adapter return shape (`dict` with `content` / `usage` / `cost_usd` / `model` / `response_model` / `retry_count`) under verify-kit's control rather than pydantic-ai's `AgentRunResult.output`.
+  - **Net contract:** pydantic-ai is the *shipped, importable, documented* typed-call framework — README LLM-12 (D-17/D-18) MUST cover `pydantic_ai.Agent` as the consumer-facing pattern for typed-response use cases. verify-kit's own call sites use `call_llm()` for routing-aware observability. Both can coexist; both will be exercised by the 05-03 `test_pydantic_ai_agent_constructs` test (proves pydantic-ai is installed and usable) and the 05-05 `test_summarize_uses_call_llm_not_pydantic_ai_directly` test (proves /summarize routes through call_llm, not pydantic_ai.Agent directly).
+  - Roadmap follow-up (deferred): in v0.2 or a Phase 5 patch, `call_via_litellm` could optionally be reimplemented to wrap `pydantic_ai.Agent` for typed-response paths while preserving the dict return shape. Out of scope for v0.1 — the LiteLLM path is the simpler, fewer-moving-parts choice.
+
 ### Claude's Discretion
 
 - Cache strategy and TTL for litellm's SQLite cache — planner picks sensible defaults.
