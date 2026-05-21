@@ -57,6 +57,9 @@ dev = [
 
 [project.scripts]
 verify-kit = "harness.cli:app_entry"
+{% if has_backend %}
+app-cli = "app.cli:main"
+{% endif %}
 
 [tool.hatch.build.targets.wheel]
 packages = ["harness"{% if has_backend %}, "app"{% endif %}]
