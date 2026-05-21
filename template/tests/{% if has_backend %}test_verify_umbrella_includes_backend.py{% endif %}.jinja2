@@ -24,8 +24,8 @@ def test_verify_check_backend_runs_schemathesis_when_app_down(tmp_path: Path):
     REVIEW-CHECKLIST §1: explicit cwd=scaffold_root on every subprocess.run.
     """
     # REVIEW-CHECKLIST §1: derive scaffold root from __file__, never Path.cwd().
-    # tests/backend/test_verify_umbrella.py -> tests/backend -> tests -> scaffold root
-    scaffold_root = Path(__file__).resolve().parent.parent.parent
+    # tests/test_verify_umbrella_includes_backend.py -> tests -> scaffold root
+    scaffold_root = Path(__file__).resolve().parent.parent
 
     r = subprocess.run(
         ["uv", "run", "verify-kit", "verify", "--check=backend"],
