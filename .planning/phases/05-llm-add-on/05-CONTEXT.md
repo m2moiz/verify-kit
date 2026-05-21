@@ -6,7 +6,9 @@
 <domain>
 ## Phase Boundary
 
-When a consumer answers `has_llm=true` to the Copier prompt, the scaffolded project ships with a complete, opinionated LLM stack: pydantic-ai + instructor + litellm + tokencost + tokenx + autoevals + vcrpy + pytest-recording + opentelemetry-instrumentation-httpx, `@llm_call` and `@cost_budget` decorators emitting OTel `gen_ai.*` spans, Langfuse Cloud / self-host / none backend wiring, Promptfoo eval gate via `just eval`, and a weekly cost-capped nightly-eval CI workflow. `has_llm=false` produces zero LLM artifacts and zero new dependencies (per polarity contract from Phase 4 plan 04-01 §3).
+When a consumer answers `has_llm=true` to the Copier prompt, the scaffolded project ships with a complete, opinionated LLM stack: pydantic-ai + instructor + litellm + tokencost + autoevals + vcrpy + pytest-recording + opentelemetry-instrumentation-httpx, `@llm_call` and `@cost_budget` decorators emitting OTel `gen_ai.*` spans, Langfuse Cloud / self-host / none backend wiring, Promptfoo eval gate via `just eval`, and a weekly cost-capped nightly-eval CI workflow. `has_llm=false` produces zero LLM artifacts and zero new dependencies (per polarity contract from Phase 4 plan 04-01 §3).
+
+**D-22 (added during execution — tokenx-core dropped):** During 05-01 Task 1 slopcheck, `tokenx-core` flagged SUS (only 81 PyPI downloads). Investigation showed its `@measure_cost` + `@measure_latency` decorators duplicate verify-kit's own `@llm_call` decorator (built in 05-02, emits OTel `gen_ai.*` + `verify_kit.cost_usd` + `verify_kit.latency_ms`). `tokencost` (mainstream, 400+ models) remains as the cost-computation primitive — `@llm_call` calls into it. Net: 11 packages in has_llm=true, not 12.
 
 **In scope:** LLM-01 through LLM-12, plus CI-05 (`nightly-eval.yml`). 13 requirements total.
 **Out of scope:** Web/audio/game add-ons (v0.2). Multi-tenant key management. Streaming response decorator (single-call only in v0.1; `pydantic-ai` already supports streaming for users who need it manually).
