@@ -1,0 +1,83 @@
+"""Contract test for the _skip_when_no_cassette record-mode gate.
+
+This test forcing-functions the cycle-3..cycle-6 fix: the autouse skip
+fixture in tests/llm/conftest.py must skip in default mode AND must NOT
+skip under ``--record-mode=once`` (else ``just refresh-cassettes`` is
+self-defeating).
+
+Uses pytest's ``pytester`` plugin (canonical mechanism for testing
+fixtures): each test spawns an isolated sub-pytest run against a stub
+vcr-marked test with no cassette, and asserts on outcomes via
+``result.assert_outcomes`` / ``result.parseoutcomes``.
+"""
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest  # noqa: F401  (used implicitly via pytester collection)
+
+pytest_plugins = ["pytester"]
+
+
+# pytester.runpytest_subprocess runs in an isolated tmpdir with only that
+# tmpdir on PYTHONPATH. Without an explicit sys.path injection the bridge
+# conftest below would ModuleNotFoundError on "tests.conftest" / "tests.llm.conftest".
+# This file lives at tests/llm/test_skip_fixture_contract.py, so the project root
+# is parents[2].
+_PROJECT_ROOT = Path(__file__).resolve().parents[2]
+
+
+_CONFTEST_BRIDGE = f"""
+# Inherit project conftest fixtures into the pytester subtest.
+# PROJECT_ROOT must be on sys.path BEFORE the imports below or they fail.
+import sys
+sys.path.insert(0, {str(_PROJECT_ROOT)!r})
+from tests.conftest import vcr_config  # noqa: F401, E402
+from tests.llm.conftest import _reset_llm_cost, _skip_when_no_cassette  # noqa: F401, E402
+"""
+
+_PROBE_TEST = """
+import pytest
+
+@pytest.mark.vcr
+def test_probe():
+    raise AssertionError("UNREACHED-SENTINEL-fixture-fell-through")
+"""
+
+
+def test_default_mode_skips_when_cassette_missing(pytester):
+    """Default record_mode='none' + no cassette -> skip with clear reason."""
+    pytester.makeconftest(_CONFTEST_BRIDGE)
+    pytester.makepyfile(_PROBE_TEST)
+    # -rs surfaces the skip reason in summary output (without it, pytest -q
+    # only prints "s" and the substring assertion below would fail).
+    result = pytester.runpytest_subprocess("-q", "-rs")
+    result.assert_outcomes(skipped=1)
+    # The skip reason must cite 'cassette not recorded' — proves the actual
+    # fixture branch ran (not pytest's own collection-level skip path).
+    all_lines = result.stdout.lines + result.stderr.lines
+    assert any("cassette not recorded" in line.lower() for line in all_lines), (
+        "default-mode skip must cite 'cassette not recorded'; got:\n"
+        + "\n".join(all_lines)
+    )
+
+
+def test_record_mode_once_does_not_skip(pytester):
+    """--record-mode=once + no cassette -> fixture MUST NOT skip; body runs."""
+    pytester.makeconftest(_CONFTEST_BRIDGE)
+    pytester.makepyfile(_PROBE_TEST)
+    result = pytester.runpytest_subprocess("-q", "--record-mode=once")
+    outcomes = result.parseoutcomes()
+    # Critical assertion: under --record-mode=once the fixture must NOT skip.
+    # If skipped >= 1, the fixture is still self-defeating (the cycle-3 bug).
+    assert outcomes.get("skipped", 0) == 0, (
+        f"--record-mode=once must NOT trigger skip; got: {outcomes}"
+    )
+    # Defense-in-depth: prove the probe body actually executed by finding
+    # the unique sentinel string in the output. Uniqueness distinguishes
+    # 'fixture fell through and body ran' from 'fixture errored before body'.
+    all_lines = result.stdout.lines + result.stderr.lines
+    assert any("UNREACHED-SENTINEL-fixture-fell-through" in line for line in all_lines), (
+        "probe body must execute under --record-mode=once (sentinel missing); got:\n"
+        + "\n".join(all_lines)
+    )
