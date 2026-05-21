@@ -13,3 +13,7 @@ from harness.checks import copier as _copier  # noqa: F401
 from harness.checks import just_list as _just_list  # noqa: F401
 from harness.checks import lint as _lint  # noqa: F401
 from harness.checks import format as _format  # noqa: F401
+{% if has_backend %}
+# Backend slice check (Plan 04-07) — imported for @register side-effect.
+from harness.checks import backend as _backend  # noqa: F401
+{% endif %}
