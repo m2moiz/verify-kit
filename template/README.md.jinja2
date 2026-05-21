@@ -146,6 +146,58 @@ When the Backend addon is enabled, the FastAPI app reuses the same Jaeger
 endpoint — application traces and verify traces appear together in the UI.
 {% endif %}
 
+{% if has_backend %}
+## Backend (FastAPI) layout
+
+This project ships a FastAPI add-on under `app/`:
+
+```
+app/
+  main.py       # FastAPI() instance + middleware stack + lifespan
+  api.py        # APIRouter with sample routes (/healthz, /echo, /events/stream)
+  services.py   # Pure-function business logic (also imported by app/cli.py)
+  models.py     # Shared Pydantic models — single source of truth for HTTP + CLI
+  settings.py   # pydantic-settings BaseSettings (reads .env)
+  cli.py        # Typer CLI sibling (`uv run app-cli echo --message hi`)
+{% if has_db %}  db.py         # SQLAlchemy async engine + sessionmaker
+  schema.py     # Declarative Base + example User model
+alembic/        # Async Alembic migrations (one initial revision)
+{% endif %}tests/backend/  # pytest suite — unit, integration (Testcontainers), smoke
+```
+
+### Adding a route
+
+1. Define request/response Pydantic models in `app/models.py`.
+2. Add a route to `app/api.py` using those models.
+3. Add a Typer command to `app/cli.py` using the SAME models (shares the schema).
+4. Add a pytest in `tests/backend/`.
+
+{% if has_db %}
+### Adding a database model
+
+1. Add the SQLAlchemy class to `app/schema.py`.
+2. Generate a migration: `uv run alembic revision --autogenerate -m "describe it"`.
+3. Apply: `uv run alembic upgrade head`.
+{% endif %}
+
+### Local stack
+
+`just docker-up` brings up api + postgres + jaeger; `just docker-down` tears it down.
+`just serve` runs uvicorn with auto-reload (no docker required, but no DB either).
+
+### Verify
+
+`just verify-backend` runs pytest + schemathesis fuzz + smoke against the live stack.
+`just verify-backend-quick` runs pytest only (opportunistic fuzz when app already running).
+`just verify` includes the `backend` check automatically when `has_backend=true`.
+
+### Add-on flags
+
+- `has_logfire={{ has_logfire }}` — Logfire auto-tracing for FastAPI, httpx, and LLM SDKs.
+- `has_fastapi_mcp={{ has_fastapi_mcp }}` — every FastAPI route mounted as an MCP tool at `/mcp`.
+- `has_db={{ has_db }}` — SQLAlchemy + asyncpg + Alembic.
+
+{% endif %}
 ## Other editors (JetBrains, Zed, Neovim)
 
 The `.vscode/` files document a VS Code setup but every tool used here speaks
