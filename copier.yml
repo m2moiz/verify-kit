@@ -18,8 +18,35 @@ _envops:
   keep_trailing_newline: true
   lstrip_blocks: true
   trim_blocks: true
+
+# ── Add-on file exclusion (PRIMARY gate for has_backend / has_db) ────────────
+# When the flag is false, every path listed below is excluded from the
+# rendered output. This is the authoritative gate; Jinja path conditionals
+# in the template tree are defense-in-depth only. See Phase 4 REVIEWS item #1.
+_exclude:
+  - "*.pyc"
+  - "__pycache__"
+  - ".git"
+  - "{% if not has_backend %}app{% endif %}"
+  - "{% if not has_backend %}app/**{% endif %}"
+  - "{% if not has_backend %}tests/backend{% endif %}"
+  - "{% if not has_backend %}tests/backend/**{% endif %}"
+  - "{% if not has_backend %}Dockerfile{% endif %}"
+  - "{% if not has_backend %}docker-compose.yml{% endif %}"
+  - "{% if not has_backend %}.dockerignore{% endif %}"
+  - "{% if not has_db %}alembic{% endif %}"
+  - "{% if not has_db %}alembic/**{% endif %}"
+  - "{% if not has_db %}alembic.ini{% endif %}"
+
 _message_before_copy: "Welcome to verify-kit. ~10 prompts grouped as Identity / Agent integrations / Add-ons / Optional."
-_message_after_copy: "Next: cd into your project, run `mise install`, then `just verify`."
+_message_after_copy: |
+  Next: cd into your project, run `mise install`, then `just verify`.
+
+  Add-ons selected:
+  - has_backend={{ has_backend }}: FastAPI app under app/ + `just verify-backend`
+  - has_db={{ has_db }}: SQLAlchemy + Alembic + Testcontainers
+  - has_logfire={{ has_logfire }}: Logfire auto-tracing
+  - has_fastapi_mcp={{ has_fastapi_mcp }}: FastAPI-MCP mount
 
 # Post-render: ensure shipped shell scripts are executable. The 2>/dev/null
 # || true swallows the case where has_claude_code=false makes the hook paths
