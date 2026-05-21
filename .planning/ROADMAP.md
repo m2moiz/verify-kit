@@ -103,7 +103,13 @@
   4. `just refresh-cassettes` re-records vcrpy fixtures with `authorization` and `x-api-key` headers scrubbed by `before_record_request`; subsequent test runs work fully offline against the cassettes.
   5. `just eval` runs Promptfoo against `eval/datasets/golden.jsonl` and the `nightly-eval.yml` GitHub Action runs the same with an `EVAL_BUDGET_USD` cost cap, refusing to start if the cap would be exceeded.
 
-**Plans**: TBD
+**Plans**: 5 plans
+
+  - [ ] 05-01-PLAN.md — Copier path-gating + pyproject deps + .env.example LLM credentials (LLM-01)
+  - [ ] 05-02-PLAN.md — harness/llm.py: @llm_call, @cost_budget, claude-agent-sdk routing adapter + Traceloop.init wiring (LLM-02, LLM-04, LLM-05, LLM-08, LLM-09)
+  - [ ] 05-03-PLAN.md — vcr conftest + tests/llm suite + optional eval check via @register (LLM-03, LLM-06, LLM-07)
+  - [ ] 05-04-PLAN.md — Promptfoo config + golden.jsonl + justfile recipes + nightly-eval.yml + docker-compose.langfuse.yml (LLM-10, LLM-11, CI-05)
+  - [ ] 05-05-PLAN.md — POST /summarize composition + SKILL.md + README LLM-12 + 12-cell polarity test (LLM-12)
 
 ### Phase 6: Template Self-Test & Documentation
 
