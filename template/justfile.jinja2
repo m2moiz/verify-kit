@@ -67,4 +67,35 @@ docker-up:
 # Stop and remove the stack including volumes
 docker-down:
     docker compose down -v
+
+# Run the FULL backend verify slice: bring up stack, fuzz live OpenAPI, smoke,
+# tear down. This is the ground truth for phase success criterion 3 — schemathesis
+# MUST run against the live OpenAPI. Use `verify-backend-quick` for local UX
+# without the docker overhead.
+verify-backend:
+    @echo "[verify-backend] bringing up stack (api + postgres + jaeger)..."
+    just docker-up
+    @echo "[verify-backend] running pytest backend slice..."
+    uv run pytest tests/backend/ -v
+    @echo "[verify-backend] running schemathesis fuzz against LIVE OpenAPI..."
+    uv run schemathesis run http://localhost:8000/openapi.json --checks all --max-examples 20 --hypothesis-deadline=2000
+    @echo "[verify-backend] smoke: /healthz"
+    curl -sf http://localhost:8000/healthz
+    @echo "[verify-backend] smoke: /__debug/state (ENV=dev only)"
+    curl -sf http://localhost:8000/__debug/state || echo "  (skipped — ENV != dev or no state file)"
+    @echo "[verify-backend] tearing down stack..."
+    just docker-down
+    @echo "[verify-backend] OK"
+
+# Quick local-UX path: skip stack startup. Runs pytest + opportunistic fuzz if
+# the app happens to already be reachable. Does NOT prove success criterion 3
+# — use `just verify-backend` for that.
+verify-backend-quick:
+    uv run pytest tests/backend/ -v
+    @if curl -sf http://localhost:8000/healthz >/dev/null 2>&1; then \
+        echo "[verify-backend-quick] app reachable — opportunistic fuzz"; \
+        uv run schemathesis run http://localhost:8000/openapi.json --checks all --max-examples 20 --hypothesis-deadline=2000; \
+    else \
+        echo "[verify-backend-quick] app not running on :8000 — pytest only (use \`just verify-backend\` for full slice)"; \
+    fi
 {% endif %}
