@@ -71,3 +71,38 @@ cycle 1 (8 HIGH) → cycle 2 (5 HIGH) → cycle 3 (2 HIGH). Still monotone-decre
 Per the cycle-3 escalation gate (max 3 cycles), the convergence loop exits here. Options:
 - **Manual fix** (recommended): both HIGHs are local edits in 05-03 (skip fixture predicate) and 05-04 (recipe env var) plus a one-line scrub-test path change. Estimated 10–15 min of Edit operations. Per rule 08, run an independent semantic re-review after the manual fix to confirm it didn't introduce new drift — but that re-review is a one-shot, NOT a fourth convergence cycle.
 - **Accept and execute** (NOT recommended): both HIGHs are real execution blockers — `just refresh-cassettes` will silently no-op and credential leaks in LLM cassettes will not be caught.
+
+---
+
+# Cross-AI Plan Re-Review — Phase 5 (Cycle 4, Post-Manual-Fix Adversarial)
+
+**Reviewed:** 2026-05-21 (post-commit 823b71c)
+**Reviewer:** Codex CLI
+**Framing:** Adversarial — assume the manual editor missed something. Mandated by rule 08 ("grep is not verification — after manual fixes, must spawn an independent semantic re-review").
+
+## Codex Review
+
+CYCLE_SUMMARY: current_high=2
+
+### Current HIGH Concerns
+
+- **HIGH #1 (verification gap, not semantic gap):** 05-03-PLAN.md L165 describes the correct `record_mode != "none"` bypass, but the verify/acceptance block at L181 only checks that a skip fixture exists and calls `pytest.skip`. The old self-defeating implementation would still pass this verification. Add a forcing test/assertion that rendered `tests/llm/conftest.py` reads `--record-mode`, reads `vcr_config` via fixture fallback, and that `pytest tests/llm/ --record-mode=once` with a missing cassette does NOT skip before VCR records. (pytest-recording docs: `--record-mode=once` is the intended recording path.)
+
+- **HIGH #2 (REVIEW-CHECKLIST §1 cwd-leak violation introduced by the manual fix):** 05-03-PLAN.md L219 now instructs `pathlib.Path("tests/llm/cassettes").rglob("*.yaml")` — a bare relative path. If pytest is invoked from a parent directory, the scrub test scans the wrong tree and silently misses real cassettes. The same task later directs file IO relative to `Path(__file__).parent`, so the plan is internally inconsistent. **Fix:** use `(Path(__file__).parent / "cassettes").rglob("*.yaml")` and make the verify block assert both `.rglob("*.yaml")` AND anchoring on `Path(__file__).parent`.
+
+### Lower-Stakes Drift Noted (not HIGH)
+
+- L347 threat-model row still says `tests/cassettes/*.yaml -> git repo` — descriptive, not an executor step, but should be canonicalized to `tests/llm/cassettes/**/*.yaml` to prevent future-reviewer confusion.
+
+### Cross-Plan Drift Checks Performed
+
+- 05-04 `just refresh-cassettes` recipe + nightly-eval workflow: ALIGNED on `tests/llm/cassettes/` and `--record-mode=once`. No drift.
+- 05-05 docs/copier vars: NO cassette-path drift found.
+
+## Outcome
+
+The manual fix in commit 823b71c **partially resolved** the two cycle-3 HIGHs:
+- HIGH #1 (record_mode gate): plan prose is correct, but verification does not force the new shape — the old buggy shape would still pass.
+- HIGH #2 (cassette path glob): the canonical-path direction is right, but the manual edit introduced a NEW REVIEW-CHECKLIST §1 violation (bare relative `Path("tests/llm/cassettes")`).
+
+**Recommendation:** apply a second surgical manual fix to (a) tighten the 05-03 verify block for HIGH #1 and (b) anchor the rglob on `Path(__file__).parent` for HIGH #2; then re-run this adversarial pass. Do NOT proceed to `/gsd:execute-phase 5` with current_high=2.
