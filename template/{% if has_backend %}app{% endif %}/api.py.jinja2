@@ -1,0 +1,30 @@
+from __future__ import annotations
+import asyncio
+from asgi_correlation_id import correlation_id
+from fastapi import APIRouter, Request
+from sse_starlette.sse import EventSourceResponse
+from app.models import EchoRequest, EchoResponse, HealthResponse
+from app.services import echo
+
+router = APIRouter()
+
+
+@router.get("/healthz", response_model=HealthResponse)
+async def healthz(request: Request) -> HealthResponse:
+    settings = request.app.state.settings
+    return HealthResponse(status="ok", version="0.1.0", env=settings.ENV)
+
+
+@router.post("/echo", response_model=EchoResponse)
+async def echo_route(req: EchoRequest) -> EchoResponse:
+    rid = correlation_id.get() or "no-correlation-id"
+    return echo(req, request_id=rid)
+
+
+@router.get("/events/stream")
+async def events_stream() -> EventSourceResponse:
+    async def gen():
+        for i in range(3):
+            await asyncio.sleep(0.01)
+            yield {"event": "tick", "data": str(i)}
+    return EventSourceResponse(gen())

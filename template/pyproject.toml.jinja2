@@ -27,6 +27,19 @@ dependencies = [
     "mcp>=1.0",
     "starlette>=0.37",
     "uvicorn>=0.30",
+{% if has_backend %}
+    # FastAPI backend add-on (Plan 04-02)
+    "fastapi[standard]>=0.115",
+    "pydantic-settings>=2.5",
+    "asgi-correlation-id>=4.3",
+    "sse-starlette>=2.1",
+    "secure>=1.0",
+    "pyinstrument>=4.7",
+    "anyio>=4.4",
+    "asgi-lifespan>=2.1",
+    "polyfactory>=2.16",
+    "dirty-equals>=0.8",
+{% endif %}
 ]
 
 [project.optional-dependencies]
@@ -35,13 +48,18 @@ dev = [
     "ruff>=0.6",
     "hypothesis>=6.100",
     "jsonschema>=4.23",
+{% if has_backend %}
+    "pytest-asyncio>=0.24",
+    "httpx>=0.27",
+    "respx>=0.21",
+{% endif %}
 ]
 
 [project.scripts]
 verify-kit = "harness.cli:app_entry"
 
 [tool.hatch.build.targets.wheel]
-packages = ["harness"]
+packages = ["harness"{% if has_backend %}, "app"{% endif %}]
 
 [tool.ruff]
 line-length = 100

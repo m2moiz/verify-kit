@@ -1,0 +1,21 @@
+from __future__ import annotations
+from datetime import datetime
+from pydantic import BaseModel, Field
+
+
+class HealthResponse(BaseModel):
+    """GET /healthz response. Single source of truth — Plan 04-07 verify-backend
+    asserts against this class directly (REVIEW-CHECKLIST §3)."""
+    status: str = Field(default="ok")
+    version: str
+    env: str
+
+
+class EchoRequest(BaseModel):
+    message: str
+
+
+class EchoResponse(BaseModel):
+    message: str
+    request_id: str
+    received_at: datetime

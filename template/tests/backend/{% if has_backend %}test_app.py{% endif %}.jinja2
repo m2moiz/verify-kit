@@ -1,0 +1,47 @@
+from __future__ import annotations
+from app.models import HealthResponse
+
+
+def test_healthz_returns_200_and_matches_model(client_dev):
+    r = client_dev.get("/healthz")
+    assert r.status_code == 200
+    # Validate response shape against the actual Pydantic class — REVIEW-CHECKLIST §3.
+    parsed = HealthResponse(**r.json())
+    assert parsed.status == "ok"
+    assert parsed.env == "dev"
+
+
+def test_echo_round_trip(client_dev):
+    r = client_dev.post("/echo", json={"message": "hello"})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["message"] == "hello"
+    assert "request_id" in body
+    assert "received_at" in body
+
+
+def test_secure_owasp_headers_present(client_dev):
+    r = client_dev.get("/healthz")
+    # `secure` library sets these by default
+    assert "x-frame-options" in {k.lower() for k in r.headers}
+    assert "referrer-policy" in {k.lower() for k in r.headers}
+
+
+def test_pyinstrument_profile_in_dev(client_dev):
+    r = client_dev.get("/healthz?profile=true")
+    assert r.status_code == 200
+    assert r.headers["content-type"].startswith("text/html")
+
+
+def test_pyinstrument_profile_ignored_in_prod(client_prod):
+    r = client_prod.get("/healthz?profile=true")
+    assert r.status_code == 200
+    assert "application/json" in r.headers["content-type"]
+
+
+def test_sse_events_stream(client_dev):
+    with client_dev.stream("GET", "/events/stream") as r:
+        assert r.status_code == 200
+        chunks = list(r.iter_text())
+        body = "".join(chunks)
+        assert "event: tick" in body

@@ -1,0 +1,103 @@
+"""End-to-end request-ID propagation: response header == log line == outbound httpx header.
+
+API-05 + API-06 contract: every request and every log emitted during that
+request share the same X-Request-ID, AND any outbound httpx call made
+inside the handler propagates that same ID.
+
+Test strategy:
+  - Add a temporary route to the app under test that makes an outbound httpx
+    call to a respx-mocked endpoint.
+  - Intercept `app.main.log.info` calls via `unittest.mock.patch` to capture
+    the request_id bound in the access-log middleware. This avoids the
+    structlog `cache_logger_on_first_use=True` caching problem that prevents
+    `structlog.testing.capture_logs` from working on the module-level logger
+    object after it has been finalized by a prior test's lifespan call.
+  - Assert: response.headers['X-Request-ID'] ==
+            intercepted_log_call['request_id'] ==
+            outbound_request.headers['X-Request-ID'].
+"""
+from __future__ import annotations
+from unittest.mock import patch, MagicMock, call
+import pytest
+import httpx
+import respx
+from fastapi.testclient import TestClient
+from fastapi import APIRouter
+
+from app.main import create_app
+
+
+@pytest.fixture
+def app_with_outbound_route(tmp_path):
+    (tmp_path / ".env").write_text("ENV=dev\n")
+    (tmp_path / ".verify").mkdir(exist_ok=True)
+    app = create_app(cwd=tmp_path)
+
+    # Add a route that makes an outbound httpx call using the bound request_id.
+    extra = APIRouter()
+
+    @extra.get("/outbound-test")
+    async def outbound():
+        from asgi_correlation_id import correlation_id
+        rid = correlation_id.get() or ""
+        async with httpx.AsyncClient() as client:
+            r = await client.get("https://example.test/api", headers={"X-Request-ID": rid})
+            return {"status": r.status_code, "request_id": rid}
+
+    app.include_router(extra)
+    return app
+
+
+def test_request_id_appears_in_header_log_and_outbound(app_with_outbound_route):
+    """The three-way contract: one request, ONE request_id, visible in all three places."""
+    # CRITICAL (cycle 3 HIGH B): use TestClient as a context manager so the
+    # FastAPI lifespan handler runs and `app.state.settings` is bound. Bare
+    # `TestClient(app)` would skip lifespan -> AttributeError on first route.
+    #
+    # Log capture strategy: structlog's `capture_logs()` does not work reliably
+    # on the module-level `log` object after `configure_logging()` (called by
+    # the lifespan in a prior test) has finalized its `bind` closure with
+    # `cache_logger_on_first_use=True`. Instead, we patch `app.main.log` —
+    # the imported module-level logger — with a MagicMock to intercept the
+    # `log.info(event, **kwargs)` calls made by `structlog_access_log`. We
+    # then read the kwargs to verify `request_id` was bound.
+    #
+    # respx.mock note: `mock.calls` is cleared when the respx context exits, so
+    # ALL outbound-call assertions must happen INSIDE the `with respx.mock` block.
+    mock_log = MagicMock()
+    with patch("app.main.log", mock_log), \
+         TestClient(app_with_outbound_route) as client, \
+         respx.mock(assert_all_called=True) as mock:
+        mock.get("https://example.test/api").mock(return_value=httpx.Response(200))
+        r = client.get("/outbound-test", headers={"X-Request-ID": "trace-abc-123"})
+
+        # (a) Response header echoes the inbound ID
+        assert r.status_code == 200
+        response_rid = r.headers.get("x-request-id") or r.headers.get("X-Request-ID")
+        assert response_rid == "trace-abc-123", f"response header rid={response_rid!r}"
+
+        # (b) At least one log.info() call carried request_id=trace-abc-123.
+        # The structlog_access_log middleware calls:
+        #   log.info("request.start", ..., request_id=rid)
+        #   log.info("request.end",   ..., request_id=rid)
+        logged_request_ids = {
+            kw.get("request_id")
+            for c in mock_log.info.call_args_list
+            for kw in [c.kwargs]
+            if "request_id" in kw
+        }
+        assert "trace-abc-123" in logged_request_ids, (
+            f"structlog access-log middleware did not bind request_id; "
+            f"log.info calls: {mock_log.info.call_args_list!r}"
+        )
+
+        # (c) The outbound httpx call carried the same ID — read mock.calls BEFORE
+        # the respx.mock context exits (calls list is cleared on context exit).
+        outbound_calls = mock.calls
+        assert len(outbound_calls) == 1
+        outbound_rid = outbound_calls[0].request.headers.get("X-Request-ID")
+        assert outbound_rid == "trace-abc-123", f"outbound httpx rid={outbound_rid!r}"
+
+        # Three-way equality — the actual API-05/API-06 contract.
+        assert response_rid == outbound_rid
+        assert "trace-abc-123" in logged_request_ids

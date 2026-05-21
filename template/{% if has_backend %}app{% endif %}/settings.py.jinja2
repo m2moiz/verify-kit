@@ -1,0 +1,27 @@
+from __future__ import annotations
+from pathlib import Path
+from pydantic import Field
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class Settings(BaseSettings):
+    """Application settings loaded from environment + .env file.
+
+    NEVER reads Path.cwd() — see REVIEW-CHECKLIST §1. The caller is responsible
+    for passing _env_file via load(cwd=...) below.
+    """
+    model_config = SettingsConfigDict(env_file=None, extra="ignore")
+
+    ENV: str = Field(default="dev", description="dev | prod | test")
+    LOG_LEVEL: str = Field(default="INFO")
+    LOG_FORMAT: str = Field(default="auto")
+    DATABASE_URL: str = Field(default="postgresql+asyncpg://postgres:postgres@localhost:5432/app")
+    PROFILE_ENABLED: bool = Field(default=True, description="dev-only pyinstrument toggle")
+
+
+def load(cwd: Path) -> Settings:
+    """Load Settings, reading .env relative to the explicit cwd argument.
+
+    Passes cwd / ".env" as the env_file; never resolves against process cwd.
+    """
+    return Settings(_env_file=cwd / ".env" if (cwd / ".env").exists() else None)
