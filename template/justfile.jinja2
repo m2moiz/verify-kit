@@ -59,4 +59,12 @@ serve:
 # Run the backend test slice (unit + integration)
 test-backend:
     uv run pytest tests/backend/ -v
+
+# Bring up the full local stack: api + postgres + jaeger
+docker-up:
+    docker compose up -d --wait --wait-timeout 120
+
+# Stop and remove the stack including volumes
+docker-down:
+    docker compose down -v
 {% endif %}

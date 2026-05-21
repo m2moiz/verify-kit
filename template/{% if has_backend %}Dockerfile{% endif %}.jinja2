@@ -1,0 +1,59 @@
+# syntax=docker/dockerfile:1.7
+# Multi-stage build: build via uv image, run on slim python image.
+# Stage 1: build — installs deps + project into /opt/venv using uv.
+# Stage 2: runtime — copies /opt/venv from build stage onto slim python image.
+
+FROM ghcr.io/astral-sh/uv:0.4-python3.13-bookworm AS build
+WORKDIR /app
+# Copy lockfile + manifest first so dep install layer caches.
+COPY pyproject.toml uv.lock* ./
+
+# ── DEPS-ONLY install (cycle-3 HIGH D) ────────────────────────────────────
+# Install ONLY third-party dependencies into /opt/venv, NOT the project
+# itself. The project (`harness/`, `app/`) does not exist in the image yet
+# — only pyproject.toml + uv.lock have been COPYed. Installing the project
+# at this point fails because Hatch/setuptools cannot find the package
+# sources (`packages = ["harness", "app"]` resolves to nothing).
+#
+# `uv sync --no-install-project --frozen --no-dev` is the canonical pattern:
+#   - `--no-install-project` installs all deps from the lockfile but SKIPs
+#     the project itself, which is what we want for the dep-cache layer.
+#   - When uv.lock does not exist yet (fresh consumer pre-lockfile), we
+#     skip this layer entirely and install everything after COPY . . below.
+#
+# `pyproject.toml` is NOT a requirements file — `uv pip install -r pyproject.toml`
+# fails at build time (cycle-1 HIGH #5).
+ENV UV_PROJECT_ENVIRONMENT=/opt/venv
+RUN uv venv /opt/venv && \
+    if [ -f uv.lock ]; then \
+        uv sync --no-install-project --frozen --no-dev; \
+    fi
+
+# Now copy the source tree (harness/, app/, tests/, etc.).
+COPY . .
+
+# ── PROJECT install (after source is present) ─────────────────────────────
+# With the source tree now in place, install the project itself. Two paths:
+#   - Lockfile present: `uv sync --frozen --no-dev` finalizes the project
+#     install (deps are already in /opt/venv from the prior layer; this
+#     just adds the project's own `app` / `harness` packages).
+#   - No lockfile (fresh consumer): `uv pip install .` resolves and installs
+#     deps + project in one go. POSITIONAL `.` — never `-r pyproject.toml`.
+RUN if [ -f uv.lock ]; then \
+        uv sync --frozen --no-dev; \
+    else \
+        uv pip install --python /opt/venv/bin/python .; \
+    fi
+
+FROM python:3.13-slim-bookworm AS runtime
+WORKDIR /app
+ENV PATH="/opt/venv/bin:$PATH" \
+    PYTHONUNBUFFERED=1 \
+    ENV=prod
+COPY --from=build /opt/venv /opt/venv
+COPY --from=build /app /app
+EXPOSE 8000
+# Healthcheck hits /healthz — the route Plan 04-02 ships.
+HEALTHCHECK --interval=10s --timeout=3s --start-period=10s --retries=3 \
+    CMD python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/healthz', timeout=2).status == 200 else 1)"
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
