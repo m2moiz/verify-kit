@@ -5,6 +5,15 @@ from fastapi import APIRouter, Request
 from sse_starlette.sse import EventSourceResponse
 from app.models import EchoRequest, EchoResponse, HealthResponse
 from app.services import echo
+{% if has_llm %}
+from time import monotonic
+from pydantic import BaseModel, Field
+# Phase 5 D-03/LLM-03: every verify-kit-shipped LLM call site routes through
+# harness.llm.call_llm — it owns the USE_CLAUDE_CODE_SDK switch and the OTel
+# gen_ai.* contract. Direct imports of typed-agent frameworks are documented
+# in README under "pydantic-ai for typed responses" as a consumer pattern.
+from harness.llm import call_llm, cost_budget
+{% endif %}
 
 router = APIRouter()
 
@@ -42,3 +51,46 @@ async def events_stream() -> EventSourceResponse:
             await asyncio.sleep(0.01)
             yield {"event": "tick", "data": str(i)}
     return EventSourceResponse(gen())
+{% if has_llm %}
+
+
+class SummarizeRequest(BaseModel):
+    text: str = Field(..., description="Text to summarize in one sentence.")
+
+
+class SummarizeResponse(BaseModel):
+    summary: str
+    cost_usd: float
+    latency_ms: float
+
+
+# Decorator-ordering rule (Pitfall 3, see harness/llm.py module docstring):
+# @cost_budget MUST be the OUTER decorator. call_llm is itself @llm_call-
+# decorated internally, so the effective stack is
+#   @cost_budget OUTER -> call_llm -> @llm_call INNER -> adapter.
+# The budget check fires AFTER the recorded cost lands in the contextvar.
+@cost_budget(usd=0.05, on_exceed="raise")
+async def _summarize(text: str) -> dict:
+    prompt = f"Summarize the following text in one sentence: {text}"
+    # call_llm returns a dict shaped per the 05-02 adapter contract
+    # ({content, usage, cost_usd, model, response_model, provider, retry_count}).
+    # Do NOT reference an .output attribute — call_llm yields a dict, not a
+    # pydantic-ai AgentRunResult.
+    return await call_llm(prompt, model="anthropic/claude-haiku-4-5")
+
+
+@router.post("/summarize", response_model=SummarizeResponse)
+async def summarize_route(req: SummarizeRequest) -> SummarizeResponse:
+    started = monotonic()
+    out = await _summarize(req.text)
+    latency_ms = (monotonic() - started) * 1000.0
+    # Pitfall 5: claude-agent-sdk routing path reports cost_usd=0.0 because
+    # the SDK does not expose token usage; the operator's real cost is in
+    # their Claude Code / Claude Max account dashboard. README LLM section
+    # documents this asymmetry.
+    return SummarizeResponse(
+        summary=out["content"],
+        cost_usd=float(out.get("cost_usd", 0.0)),
+        latency_ms=latency_ms,
+    )
+{% endif %}
