@@ -84,9 +84,9 @@ After 04-03 wave-promotion fix (wave 2 → wave 3 to honor its `depends_on: [04-
 
 ## Session Continuity
 
-- Last action: Phase 4 verify-work gaps closed (commit 59d3ae5). All 13 phase-4 repo-level tests pass including the full-path verify-backend integration test (3:55s end-to-end with docker stack). REVIEW-CHECKLIST.md gained §4-§8 (commit c351636) capturing the planner drift patterns Phase 4 executors had to auto-fix at runtime.
-- Next action: Decide branch posture (PR feat/phase-4-backend, keep accumulating phases on it, or merge to master). Then plan Phase 5 — LLM Add-on via `/gsd:discuss-phase 5` → `/gsd:plan-phase 5`.
-- Note: `.planning/` is gitignored but force-added in this project (consistent with prior phase commits — see `dfd22ac`, `1800398`, etc.). Use `git add -f` for planning files; commits to AI-workflow files need `ALLOW_AI_WORKFLOW_FILES=1` to satisfy the global guard hook.
+- Last action: Phase 5 discuss-phase completed. 05-CONTEXT.md committed (c8eb9da) with 20 locked decisions across 7 gray areas. Master fast-forwarded to include Phase 4. GAP-06 fix landed (c3eba7f). Beads tracker initialized. 3 Phase 4 validation HIGHs filed as beads issues (verify-kit-plk, -c5a, -r7v), deferred to Phase 6 self-test sweep. Drift-prevention issue #3813 filed upstream at gsd-build/get-shit-done. Local drift-guard fork applied to ~/.claude/get-shit-done/workflows/review.md (source-grounding reviewer pass — first real-world test is Phase 5's plan-review-convergence).
+- Next action: `/gsd:plan-phase 5` to generate Phase 5 PLAN.md files from 05-CONTEXT.md. Then `/gsd:plan-review-convergence 5 --codex --max-cycles 3` (which will exercise the local drift-guard for the first time).
+- Note: `.planning/` is gitignored but force-added in this project (consistent with prior phase commits — see `dfd22ac`, `1800398`, etc.). Use `git add -f` for planning files; commits to AI-workflow files need `ALLOW_AI_WORKFLOW_FILES=1` to satisfy the global guard hook. Branch is `feat/phase-5-llm` off master.
 
 ## Performance Metrics
 
