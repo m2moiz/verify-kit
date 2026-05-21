@@ -3,13 +3,13 @@ gsd_state_version: 1.0
 milestone: v0.1
 milestone_name: milestone
 status: executing
-last_updated: "2026-05-21T11:16:59.362Z"
+last_updated: "2026-05-21T11:30:16.921Z"
 last_activity: 2026-05-21
 progress:
   total_phases: 6
   completed_phases: 1
-  total_plans: 23
-  completed_plans: 12
+  total_plans: 1
+  completed_plans: 6
   percent: 17
 ---
 
@@ -18,7 +18,7 @@ progress:
 ## Current Position
 
 Phase: 4 — IN PROGRESS (dispatching waves)
-Plan: 3 of 7 (04-01 first up)
+Plan: 4 of 7 (04-01 first up)
 Branch: feat/phase-4-backend (forked from docs/phase-2-reviews; no remote yet)
 Status: Ready to execute
 Last activity: 2026-05-21
@@ -67,6 +67,8 @@ After 04-03 wave-promotion fix (wave 2 → wave 3 to honor its `depends_on: [04-
 - [Phase ?]: CorrelationIdMiddleware validator=None accepts arbitrary inbound IDs, not just UUID4
 - [Phase ?]: HARN-03 debug router in universal harness/, conditional mount in app/main.py only
 - [Phase ?]: patch(app.main.log, MagicMock) to capture structlog access-log calls (cache_logger_on_first_use bypass)
+- [Phase ?]: @app.callback() prevents Typer single-command hoisting in app/cli.py
+- [Phase ?]: ralph._spawn is the injectable test seam; executor is a str command name
 
 ### Todos
 
@@ -91,3 +93,4 @@ After 04-03 wave-promotion fix (wave 2 → wave 3 to honor its `depends_on: [04-
 | Phase 4 P04-01 | 12m | 4 tasks | 5 files |
 | Phase 4 P04-02 | 70m | 14 tasks | 15 files |
 | Phase 4 P04-03 | 20m | 6 tasks | 9 files |
+| Phase 4 P04-04 | 20m | 4 tasks | 4 files |

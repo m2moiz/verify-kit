@@ -1,0 +1,61 @@
+"""app.cli — typer CLI sibling sharing Pydantic models with the FastAPI app.
+
+API-09 contract: this CLI must import EchoRequest/EchoResponse from `app.models` —
+the same classes `app.api` uses. If a future plan adds a new model, both surfaces
+get it automatically.
+"""
+from __future__ import annotations
+import asyncio
+import json
+import uuid
+from pathlib import Path
+import typer
+
+from app.models import EchoRequest
+from app.services import echo
+
+app = typer.Typer(no_args_is_help=True, help="CLI sibling of the FastAPI app.")
+
+
+@app.callback()
+def _noop(ctx: typer.Context) -> None:
+    """Entry point — use a subcommand (see --help)."""
+    # Explicit callback prevents Typer from hoisting a single @app.command()
+    # to the root, which would break `app-cli echo` when has_db=false.
+
+
+@app.command("echo")
+def echo_cmd(message: str = typer.Option(..., "--message", "-m")) -> None:
+    """Echo a message — same logic as POST /echo."""
+    req = EchoRequest(message=message)
+    rid = str(uuid.uuid4())
+    resp = echo(req, request_id=rid)
+    typer.echo(resp.model_dump_json())
+
+
+{% if has_db %}
+@app.command("db-ping")
+def db_ping_cmd(database_url: str = typer.Option(..., envvar="DATABASE_URL")) -> None:
+    """Check DB connection. Reads DATABASE_URL from env or --database-url."""
+    from app.db import make_engine
+    from sqlalchemy import text
+
+    async def _ping() -> dict:
+        engine = make_engine(database_url)
+        async with engine.connect() as conn:
+            result = await conn.execute(text("SELECT 1"))
+            value = result.scalar_one()
+        await engine.dispose()
+        return {"ok": value == 1, "url": database_url.split("@")[-1]}
+
+    result = asyncio.run(_ping())
+    typer.echo(json.dumps(result))
+{% endif %}
+
+
+def main() -> None:
+    app()
+
+
+if __name__ == "__main__":
+    main()
