@@ -2,31 +2,32 @@
 gsd_state_version: 1.0
 milestone: v0.1
 milestone_name: milestone
-status: phase_complete
-last_updated: "2026-05-21T16:00:00Z"
-last_activity: 2026-05-21 -- Phase 4 complete (verify-backend full path passes 13/13)
+status: executing
+last_updated: "2026-05-21T21:30:00.000Z"
+last_activity: 2026-05-21 -- Phase 5 Plan 05-01 complete (path-gating + deps + env destinations)
 progress:
   total_phases: 6
-  completed_phases: 4
-  total_plans: 23
-  completed_plans: 17
-  percent: 67
+  completed_phases: 2
+  total_plans: 28
+  completed_plans: 18
+  percent: 35
 ---
 
 # Project State
 
 ## Current Position
 
-Phase: 4 — COMPLETE (7/7 plans + verify-work + drift checklist + verifier blockers resolved)
-Next phase: 5 — LLM Add-on (pending)
-Branch: feat/phase-4-backend (forked from docs/phase-2-reviews; no remote yet — ready for PR / merge to trunk)
-Status: Phase 4 closed out
-Last activity: 2026-05-21 -- Phase 4 verify-work gaps closed, all 13 phase-4 tests pass
+Phase: 5 (llm-add-on) — EXECUTING
+Plan: 05-01 ✅ complete; next 05-02
+Next phase: 5 — LLM Add-on (in progress)
+Branch: feat/phase-5-llm
+Status: Executing Phase 5
+Last activity: 2026-05-21 -- Phase 5 Plan 05-01 complete (path-gating contract + 11-pkg deps + LLM env destinations)
 
 ## Project Reference
 
 - **Core value:** A solo developer drops verify-kit into a new project, answers a handful of prompts, and gets a project where `just verify` is the ground truth for both human (pretty terminal + clickable IDE errors) AND coding agent (MCP server + JSON output + `fix_propose` self-healing).
-- **Current focus:** Phase 5 — LLM Add-on (queued; Phase 4 complete)
+- **Current focus:** Phase 5 — llm-add-on
 - **Trust anchor:** `just verify` exits 0 only when every check passes; template's own CI runs `copier copy` onto scratch dirs across the add-on matrix and asserts the same.
 
 ## Phase Plan
