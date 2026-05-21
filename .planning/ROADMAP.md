@@ -12,7 +12,7 @@
 - [ ] **Phase 2: Universal Harness Core** — Python `harness/` package: verify aggregator, structlog/Rich logging, trace_id middleware, cache, format contracts, miette errors, UX polish, OTel scaffold
 - [ ] **Phase 3: Agent Integration & IDE** — MCP server (13 tools + CLI twins), Claude Code hooks + skills, per-agent rules files (CLAUDE/cursor/windsurf/copilot), per-agent MCP snippets, .vscode files with problem matchers
 - [x] **Phase 4: Backend (FastAPI) Add-on** — opt-in `has_backend=true`: 12 default libs + opt-in `has_logfire`/`has_fastapi_mcp`, Dockerfile + docker-compose, `/__debug/*` wired, schemathesis fuzz in verify, Testcontainers integration tests (completed 2026-05-21)
-- [ ] **Phase 5: LLM Add-on** — opt-in `has_llm=true`: pydantic-ai + instructor + litellm + tokencost + autoevals + vcrpy, `@llm_call` / `@cost_budget` decorators, Langfuse Cloud/self-host options, Promptfoo + nightly-eval workflow
+- [x] **Phase 5: LLM Add-on** — opt-in `has_llm=true`: pydantic-ai + instructor + litellm + tokencost + autoevals + vcrpy, `@llm_call` / `@cost_budget` decorators, Langfuse Cloud/self-host options, Promptfoo + nightly-eval workflow (completed 2026-05-21)
 - [ ] **Phase 6: Template Self-Test & Documentation** — repo's own CI runs `copier copy` onto scratch dir per add-on matrix and asserts `just verify` exits 0; README + CHANGELOG (SemVer with consumer-breaking-changes callout) + CONTRIBUTING + architecture diagram + dual-audience checklist enforcement
 
 ## Phase Details
@@ -109,7 +109,7 @@
   - [x] 05-02-PLAN.md — harness/llm.py: @llm_call, @cost_budget, claude-agent-sdk routing adapter + Traceloop.init wiring (LLM-02, LLM-04, LLM-05, LLM-08, LLM-09)
   - [x] 05-03-PLAN.md — vcr conftest + tests/llm suite + optional eval check via @register (LLM-03, LLM-06, LLM-07)
   - [x] 05-04-PLAN.md — Promptfoo config + golden.jsonl + justfile recipes + nightly-eval.yml + docker-compose.langfuse.yml (LLM-10, LLM-11, CI-05)
-  - [ ] 05-05-PLAN.md — POST /summarize composition + SKILL.md + README LLM-12 + 12-cell polarity test (LLM-12)
+  - [x] 05-05-PLAN.md — POST /summarize composition + SKILL.md + README LLM-12 + 12-cell polarity test (LLM-12)
 
 ### Phase 6: Template Self-Test & Documentation
 
