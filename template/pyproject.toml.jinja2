@@ -61,7 +61,7 @@ dependencies = [
     "litellm>=1.85,<2",
     "tokencost>=0.1.26",
     "autoevals>=0.2,<0.3",
-    "opentelemetry-instrumentation-httpx>=0.63b1",
+    "opentelemetry-instrumentation-httpx>=0.62b1,<0.63",  # matches Phase 2 otel-sdk==1.41.1 -> semantic-conventions==0.62b1 (beads verify-kit-x60)
     "traceloop-sdk>=0.60,<1",
     "claude-agent-sdk>=0.2.83",
     "langfuse>=4.6,<5",
