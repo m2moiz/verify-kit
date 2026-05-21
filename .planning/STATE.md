@@ -4,13 +4,13 @@ milestone: v0.1
 milestone_name: milestone
 status: executing
 last_updated: "2026-05-21T21:30:00.000Z"
-last_activity: 2026-05-21 -- Phase 5 Plan 05-04 complete (promptfoo + nightly-eval + langfuse compose)
+last_activity: 2026-05-21 -- Phase 5 Plan 05-03 complete (vcr fixtures + tests/llm suite + eval check)
 progress:
   total_phases: 6
   completed_phases: 2
   total_plans: 28
-  completed_plans: 20
-  percent: 36
+  completed_plans: 21
+  percent: 38
 ---
 
 # Project State
@@ -18,7 +18,7 @@ progress:
 ## Current Position
 
 Phase: 5 (llm-add-on) — EXECUTING
-Plan: 05-04 ✅ complete; next 05-05 (or 05-03 depending on wave order)
+Plan: 05-03 ✅ complete; only 05-05 remaining
 Next phase: 5 — LLM Add-on (in progress)
 Branch: feat/phase-5-llm
 Status: Executing Phase 5
