@@ -220,6 +220,134 @@ LSP and DAP, so any LSP-aware editor works with zero project-specific config:
 In all three, the same `just verify` command is the entrypoint; problem matcher
 output is parsed natively from LSP rather than from terminal regex.
 
+{% if has_llm %}
+## LLM stack ({{ project_name }})
+
+This project ships an opinionated LLM stack: `pydantic-ai`, `instructor`,
+`litellm`, `tokencost`, `autoevals`, `vcrpy`, and `langfuse`, with
+`@llm_call` / `@cost_budget` decorators emitting OTel `gen_ai.*` spans.
+Every verify-kit-shipped call site (including `/summarize`) routes through
+`harness.llm.call_llm`, which dispatches to one of two providers
+automatically.
+
+### Personal-vs-consumer setup
+
+`{{ project_name }}` has two routing paths for LLM calls; the choice is
+automatic via the `USE_CLAUDE_CODE_SDK` and `ANTHROPIC_API_KEY` env vars
+(decision logic in `harness/llm.py:_routing_path()`).
+
+- **Personal / local-dev path** uses `claude-agent-sdk` and leverages the
+  developer's existing Claude Max OAuth session — no API key required.
+  Routing is selected when `USE_CLAUDE_CODE_SDK=1` is set OR
+  `ANTHROPIC_API_KEY` is unset AND the `claude_agent_sdk` package is
+  importable.
+- **Consumer / deployed path** uses `ANTHROPIC_API_KEY` via litellm.
+  Set the key in `.env` (consumer projects without a developer Claude
+  account use this path).
+
+#### Cost asymmetry — important
+
+The `claude-agent-sdk` routing path reports `cost_usd=0.0` on emitted
+spans because the SDK does not expose token usage to the caller. The
+operator's REAL cost on this path lives in the Claude Max account
+dashboard (claude.ai/settings), NOT in the OTLP / Langfuse traces. Do
+NOT mistake `$0` spans for free LLM calls — verify cost in the account
+dashboard when running locally, and switch to the `ANTHROPIC_API_KEY`
+path before deployment so cost is reported through the standard span
+attribute (`verify_kit.cost_usd`).
+
+### Langfuse credential sharing via `~/.zshrc`
+
+Set the Langfuse keys once in your shell profile after Cloud signup and
+every verify-kit-scaffolded project picks them up automatically — no
+edit to `.env` per project:
+
+```bash
+# ~/.zshrc (or ~/.bashrc)
+export LANGFUSE_PUBLIC_KEY="pk-lf-..."
+export LANGFUSE_SECRET_KEY="sk-lf-..."
+export LANGFUSE_HOST="https://cloud.langfuse.com"
+```
+
+`harness/llm.py` emits OTLP spans; the Langfuse OTLP receiver authenticates
+with HTTP Basic Auth (NOT Bearer — Langfuse's `/api/public/otel` endpoint
+rejects Bearer for SDK uploads). The canonical idiom:
+
+```bash
+export OTEL_EXPORTER_OTLP_HEADERS="Authorization=Basic $(echo -n "$LANGFUSE_PUBLIC_KEY:$LANGFUSE_SECRET_KEY" | base64)"
+```
+
+### `llm_backend=none` for privacy
+
+If `llm_backend=none` was selected at scaffold time, the project ships
+ZERO third-party LLM observability. Spans go to Jaeger (when
+`has_backend=true`) or stdout (when `has_backend=false`). No keys, no
+external endpoint. This is the minimal-dependency option for
+privacy-conscious or air-gapped consumers.
+
+### Cloud Hobby → Hetzner CX32 self-host migration
+
+Langfuse Cloud Hobby (50k events/month free) is the default. When you
+outgrow the free tier, self-host on a Hetzner CX32 (~€7.60/mo):
+
+1. **Provision** a Hetzner CX32 with Docker pre-installed.
+2. **Bring up the stack:**
+   ```bash
+   docker compose -f docker-compose.langfuse.yml up -d
+   ```
+   This is the 5-container stack (langfuse-web + langfuse-worker +
+   postgres + clickhouse + redis) shipped under `has_llm=true AND
+   llm_backend=langfuse-self-host`.
+3. **Switch the host env var.** Update `LANGFUSE_HOST` in `~/.zshrc`
+   from `https://cloud.langfuse.com` to `http://<cx32-ip>:3000` — or
+   route via Tailscale for loopback-secure access (recommended; the
+   compose file binds the web service to `127.0.0.1:3000` by default).
+4. **Migrate existing Cloud data.** Langfuse Cloud Hobby supports
+   data export from the dashboard. Download the JSON dump and use
+   the Langfuse SDK to re-emit the traces against the self-host
+   instance (the `langfuse-cli import` workflow when available).
+5. **Update DNS** if you exposed Langfuse on a custom domain.
+6. **No `.env` changes needed** beyond `LANGFUSE_HOST` — the same
+   `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` shape works against
+   both Cloud and self-host (the public/secret keys come from the
+   self-host UI's project settings page on first run).
+7. **Verify migration with a real eval run:**
+   ```bash
+   just eval
+   ```
+   `just eval` runs the Promptfoo gate AND emits real OTLP spans to
+   the configured Langfuse host. Confirm a trace appears in the
+   self-host Langfuse UI within seconds. Do NOT rely on
+   `verify-kit verify --check=eval` for this step — that check
+   returns `status=skip` by default and would NOT prove a real
+   trace landed.
+
+### pydantic-ai for typed responses (consumer pattern)
+
+`pydantic-ai>=1.100` ships as the typed-call ergonomic layer. Consumers
+who want a `BaseModel`-typed LLM response use the standard pydantic-ai
+pattern in their own code:
+
+```python
+from pydantic import BaseModel
+from pydantic_ai import Agent
+
+class Summary(BaseModel):
+    sentence: str
+
+agent = Agent("anthropic:claude-haiku-4-5", output_type=Summary)
+result = await agent.run("Summarize: ...")
+typed = result.output   # NOTE: .output (pydantic-ai >=1.0), NOT .data
+```
+
+Note that this is the *consumer-facing* pattern. Verify-kit's own
+shipped call sites (the `/summarize` route, the eval check, etc.) use
+`call_llm()` instead because `call_llm` routes through the
+`USE_CLAUDE_CODE_SDK` switch documented above and owns the full
+`gen_ai.*` span attribute contract. Both patterns are supported and
+can coexist in your project.
+{% endif %}
+
 ## License
 
 {{ license }} — see LICENSE.
