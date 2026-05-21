@@ -64,7 +64,7 @@ Every requirement implementation must answer all six rows. If any cell is blank,
 
 - [ ] **HARN-01**: Generated project has Python `harness/` package installable via `uv pip install -e .`
 - [ ] **HARN-02**: `harness/verify.py` aggregates exit codes from all subsystem checks into both (a) miette-style pretty terminal render and (b) `.verify/report.json` + `.verify/report.junit.xml` + `.verify/report.sarif`
-- [ ] **HARN-03**: `harness/debug_endpoints.py` exposes a FastAPI router for `/__debug/state` and `/__debug/events`, env-gated to `ENV=dev` (404 in prod) — only generated when `has_backend=true`
+- [x] **HARN-03**: `harness/debug_endpoints.py` exposes a FastAPI router for `/__debug/state` and `/__debug/events`, env-gated to `ENV=dev` (404 in prod) — only generated when `has_backend=true`
 - [ ] **HARN-04**: `harness/trace_id.py` provides ASGI middleware threading a request_id through every request, log, and provider call (via `asgi-correlation-id`)
 - [ ] **HARN-05**: `harness/logging.py` configures structlog with Rich pretty-renderer when TTY, JSON renderer when piped or `LOG_FORMAT=json`; honors `LOG_LEVEL`, `NO_COLOR`, `CI` env vars
 - [ ] **HARN-06**: `harness/ralph.py` wraps the Ralph loop pattern: iterate while verify fails, hard cap iterations (default 5), track cumulative cost, surface "stuck — escalating to human" state
@@ -138,16 +138,16 @@ Every requirement implementation must answer all six rows. If any cell is blank,
 ### Backend (FastAPI) Add-on (API) — opt-in via `has_backend=true`
 
 - [x] **API-01**: Opt-in via Copier prompt `has_backend: bool` — generates only when enabled; toggling off produces zero FastAPI artifacts
-- [ ] **API-02**: Ships `fastapi[standard]` baseline — gets `fastapi-cli`, `httpx`, `python-multipart`, `jinja2`; scaffolded `app/main.py` with `/healthz` and `/__debug/*` mounted
-- [ ] **API-03**: Ships `pydantic-settings` for env config; `.env.example` documents every var with type and default
+- [x] **API-02**: Ships `fastapi[standard]` baseline — gets `fastapi-cli`, `httpx`, `python-multipart`, `jinja2`; scaffolded `app/main.py` with `/healthz` and `/__debug/*` mounted
+- [x] **API-03**: Ships `pydantic-settings` for env config; `.env.example` documents every var with type and default
 - [ ] **API-04**: Ships `sqlalchemy[asyncio]` + `asyncpg` + `alembic` async DB stack with one example model + migration (opt-out via `has_db=false`)
-- [ ] **API-05**: Ships `asgi-correlation-id` middleware threading `X-Request-ID` through every request, log line, and outbound HTTP call
-- [ ] **API-06**: Ships `structlog` ASGI middleware emitting JSON access logs keyed by `request_id` (Rich pretty in TTY, JSON when piped — same contract as HARN-05)
-- [ ] **API-07**: Ships `sse-starlette` for streaming responses (default pattern for AI/LLM routes)
-- [ ] **API-08**: Ships `secure` middleware setting OWASP-recommended response headers (CSP, X-Frame-Options, Referrer-Policy, Permissions-Policy) with prod/dev profile
+- [x] **API-05**: Ships `asgi-correlation-id` middleware threading `X-Request-ID` through every request, log line, and outbound HTTP call
+- [x] **API-06**: Ships `structlog` ASGI middleware emitting JSON access logs keyed by `request_id` (Rich pretty in TTY, JSON when piped — same contract as HARN-05)
+- [x] **API-07**: Ships `sse-starlette` for streaming responses (default pattern for AI/LLM routes)
+- [x] **API-08**: Ships `secure` middleware setting OWASP-recommended response headers (CSP, X-Frame-Options, Referrer-Policy, Permissions-Policy) with prod/dev profile
 - [ ] **API-09**: Ships `typer` CLI sibling at `app/cli.py` sharing Pydantic models with the FastAPI app (one schema, two interfaces)
-- [ ] **API-10**: Ships `pyinstrument` middleware enabling `?profile=true` query param → returns rendered flamegraph HTML (dev-only, env-gated)
-- [ ] **API-11**: Ships `anyio` + `httpx` + `asgi-lifespan` canonical async test setup; example `tests/test_app.py` exercises lifespan + one route
+- [x] **API-10**: Ships `pyinstrument` middleware enabling `?profile=true` query param → returns rendered flamegraph HTML (dev-only, env-gated)
+- [x] **API-11**: Ships `anyio` + `httpx` + `asgi-lifespan` canonical async test setup; example `tests/test_app.py` exercises lifespan + one route
 - [ ] **API-12**: Ships `schemathesis` wired into `just verify` — fuzzes the live OpenAPI schema for 5xx, schema violations, auth bypasses
 - [ ] **API-13**: Ships `dirty-equals` + `polyfactory` for ergonomic test assertions and fixture factories
 - [ ] **API-14**: Ships `Testcontainers` Postgres fixture (`@pytest.fixture` returning a containerized DB) for integration tests; cached image
@@ -238,7 +238,7 @@ Mapped to roadmap phases on 2026-05-18. 95/95 v0.1 requirements covered, no orph
 | CLAUDE-05 | Phase 3 | Pending |
 | HARN-01 | Phase 2 | Pending |
 | HARN-02 | Phase 2 | Pending |
-| HARN-03 | Phase 4 | Pending |
+| HARN-03 | Phase 4 | Complete |
 | HARN-04 | Phase 2 | Pending |
 | HARN-05 | Phase 2 | Pending |
 | HARN-06 | Phase 4 | Pending |
@@ -288,16 +288,16 @@ Mapped to roadmap phases on 2026-05-18. 95/95 v0.1 requirements covered, no orph
 | LLM-11 | Phase 5 | Pending |
 | LLM-12 | Phase 5 | Pending |
 | API-01 | Phase 4 | Complete |
-| API-02 | Phase 4 | Pending |
-| API-03 | Phase 4 | Pending |
+| API-02 | Phase 4 | Complete |
+| API-03 | Phase 4 | Complete |
 | API-04 | Phase 4 | Pending |
-| API-05 | Phase 4 | Pending |
-| API-06 | Phase 4 | Pending |
-| API-07 | Phase 4 | Pending |
-| API-08 | Phase 4 | Pending |
+| API-05 | Phase 4 | Complete |
+| API-06 | Phase 4 | Complete |
+| API-07 | Phase 4 | Complete |
+| API-08 | Phase 4 | Complete |
 | API-09 | Phase 4 | Pending |
-| API-10 | Phase 4 | Pending |
-| API-11 | Phase 4 | Pending |
+| API-10 | Phase 4 | Complete |
+| API-11 | Phase 4 | Complete |
 | API-12 | Phase 4 | Pending |
 | API-13 | Phase 4 | Pending |
 | API-14 | Phase 4 | Pending |
