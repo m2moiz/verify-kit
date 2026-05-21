@@ -1,0 +1,18 @@
+from __future__ import annotations
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+
+# Engine is built lazily — create_engine takes the URL explicitly.
+# REVIEW-CHECKLIST §1: never reads Path.cwd() or os.environ directly.
+
+
+def make_engine(database_url: str):
+    """Build an async engine from an explicit URL.
+
+    The caller (lifespan / fixture) passes the URL — this function never reads
+    environment or filesystem directly.
+    """
+    return create_async_engine(database_url, echo=False, pool_pre_ping=True)
+
+
+def make_sessionmaker(engine):
+    return async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)

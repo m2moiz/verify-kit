@@ -36,3 +36,73 @@ def client_prod(app_prod):
     # Same lifespan-context requirement — see client_dev docstring.
     with TestClient(app_prod) as client:
         yield client
+
+{% if has_db %}
+# ── DB fixtures (Plan 04-03) — merged inline to avoid pytest_plugins fragility ──
+import os
+import subprocess
+import pytest_asyncio
+from testcontainers.postgres import PostgresContainer
+
+
+def _docker_daemon_running() -> bool:
+    """Return True iff `docker info` exits 0 within 5s.
+
+    Addresses Codex HIGH #9: `shutil.which("docker")` returns True even when
+    the daemon is stopped, leading to false-pass / hang in Testcontainers.
+    """
+    try:
+        r = subprocess.run(
+            ["docker", "info"],
+            capture_output=True,
+            timeout=5,
+        )
+        return r.returncode == 0
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return False
+
+
+@pytest.fixture(scope="session")
+def pg_container():
+    """Session-scoped Postgres container. Image cached after first pull.
+
+    Uses postgres:16-alpine to match docker-compose.yml. Calls `alembic upgrade head`
+    against the container URL once it starts. Skips cleanly if the Docker daemon
+    is not running (HIGH #9).
+    """
+    if not _docker_daemon_running():
+        pytest.skip("Docker daemon not running (docker info failed) — skipping Testcontainers tests")
+
+    container = PostgresContainer("postgres:16-alpine")
+    container.start()
+    db_url = container.get_connection_url().replace("postgresql://", "postgresql+asyncpg://")
+
+    # Run migrations from the scratch root — REVIEW-CHECKLIST §1: explicit cwd.
+    # __file__ = scratch/tests/backend/conftest.py, so:
+    #   .parent       = scratch/tests/backend/
+    #   .parent.parent = scratch/tests/
+    #   .parent.parent.parent = scratch/   <-- scaffold root where alembic.ini lives
+    # Using only 2 parents would resolve to scratch/tests/ (no alembic.ini there).
+    scratch_root = Path(__file__).resolve().parent.parent.parent
+    env = {**os.environ, "DATABASE_URL": db_url}
+    subprocess.run(
+        ["uv", "run", "alembic", "upgrade", "head"],
+        cwd=scratch_root,
+        env=env,
+        check=True,
+        timeout=120,
+    )
+
+    yield db_url
+    container.stop()
+
+
+@pytest_asyncio.fixture
+async def db_session(pg_container):
+    from app.db import make_engine, make_sessionmaker
+    engine = make_engine(pg_container)
+    sm = make_sessionmaker(engine)
+    async with sm() as session:
+        yield session
+    await engine.dispose()
+{% endif %}

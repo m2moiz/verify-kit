@@ -90,3 +90,4 @@ After 04-03 wave-promotion fix (wave 2 → wave 3 to honor its `depends_on: [04-
 |-------|------|----------|-------|
 | Phase 4 P04-01 | 12m | 4 tasks | 5 files |
 | Phase 4 P04-02 | 70m | 14 tasks | 15 files |
+| Phase 4 P04-03 | 20m | 6 tasks | 9 files |
