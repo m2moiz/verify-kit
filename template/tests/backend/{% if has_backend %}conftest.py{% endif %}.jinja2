@@ -46,16 +46,20 @@ from testcontainers.postgres import PostgresContainer
 
 
 def _docker_daemon_running() -> bool:
-    """Return True iff `docker info` exits 0 within 5s.
+    """Return True iff `docker info` exits 0 within 30s.
 
     Addresses Codex HIGH #9: `shutil.which("docker")` returns True even when
     the daemon is stopped, leading to false-pass / hang in Testcontainers.
+
+    Timeout is 30s (not 5s) because Docker Desktop on macOS has a slow
+    first-call path through its virtualization proxy; a 5s budget produces
+    flaky 'docker daemon not running' false positives even when healthy.
     """
     try:
         r = subprocess.run(
             ["docker", "info"],
             capture_output=True,
-            timeout=5,
+            timeout=30,
         )
         return r.returncode == 0
     except (FileNotFoundError, subprocess.TimeoutExpired):
@@ -75,7 +79,10 @@ def pg_container():
 
     container = PostgresContainer("postgres:16-alpine")
     container.start()
-    db_url = container.get_connection_url().replace("postgresql://", "postgresql+asyncpg://")
+    # testcontainers >=4.7 defaults to driver="psycopg2"; pass driver explicitly so
+    # the URL is "postgresql+asyncpg://..." (matches the async engine + avoids the
+    # silent .replace no-op when the source URL is already "postgresql+psycopg2://").
+    db_url = container.get_connection_url(driver="asyncpg")
 
     # Run migrations from the scratch root — REVIEW-CHECKLIST §1: explicit cwd.
     # __file__ = scratch/tests/backend/conftest.py, so:

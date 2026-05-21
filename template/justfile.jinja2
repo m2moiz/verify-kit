@@ -60,9 +60,12 @@ serve:
 test-backend:
     uv run pytest tests/backend/ -v
 
-# Bring up the full local stack: api + postgres + jaeger
+# Bring up the full local stack: api + postgres + jaeger.
+# `--build` forces a rebuild so source changes in app/* land in the image —
+# without it, docker reuses a cached image even when app code changed, which
+# was producing stale-API false failures in the verify-backend integration test.
 docker-up:
-    docker compose up -d --wait --wait-timeout 120
+    docker compose up -d --build --wait --wait-timeout 120
 
 # Stop and remove the stack including volumes
 docker-down:
@@ -78,7 +81,7 @@ verify-backend:
     @echo "[verify-backend] running pytest backend slice..."
     uv run pytest tests/backend/ -v
     @echo "[verify-backend] running schemathesis fuzz against LIVE OpenAPI..."
-    uv run schemathesis run http://localhost:8000/openapi.json --checks all --max-examples 20 --hypothesis-deadline=2000
+    uv run schemathesis run http://localhost:8000/openapi.json --checks all --max-examples 20 --max-response-time 2
     @echo "[verify-backend] smoke: /healthz"
     curl -sf http://localhost:8000/healthz
     @echo "[verify-backend] smoke: /__debug/state (ENV=dev only)"
@@ -94,7 +97,7 @@ verify-backend-quick:
     uv run pytest tests/backend/ -v
     @if curl -sf http://localhost:8000/healthz >/dev/null 2>&1; then \
         echo "[verify-backend-quick] app reachable — opportunistic fuzz"; \
-        uv run schemathesis run http://localhost:8000/openapi.json --checks all --max-examples 20 --hypothesis-deadline=2000; \
+        uv run schemathesis run http://localhost:8000/openapi.json --checks all --max-examples 20 --max-response-time 2; \
     else \
         echo "[verify-backend-quick] app not running on :8000 — pytest only (use \`just verify-backend\` for full slice)"; \
     fi

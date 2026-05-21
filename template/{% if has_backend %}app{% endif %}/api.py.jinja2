@@ -15,13 +15,27 @@ async def healthz(request: Request) -> HealthResponse:
     return HealthResponse(status="ok", version="0.1.0", env=settings.ENV)
 
 
-@router.post("/echo", response_model=EchoResponse)
+@router.post(
+    "/echo",
+    response_model=EchoResponse,
+    responses={
+        # FastAPI returns 400 when the request body fails JSON parsing (before the
+        # Pydantic validator can run); without this declaration, schemathesis flags
+        # 400 as an undocumented status code.
+        400: {"description": "Malformed request body (JSON parse failure)"},
+    },
+)
 async def echo_route(req: EchoRequest) -> EchoResponse:
     rid = correlation_id.get() or "no-correlation-id"
     return echo(req, request_id=rid)
 
 
-@router.get("/events/stream")
+@router.get(
+    "/events/stream",
+    # SSE streams text/event-stream; FastAPI's default JSONResponse Content-Type
+    # in the schema would otherwise misadvertise this route.
+    responses={200: {"content": {"text/event-stream": {}}}},
+)
 async def events_stream() -> EventSourceResponse:
     async def gen():
         for i in range(3):
