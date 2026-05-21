@@ -1,0 +1,222 @@
+"""Behavior tests for the @llm_call / @cost_budget decorators.
+
+These tests do NOT use any VCR marker — they exercise the decorator
+machinery via an in-memory OTel span exporter + a monkeypatched stub
+adapter. They run on a clean scaffold with no recorded cassettes.
+
+Forcing functions present here:
+  - test_decorator_ordering_documentation: opens harness/llm.py source
+    and asserts the docstring carries the literal substrings 'OUTER'
+    and 'INNER'. Catches docstring drift on future refactors (Pitfall
+    3 mitigation).
+  - test_call_llm_dispatches_via_routing_path: proves call_llm routes
+    through _routing_path() to either adapter based on env state
+    (LLM-03 / D-03 forcing function).
+"""
+from __future__ import annotations
+
+import asyncio
+import os
+from pathlib import Path
+
+import pytest
+
+from harness.llm import (
+    CostBudgetExceeded,
+    call_llm,
+    cost_budget,
+    llm_call,
+    reset_cost_accumulator,
+)
+
+
+# ── In-memory OTel span exporter setup ────────────────────────────────────────
+#
+# The @llm_call decorator emits spans via harness.observability.tracer. To
+# inspect those spans without a live OTLP backend, we install an
+# InMemorySpanExporter at module load and replace the tracer's provider with
+# one wired to it.
+
+
+@pytest.fixture
+def span_exporter():
+    """Install an InMemorySpanExporter + return its finished_spans accessor."""
+    from opentelemetry import trace
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
+        InMemorySpanExporter,
+    )
+
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+
+    # Swap the harness.observability.tracer for one bound to this provider.
+    from harness import observability
+
+    saved_tracer = observability.tracer
+    observability.tracer = provider.get_tracer("verify-kit-tests")
+
+    yield exporter
+
+    observability.tracer = saved_tracer
+
+
+def _run(coro):
+    """Run an async coroutine to completion in a sync test."""
+    return asyncio.get_event_loop().run_until_complete(coro) if (
+        loop := asyncio.new_event_loop()
+    ) is None else loop.run_until_complete(coro)
+
+
+def _ar(coro):
+    """Synchronously execute an async coro using a fresh event loop."""
+    loop = asyncio.new_event_loop()
+    try:
+        return loop.run_until_complete(coro)
+    finally:
+        loop.close()
+
+
+# ── Decorator behavior tests ──────────────────────────────────────────────────
+
+
+def test_decorator_emits_span(span_exporter):
+    """@llm_call(name='x') wraps an async fn and emits an 'llm.x' span."""
+
+    @llm_call(name="x")
+    async def fn():
+        return {"cost_usd": 0.001, "model": "test", "response_model": "test",
+                "usage": {"input_tokens": 10, "output_tokens": 5}, "retry_count": 0}
+
+    _ar(fn())
+    spans = span_exporter.get_finished_spans()
+    assert any(s.name == "llm.x" for s in spans), (
+        f"expected 'llm.x' span; got {[s.name for s in spans]}"
+    )
+
+
+def test_span_carries_gen_ai_attrs(span_exporter):
+    """Span carries the FULL gen_ai.* + verify_kit.* attribute set."""
+
+    @llm_call(name="attrs")
+    async def fn():
+        return {
+            "cost_usd": 0.002,
+            "model": "claude-haiku-4-5",
+            "response_model": "claude-haiku-4-5",
+            "usage": {"input_tokens": 42, "output_tokens": 7},
+            "retry_count": 1,
+        }
+
+    _ar(fn())
+    spans = span_exporter.get_finished_spans()
+    s = next(s for s in spans if s.name == "llm.attrs")
+    attrs = dict(s.attributes or {})
+    assert attrs.get("gen_ai.operation.name") == "attrs"
+    assert attrs.get("gen_ai.request.model") == "claude-haiku-4-5"
+    assert attrs.get("gen_ai.response.model") == "claude-haiku-4-5"
+    assert attrs.get("gen_ai.usage.input_tokens") == 42
+    assert attrs.get("gen_ai.usage.output_tokens") == 7
+    assert float(attrs.get("verify_kit.cost_usd", -1)) == pytest.approx(0.002)
+    assert isinstance(attrs.get("verify_kit.latency_ms"), int)
+    assert attrs.get("verify_kit.routing_path") in ("claude-agent-sdk", "litellm")
+    assert attrs.get("verify_kit.retry_count") == 1
+
+
+def test_cost_budget_raises():
+    """@cost_budget OUTER + @llm_call INNER + cost > 0 must raise."""
+    reset_cost_accumulator()
+
+    @cost_budget(usd=0.0, on_exceed="raise")
+    @llm_call(name="overspend")
+    async def fn():
+        return {"cost_usd": 0.001, "model": "m", "response_model": "m",
+                "usage": {"input_tokens": 1, "output_tokens": 1}, "retry_count": 0}
+
+    with pytest.raises(CostBudgetExceeded) as exc_info:
+        _ar(fn())
+    err = exc_info.value
+    assert err.budget_usd == 0.0
+    assert err.accumulated_usd > 0
+    assert err.call_name == "fn"
+
+
+def test_cost_budget_does_not_raise_when_under_budget():
+    """Generous budget means no exception even with non-zero accumulated cost."""
+    reset_cost_accumulator()
+
+    @cost_budget(usd=999.0, on_exceed="raise")
+    @llm_call(name="cheap")
+    async def fn():
+        return {"cost_usd": 0.001, "model": "m", "response_model": "m",
+                "usage": {"input_tokens": 1, "output_tokens": 1}, "retry_count": 0}
+
+    result = _ar(fn())
+    assert result["cost_usd"] == 0.001
+
+
+def test_decorator_ordering_documentation():
+    """Forcing function: harness/llm.py docstrings must mention OUTER/INNER.
+
+    Catches docstring drift on future refactors (RESEARCH.md Pitfall 3). If
+    this test fails, the ordering rule is no longer documented in the source.
+    """
+    import harness.llm as _llm
+
+    src = Path(_llm.__file__).read_text()
+    assert "OUTER" in src, "decorator ordering rule must mention OUTER"
+    assert "INNER" in src, "decorator ordering rule must mention INNER"
+
+
+def test_call_llm_dispatches_via_routing_path(monkeypatch, span_exporter):
+    """LLM-03/D-03 forcing function: call_llm routes via _routing_path().
+
+    Stubs both adapters with distinguishable sentinels; toggles env vars and
+    asserts call_llm dispatches to the right one AND the emitted span carries
+    verify_kit.routing_path == the path taken.
+    """
+    import harness.llm as _llm
+
+    claude_sentinel = {"content": "C", "model": "claude-agent-sdk",
+                       "response_model": "claude-agent-sdk",
+                       "usage": {"input_tokens": 0, "output_tokens": 0},
+                       "provider": "claude-code-sdk", "cost_usd": 0.0,
+                       "retry_count": 0}
+    litellm_sentinel = {"content": "L", "model": "litellm-model",
+                        "response_model": "litellm-model",
+                        "usage": {"input_tokens": 1, "output_tokens": 1},
+                        "provider": "litellm", "cost_usd": 0.0001,
+                        "retry_count": 0}
+
+    async def _stub_claude(prompt, *, model=None):
+        return claude_sentinel
+
+    async def _stub_litellm(prompt, *, model=None):
+        return litellm_sentinel
+
+    monkeypatch.setattr(_llm, "call_via_claude_agent_sdk", _stub_claude)
+    monkeypatch.setattr(_llm, "call_via_litellm", _stub_litellm)
+
+    # Path A: USE_CLAUDE_CODE_SDK=1 -> claude-agent-sdk route.
+    monkeypatch.setenv("USE_CLAUDE_CODE_SDK", "1")
+    result_a = _ar(call_llm("hi"))
+    assert result_a is claude_sentinel
+    spans = span_exporter.get_finished_spans()
+    a_span = next(s for s in spans if s.name == "llm.call_llm")
+    assert dict(a_span.attributes or {}).get("verify_kit.routing_path") == (
+        "claude-agent-sdk"
+    )
+
+    # Reset exporter buffer.
+    span_exporter.clear()
+
+    # Path B: USE_CLAUDE_CODE_SDK unset + ANTHROPIC_API_KEY set -> litellm.
+    monkeypatch.delenv("USE_CLAUDE_CODE_SDK", raising=False)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+    result_b = _ar(call_llm("hi"))
+    assert result_b is litellm_sentinel
+    spans = span_exporter.get_finished_spans()
+    b_span = next(s for s in spans if s.name == "llm.call_llm")
+    assert dict(b_span.attributes or {}).get("verify_kit.routing_path") == "litellm"
