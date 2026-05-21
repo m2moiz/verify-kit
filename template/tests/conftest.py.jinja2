@@ -49,3 +49,62 @@ def _structlog_reset() -> None:
     """Reset structlog default config before each test (RESEARCH.md §11, R4)."""
     if structlog is not None:
         structlog.reset_defaults()
+{% if has_llm %}
+
+
+# ── LLM cassette scrubbing (Pitfall 2: load BEFORE first cassette write) ──────
+#
+# vcrpy's default config does NOT scrub Authorization / x-api-key headers, so
+# the first cassette recorded against a live LLM API will ship a real bearer
+# token to disk. This fixture installs filter_headers + a before_record_request
+# callable so the scrub happens BEFORE the cassette file is written.
+#
+# record_mode precedence (pytest-recording documented behavior, CLI > fixture):
+#   - The default below is "none" — CI and any default `pytest tests/llm/` run
+#     refuses to record; missing cassettes raise (or are skipped by the
+#     autouse `_skip_when_no_cassette` fixture in tests/llm/conftest.py).
+#   - Developers re-record via the CLI flag `pytest --record-mode=once`, which
+#     OVERRIDES this fixture-level value. The `just refresh-cassettes` recipe
+#     invokes pytest with `--record-mode=once` for exactly this reason.
+_LLM_SCRUB_HEADERS = (
+    "authorization",
+    "x-api-key",
+    "anthropic-api-key",
+    "openai-api-key",
+    "openai-organization",
+    "x-langfuse-public-key",
+)
+
+
+@pytest.fixture(scope="module")
+def vcr_config() -> dict:
+    """vcrpy config for LLM cassette recording — scrubs credential headers.
+
+    See module-level _LLM_SCRUB_HEADERS for the full list. Two mechanisms run
+    side-by-side (defense-in-depth — a single typo in either should not leak):
+      1. ``filter_headers`` list-of-tuple: vcrpy replaces matching headers with
+         "REDACTED" at the wire level.
+      2. ``before_record_request`` callable: a second pass that walks the
+         request.headers mapping case-insensitively and overwrites any match.
+
+    record_mode="none" is the CI/default. The CLI flag --record-mode=once
+    OVERRIDES this value (used by `just refresh-cassettes` to re-record).
+    """
+
+    def _scrub(request):
+        # Case-insensitive scrub — vcrpy normalizes header names but cassettes
+        # written by older releases can carry mixed-case keys.
+        for header_name in list(request.headers):
+            if header_name.lower() in _LLM_SCRUB_HEADERS:
+                request.headers[header_name] = "REDACTED"
+        return request
+
+    return {
+        "filter_headers": [(h, "REDACTED") for h in _LLM_SCRUB_HEADERS],
+        "before_record_request": _scrub,
+        "filter_query_parameters": [("api_key", "REDACTED")],
+        # CI default — override per-invocation with `pytest --record-mode=once`
+        # (the mechanism `just refresh-cassettes` uses to populate cassettes).
+        "record_mode": "none",
+    }
+{% endif %}
