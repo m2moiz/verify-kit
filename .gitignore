@@ -5,3 +5,7 @@ __pycache__/
 .venv/
 .pytest_cache/
 .ruff_cache/
+
+# CC machine-specific overrides
+.claude/settings.local.json
+.claude/state/

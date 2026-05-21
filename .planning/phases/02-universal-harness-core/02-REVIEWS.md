@@ -1,8 +1,8 @@
 ---
 phase: 2
-cycle: 2
+cycle: 3
 reviewers: [codex]
-reviewed_at: 2026-05-18T14:01:07Z
+reviewed_at: 2026-05-18T14:11:56Z
 plans_reviewed:
   - 02-01-PLAN.md
   - 02-02-PLAN.md
@@ -11,182 +11,134 @@ plans_reviewed:
   - 02-05-PLAN.md
   - 02-06-PLAN.md
   - 02-07-PLAN.md
-prior_cycle_highs: 5
-current_cycle_highs_unresolved: 4
+prior_cycle_highs: 4
+current_cycle_highs_unresolved: 2
 ---
 
-# Cross-AI Plan Review — Phase 2 (Cycle 2)
+# Cross-AI Plan Review — Phase 2 (Cycle 3)
 
-This is cycle 2 of plan-review-convergence. Cycle 1 raised 5 HIGH concerns;
-the plans were replanned per `02-REVIEWS-RESPONSE.md`. This cycle re-reviews
-the updated plans.
+This is cycle 3 (final cycle) of plan-review-convergence. Cycle 2 reported 4
+HIGH concerns still unresolved; the plans were replanned per the cycle-2
+section of `02-REVIEWS-RESPONSE.md`. This cycle re-verifies whether each
+cycle-2 HIGH is now fully resolved in the current plan files.
 
 ## Codex Review
 
-### Summary
+**Summary**
 
-The updated plans resolve most of the cycle-1 HIGH issues. The dependency
-ordering, `just` degradation, cache-budget split, and local-only Biome
-strategy are materially improved. Two of the original five are only
-partially resolved because the plans still contain executor-visible
-contradictions or missing file/dependency declarations.
+Cycle 3 does not fully converge. Three of the four cycle-2 HIGHs are fully resolved in the actionable plan text. The cwd issue is only partially resolved because Plan 04 still contains contradictory implementation guidance for biome path resolution. I also found one new HIGH in Plan 06: cache eviction is placed after a `return`, so the planned LRU cap never runs.
 
-The biggest new risk is in the generated test scaffold: some templated
-tests run `verify-kit` from a minimal `fake_project` that does not contain
-or install the harness package. That will likely fail in rendered projects.
+**Status of Cycle-2 HIGH Concerns**
 
-### Status of Prior HIGH Concerns
+| Concern | Status | Evidence |
+|---|---:|---|
+| Carryover #2: Plan 01 manifest missing `pyproject.toml` + tests | **FULLY RESOLVED** | `02-01-PLAN.md:7-19` lists `pyproject.toml` and all five `tests/test_phase2_*.py` files. `02-01-PLAN.md:107-123` requires `_DEFAULT_ANSWERS` from live `copier.yml` and `uv add --dev copier pyyaml`. |
+| Carryover #5: Plan 04 threat model references `pnpm dlx` | **FULLY RESOLVED** | Plan 04 now says local biome only and explicitly forbids `pnpm dlx`: `02-04-PLAN.md:295` and `02-04-PLAN.md:303`. README docs also state “we never `pnpm dlx` during verify”: `02-07-PLAN.md:253`. |
+| NEW: Golden test used fake_project with no harness | **FULLY RESOLVED** | `02-07-PLAN.md:127` explicitly says `fake_project` is not a harness host. Golden test uses `PROJECT_ROOT = Path(__file__).resolve().parents[2]`: `02-07-PLAN.md:140-144`, removes `tmp_project`: `02-07-PLAN.md:147`, and marks slow: `02-07-PLAN.md:148`. |
+| NEW: `cwd` hashed but checks ran against process CWD | **PARTIALLY RESOLVED** | Strong positive evidence: runner contract says `spec.fn(cwd=cwd)` and subprocesses pass `cwd=cwd`: `02-04-PLAN.md:24-25`, `02-04-PLAN.md:147`, `02-04-PLAN.md:246`, test subcase at `02-04-PLAN.md:282`. But the same plan still instructs `local_biome = Path("node_modules/.bin/biome")` and calls it “Path.cwd() relative”: `02-04-PLAN.md:177`, directly contradicting the later correction at `02-04-PLAN.md:189`. Also Plan 06 loads config with `load_config()` rather than `load_config(cwd / "pyproject.toml")`: `02-06-PLAN.md:151-152`, so public `core.verify(cwd=p)` still has a cwd leak for config. |
 
-1. **Plan 04 missing `02-03` dependency: FULLY RESOLVED**
+**New HIGH Concerns**
 
-   Evidence: `02-04-PLAN.md` now has `depends_on: ["02-01", "02-02", "02-03"]`,
-   `wave: 3`. The runner explicitly imports `CacheStore`, `make_cache_key`,
-   `hash_inputs`, and `get_tool_version` from Plan 03.
+1. **HIGH: Cache LRU eviction is unreachable in the planned `core.verify()` facade.**
 
-2. **Rendered-project helpers may not exist: PARTIALLY RESOLVED**
+   Evidence: Plan 06 builds and returns the report at `02-06-PLAN.md:159-160`, then says to run `cache.evict_if_needed(...)` after the return at `02-06-PLAN.md:161`. That eviction call can never execute. This breaks the Phase 2 cache cap / LRU requirement and contradicts Plan 03’s cache-size guarantee.
 
-   Resolution: `02-01-PLAN.md` adds `tests/_helpers.py` and `tests/conftest.py`
-   with `render_scratch_project`, `install_scratch_harness`,
-   `render_and_install`. Later plans consume these helpers.
+   Required fix: compute `report = VerifyReport.from_checks(...)`, call `cache.evict_if_needed(...)`, then `return report`.
 
-   Remaining gap: Plan 01 says to add `copier` to verify-kit's own dev
-   dependencies "if absent," but the owning `pyproject.toml` is not listed in
-   `files_modified`. Test files `tests/test_phase2_helpers_smoke.py`,
-   `tests/test_phase2_models.py`, etc., are not listed in Plan 01 frontmatter.
-   The helper infrastructure is planned, but the execution manifest is
-   incomplete.
+**Medium / Low Concerns**
 
-3. **`verify --quick` hard-requires `just`: FULLY RESOLVED**
+- `02-07-PLAN.md:27` still has a stale must-have saying the smoke test runs `uv pip install -e . && verify-kit verify --quick` in a copy of `fake_project`, although the action body later corrects this at `02-07-PLAN.md:130-138`. Not a HIGH because the actionable section is corrected, but it should be cleaned up.
+- Plan 04 still has stale “gated on pnpm” wording in metadata: `02-04-PLAN.md:20`, `02-04-PLAN.md:27`, `02-04-PLAN.md:45`. The implementation text resolves local biome correctly, but these stale lines create ambiguity.
 
-   Evidence: `02-04-PLAN.md` registers `just-list.renders` with
-   `tool="just", skip_if_unavailable=True`; check returns `skip` with a hint
-   on `FileNotFoundError`. Plan 07 documents the Makefile shim and
-   non-failure behavior.
+**Convergence Verdict**
 
-4. **`<500ms` cache-hit test measured via `uv run` subprocess: FULLY RESOLVED (minor wording caveat)**
-
-   Evidence: `02-07-PLAN.md` splits the budget:
-   - hard gate: `report.summary.duration_ms < 500`
-   - soft gate: subprocess wall time `<1500ms`, strict only when
-     `VERIFY_KIT_STRICT_WALL_CLOCK=1`
-
-   Caveat: must-haves still say "2nd run completes in <500ms" which could be
-   misread as wall-clock. Tighten must-have wording.
-
-5. **Biome via `pnpm dlx` violates offline-first UX: PARTIALLY RESOLVED**
-
-   Resolution: Plan 04 task action removes `pnpm dlx` and resolves Biome via
-   `node_modules/.bin/biome` → `shutil.which("biome")` → skip.
-
-   Remaining issue: Plan 04's threat model is stale — still references
-   "pnpm dlx downloads from npm registry," `T-02-13` "Supply chain via
-   pnpm dlx," and "README to call out that biome runs via pnpm dlx." This
-   contradicts the implementation instructions.
-
-### New Concerns
-
-- **HIGH: Generated golden test runs `verify-kit` from a non-harness fake project.**
-
-  In `02-07-PLAN.md`, `template/tests/golden/test_json_output.py.jinja2`
-  runs `verify-kit verify --quick --format=json` in `tmp_project` copied
-  from `tests/fixtures/fake_project`. That fixture's `pyproject.toml` only
-  declares `name = "fake-fixture-project"` — no `harness/`,
-  `[project.scripts] verify-kit`, or deps. The smoke test was corrected but
-  the golden test still appears broken.
-
-- **HIGH: `cwd` is passed through runner/cache but checks execute relative to process CWD.**
-
-  `run_check(spec, cwd=...)` hashes inputs using `cwd` but calls `spec.fn()`
-  without `cwd`. Check functions use relative paths and `subprocess.run(...)`
-  without `cwd=cwd`. `core.verify(cwd=some_path)` can hash one project and
-  execute checks against another. CLI works because process CWD is the
-  project, but the public API and tests are inconsistent.
-
-- **MEDIUM: SARIF still ignores new file/line/column fields.**
-
-  Plan 01 adds `ErrorEnvelope.file/line/column/snippet` and Plan 04 says
-  Ruff/Biome populate them, but Plan 05's SARIF emitter still emits
-  `"artifactLocation": {"uri": "."}`. Clickable Problems-panel goal
-  remains only partially served.
-
-- **MEDIUM: Config plan drifts from locked context example.**
-
-  Context shows `[tool.verify-kit.checks.lint.ruff]`. Plan 03 now requires
-  `[tool.verify-kit.checks."lint.ruff"]`. If intentional, update
-  `02-CONTEXT.md` or mark it as a deliberate correction.
-
-- **MEDIUM: Truth/action contradictions remain.**
-
-  - Plan 05 behavior says `otlp.emit` flushes via `shutdown()`; action says
-    use `force_flush()`.
-  - Plan 06 must-have says `describe` uses `CheckSpec` / `TypeAdapter`;
-    action correctly uses `CheckCatalogEntry`.
-  - Plan 05 behavior says CI uses `force_terminal=False`; action says
-    `force_terminal=True` with `no_color=True`.
-
-- **LOW: Plan 01 helper default answers are underspecified.**
-
-  `_DEFAULT_ANSWERS` should mirror Phase-1 `copier.yml`, then introspect and
-  fill missing defaults with `_`. Vague enough to produce brittle Copier
-  helper behavior. Prefer reading actual question names and only supplying
-  known answers.
-
-### Suggestions
-
-- Fix `template/tests/golden/test_json_output.py.jinja2` to run from the
-  rendered scaffold root, or copy the full harness host into `tmp_path` as
-  the smoke test does.
-- Make checks cwd-aware. Pass `cwd` into check functions or wrap `spec.fn()`
-  in a `chdir(cwd)` context. Pass `cwd=cwd` to every `subprocess.run`.
-- Update SARIF emitter to use `ErrorEnvelope.file`, `line`, `column` when
-  present; keep `"."` only as fallback.
-- Remove all stale `pnpm dlx` references from Plan 04's threat model.
-- Align contradictory must-have/action text around `force_flush`,
-  `CheckCatalogEntry`, and CI console behavior.
-- Add root `pyproject.toml` to Plan 01 `files_modified` if it may add
-  `copier` to verify-kit's own dev dependencies. List new
-  `tests/test_phase2_*.py` files in Plan 01 frontmatter.
-
-### Risk Assessment
-
-**MEDIUM.** The original HIGH concerns are mostly addressed and phase
-architecture is sound. Remaining risk is execution ambiguity: a broken
-generated golden test, cwd mismatch between cache and checks, stale Biome
-threat-model text, and a few contradictory instructions. These are fixable
-before execution without changing the core design.
+**NOT CONVERGED**: 1 cycle-2 HIGH remains partially resolved, and 1 new HIGH was introduced.
 
 ---
 
 ## Consensus Summary
 
-Single reviewer this cycle (codex), so "consensus" reflects codex's
-synthesis against the cycle-1 baseline.
+Only one reviewer (Codex) was invoked this cycle, so no consensus
+synthesis applies. The verdict below is the Codex verdict.
 
-### Cycle-1 → Cycle-2 HIGH resolution
+### Convergence Status
 
-| # | Cycle-1 HIGH | Cycle-2 status |
-|---|---|---|
-| 1 | Plan 04 missing `02-03` dependency | FULLY RESOLVED |
-| 2 | Rendered-project helpers may not exist | PARTIALLY RESOLVED |
-| 3 | `verify --quick` hard-requires `just` | FULLY RESOLVED |
-| 4 | `<500ms` cache-hit test via `uv run` subprocess | FULLY RESOLVED |
-| 5 | Biome via `pnpm dlx` violates offline-first UX | PARTIALLY RESOLVED |
+**NOT CONVERGED.** 2 HIGHs remain:
 
-### Current HIGH Concerns (unresolved, count = 4)
+1. **PARTIALLY RESOLVED — cwd-aware invocation contract:** Plan 04 contains
+   contradictory biome-path instructions (`02-04-PLAN.md:177` uses
+   `Path("node_modules/.bin/biome")` and calls it "Path.cwd() relative",
+   conflicting with the later correction at `02-04-PLAN.md:189`).
+   Additionally, Plan 06 calls `load_config()` without a cwd-relative
+   path (`02-06-PLAN.md:151-152`), so `core.verify(cwd=p)` still has a
+   cwd leak for config loading.
 
-1. **[Carryover #2 — PARTIAL]** Plan 01 execution manifest incomplete:
-   missing `pyproject.toml` and several `tests/test_phase2_*.py` in
-   `files_modified`.
-2. **[Carryover #5 — PARTIAL]** Plan 04 threat model still references
-   `pnpm dlx` despite implementation removing it; executor-visible
-   contradiction.
-3. **[NEW]** Generated golden test
-   `template/tests/golden/test_json_output.py.jinja2` runs `verify-kit`
-   inside `fake_project`, which does not install the harness.
-4. **[NEW]** `cwd` flows into `run_check` for hashing but checks execute
-   against process CWD; public API and tests are inconsistent.
+2. **NEW HIGH — unreachable cache eviction:** Plan 06 places
+   `cache.evict_if_needed(...)` after `return report` at
+   `02-06-PLAN.md:159-161`, making the LRU cap unreachable and
+   contradicting Plan 03's cache-size guarantee. Required fix: build the
+   report, evict, then return.
 
-### Recommendation
+### Recommended Next Step
 
-Run one more replan cycle to address the 4 unresolved HIGHs before
-execution. All four are surgical fixes — no architectural rework needed.
+Because the convergence loop is bounded at 3 cycles, the user should
+choose between:
+
+- accepting the residual HIGHs and filing them as Beads tickets to fix
+  during execution, OR
+- running one more targeted replan via
+  `/gsd:plan-phase 2 --reviews --targeted` focused only on:
+  - `02-04-PLAN.md:177-189` (biome local resolution contradiction)
+  - `02-06-PLAN.md:151-161` (cwd-aware `load_config` + reorder
+    `evict_if_needed` before `return`)
+
+---
+
+## Cycle 4 — Verification Re-Review (Codex, post manual fix)
+
+**Date:** 2026-05-18
+**Reviewers:** codex
+**Trigger:** Manual fixes applied to the two HIGHs remaining after cycle 3 (cwd contract leak + unreachable LRU eviction). Verification re-review requested via `/gsd:review --phase 2 --codex`.
+
+### Codex Verdict
+
+**HIGH #1 (cwd contract leak) — RESOLVED**
+
+Evidence:
+- `02-04-PLAN.md:177`: `local_biome = cwd / "node_modules" / ".bin" / "biome"`
+- `02-04-PLAN.md:180`: subprocess invoked with `cwd=cwd`
+- `02-04-PLAN.md:189`: contract reaffirmed — every `subprocess.run(...)` call (ruff, biome, format) passes `cwd=cwd`
+- `02-06-PLAN.md:152`: `config = load_config(cwd / "pyproject.toml")` — explicit cwd-rooted path
+
+Both leak sites (Plan 04 biome resolution and Plan 06 config loading) are addressed.
+
+**HIGH #2 (unreachable LRU eviction) — RESOLVED**
+
+Evidence (`02-06-PLAN.md:160-162`):
+- L160: `report = VerifyReport.from_checks(results, total_duration_ms=total_ms)`
+- L161: `cache.evict_if_needed(config.cache.max_size_mb * 1_000_000)` (before return)
+- L162: `return report`
+
+Eviction is now sequenced before `return report`, so it is reachable.
+
+**Verify subcase (f) assertion check — PASS**
+
+`02-06-PLAN.md:172` asserts spy/mock on `CacheStore.evict_if_needed`, `call_count==1`, AND that the call frame is inside `verify()` (not post-return). Real structural check, not just text.
+
+**Verify subcase (g) assertion check — PASS**
+
+`02-06-PLAN.md:172` requires a divergent `pyproject.toml` in `tmp_path` and asserts the parsed `[tool.verify-kit]` reflects the tmp_path config — concrete behavioral assertion, not text-only.
+
+**New HIGHs Introduced**
+
+None.
+
+Minor (non-HIGH) note: the ruff subprocess bullets show abbreviated examples without an inline `cwd=cwd`, but the task's contract section explicitly requires every ruff/biome/format subprocess to pass `cwd=cwd`. Not a HIGH because the contract is unambiguous.
+
+### Convergence Verdict
+
+**CONVERGED.** All HIGHs from cycles 1–3 are resolved. No new HIGHs introduced. Phase 2 is ready for execution.
+
+### Recommended Next Step
+
+Proceed to `/gsd:execute-phase 2`. The minor "abbreviated subprocess example" nit can be tracked as a Beads issue if desired, but does not block execution.
