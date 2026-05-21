@@ -1,0 +1,66 @@
+# nightly-eval.yml — weekly cost-capped LLM eval for {{ project_name }}.
+#
+# Cost enforcement is LOAD-BEARING in the pre-flight step below (D-11). The
+# pre-flight uses a documented upper-bound formula:
+#   estimated_usd = rows * (1000 input toks * $1/Mtok + 500 output toks * $5/Mtok)
+#                 = rows * (1000 * 1e-6 + 500 * 5e-6)
+#                 = rows * 0.0035
+# Assumptions: claude-haiku-4-5 priced at $1/Mtok input + $5/Mtok output, and a
+# worst-case of 1000 input + 500 output tokens per row. Update both constants
+# when EVAL_MODEL changes or provider pricing shifts.
+
+name: nightly-eval
+
+on:
+  schedule:
+    - cron: "0 4 * * 0"   # Sunday 04:00 UTC (D-09)
+  workflow_dispatch: {}
+
+jobs:
+  eval:
+    runs-on: ubuntu-latest
+    env:
+      ANTHROPIC_API_KEY: ${{ '{{ secrets.ANTHROPIC_API_KEY }}' }}
+      LANGFUSE_PUBLIC_KEY: ${{ '{{ secrets.LANGFUSE_PUBLIC_KEY }}' }}
+      LANGFUSE_SECRET_KEY: ${{ '{{ secrets.LANGFUSE_SECRET_KEY }}' }}
+      EVAL_MODEL: "claude-haiku-4-5"
+      EVAL_BUDGET_USD: "1.00"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Pre-flight cost estimator (load-bearing — refuses to run if estimated > EVAL_BUDGET_USD)
+        run: |
+          set -euo pipefail
+          if [ -z "${EVAL_BUDGET_USD:-}" ]; then
+            echo "::error::EVAL_BUDGET_USD must be set"
+            exit 1
+          fi
+          # Count rows in the golden dataset
+          rows=$(grep -c . eval/datasets/golden.jsonl)
+          echo "Eval rows: $rows"
+          # Upper-bound estimate: 1000 input + 500 output tokens per row at
+          # claude-haiku-4-5 pricing ($1/Mtok input + $5/Mtok output).
+          # Formula: estimated_usd = rows * 0.0035
+          estimated_usd=$(python -c "print(f'{${rows} * (1000 * 1e-6 + 500 * 5e-6):.4f}')")
+          echo "Estimated cost: \$$estimated_usd USD (budget: \$$EVAL_BUDGET_USD USD)"
+          # Compare against budget. Bash float comparison via python.
+          over_budget=$(python -c "print('yes' if float('$estimated_usd') > float('$EVAL_BUDGET_USD') else 'no')")
+          if [ "$over_budget" = "yes" ]; then
+            echo "::error::Estimated cost \$$estimated_usd exceeds EVAL_BUDGET_USD=\$$EVAL_BUDGET_USD — refusing to run"
+            exit 1
+          fi
+
+      - uses: pnpm/action-setup@v3
+        with:
+          version: 9
+
+      - name: Prepare output directory
+        run: mkdir -p .verify
+
+      - name: Run promptfoo eval
+        run: pnpm dlx promptfoo eval -c eval/promptfoo.config.yaml -o .verify/eval-results.json --max-concurrency 2
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: eval-results
+          path: .verify/eval-results.json
