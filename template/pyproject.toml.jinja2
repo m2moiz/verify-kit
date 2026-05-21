@@ -46,6 +46,14 @@ dependencies = [
     "asyncpg>=0.29",
     "alembic>=1.13",
 {% endif %}
+{% if has_backend and has_logfire %}
+    # Logfire opt-in (Plan 04-06) — auto-traces FastAPI + httpx + LLM SDKs
+    "logfire>=0.50",
+{% endif %}
+{% if has_backend and has_fastapi_mcp %}
+    # FastAPI-MCP opt-in (Plan 04-06) — mounts all routes as MCP tools
+    "fastapi-mcp>=0.3",
+{% endif %}
 ]
 
 [project.optional-dependencies]
