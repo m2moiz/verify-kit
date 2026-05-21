@@ -1,0 +1,68 @@
+"""HARN-06: Ralph loop wrapper works inside the FastAPI scaffold.
+
+This test does NOT spawn the real Claude executor (that would require API keys).
+It exercises harness.ralph.run with a stub executor that simulates a typical
+two-iteration "verify fails, then passes" loop, and asserts the result shape
+matches the canonical contract published by harness/ralph.py.
+
+Cross-plan contract (REVIEW-CHECKLIST §3): the result shape lives in harness/ralph.py
+module docstring. This test asserts every documented field by name.
+
+The injectable test hook is ``_spawn`` (not ``executor``) — ``executor`` is a str
+(the command name, e.g. "claude"). The ``_spawn`` callable receives
+``(cmd: list[str], cwd: Path)`` and returns ``{"done": bool, "cost_usd": float}``.
+See harness/ralph.py _default_executor for the contract (REVIEW-CHECKLIST §3).
+"""
+from __future__ import annotations
+from pathlib import Path
+import pytest
+
+from harness import ralph
+
+
+def test_ralph_run_returns_canonical_shape(tmp_path: Path):
+    """Stub executor: first call signals continue; second call signals done.
+
+    The _spawn callable contract (per harness/ralph.py _default_executor):
+      returns {"done": bool, "cost_usd": float}
+    NOT {"status": ...} — status is the ralph.run OUTPUT shape, not input.
+    """
+    calls = []
+
+    def stub_spawn(cmd: list[str], cwd: Path) -> dict:
+        calls.append((cmd, cwd))
+        if len(calls) == 1:
+            return {"done": False, "cost_usd": 0.01}
+        return {"done": True, "cost_usd": 0.01}
+
+    result = ralph.run(
+        cwd=tmp_path,
+        prompt="just verify",
+        max_iters=5,
+        cost_cap_usd=1.0,
+        _spawn=stub_spawn,
+    )
+    # Every field listed in harness/ralph.py module docstring MUST be present.
+    assert set(result.keys()) >= {"status", "iters", "cost_usd", "output_path"}
+    assert result["status"] == "done"
+    assert result["iters"] == 2
+    assert result["cost_usd"] == pytest.approx(0.02, abs=1e-6)
+    # output_path is str(cwd / ".verify" / "ralph.json") — REVIEW-CHECKLIST §1: cwd-rooted.
+    assert result["output_path"] == str(tmp_path / ".verify" / "ralph.json")
+    # The _spawn callable was called with cwd=tmp_path — never process cwd.
+    assert all(c[1] == tmp_path for c in calls)
+
+
+def test_ralph_run_emits_state_file_at_cwd_relative_path(tmp_path: Path):
+    """The .verify/ralph.json state file is written under the explicit cwd argument."""
+    def stub_spawn(cmd: list[str], cwd: Path) -> dict:
+        return {"done": True, "cost_usd": 0.0}
+
+    ralph.run(
+        cwd=tmp_path,
+        prompt="just verify",
+        max_iters=1,
+        cost_cap_usd=1.0,
+        _spawn=stub_spawn,
+    )
+    assert (tmp_path / ".verify" / "ralph.json").exists()

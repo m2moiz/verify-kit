@@ -1,0 +1,39 @@
+from __future__ import annotations
+import json
+import subprocess
+from pathlib import Path
+import pytest
+
+from app.models import EchoResponse
+
+
+def test_cli_echo_outputs_valid_echo_response(tmp_path: Path):
+    """API-09 contract: CLI output deserializes back into the shared Pydantic model."""
+    # Invoke through `uv run` to exercise the installed console script.
+    # REVIEW-CHECKLIST §1: explicit cwd=scratch_root; the CLI does no path-relative work,
+    # but the test process must not leak its own cwd into the subprocess.
+    scratch_root = Path(__file__).resolve().parent.parent.parent
+    r = subprocess.run(
+        ["uv", "run", "app-cli", "echo", "--message", "hello"],
+        cwd=scratch_root,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert r.returncode == 0, f"stderr={r.stderr}"
+    parsed = EchoResponse(**json.loads(r.stdout.strip()))
+    # The cross-surface contract: same model the FastAPI app uses.
+    assert parsed.message == "hello"
+
+
+def test_cli_help_lists_echo():
+    scratch_root = Path(__file__).resolve().parent.parent.parent
+    r = subprocess.run(
+        ["uv", "run", "app-cli", "--help"],
+        cwd=scratch_root,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert r.returncode == 0
+    assert "echo" in r.stdout
