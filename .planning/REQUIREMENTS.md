@@ -67,7 +67,7 @@ Every requirement implementation must answer all six rows. If any cell is blank,
 - [x] **HARN-03**: `harness/debug_endpoints.py` exposes a FastAPI router for `/__debug/state` and `/__debug/events`, env-gated to `ENV=dev` (404 in prod) — only generated when `has_backend=true`
 - [ ] **HARN-04**: `harness/trace_id.py` provides ASGI middleware threading a request_id through every request, log, and provider call (via `asgi-correlation-id`)
 - [ ] **HARN-05**: `harness/logging.py` configures structlog with Rich pretty-renderer when TTY, JSON renderer when piped or `LOG_FORMAT=json`; honors `LOG_LEVEL`, `NO_COLOR`, `CI` env vars
-- [ ] **HARN-06**: `harness/ralph.py` wraps the Ralph loop pattern: iterate while verify fails, hard cap iterations (default 5), track cumulative cost, surface "stuck — escalating to human" state
+- [x] **HARN-06**: `harness/ralph.py` wraps the Ralph loop pattern: iterate while verify fails, hard cap iterations (default 5), track cumulative cost, surface "stuck — escalating to human" state
 - [ ] **HARN-07**: Generated project has `tests/` scaffold: `smoke/`, `golden/` (snapshot fixtures), `properties/` (one Hypothesis example), `fixtures/`
 - [ ] **HARN-08**: File-hash-keyed cache at `.verify/cache.db` (SQLite); `just verify` skips checks whose inputs haven't changed; `--no-cache` bypass
 
@@ -145,7 +145,7 @@ Every requirement implementation must answer all six rows. If any cell is blank,
 - [x] **API-06**: Ships `structlog` ASGI middleware emitting JSON access logs keyed by `request_id` (Rich pretty in TTY, JSON when piped — same contract as HARN-05)
 - [x] **API-07**: Ships `sse-starlette` for streaming responses (default pattern for AI/LLM routes)
 - [x] **API-08**: Ships `secure` middleware setting OWASP-recommended response headers (CSP, X-Frame-Options, Referrer-Policy, Permissions-Policy) with prod/dev profile
-- [ ] **API-09**: Ships `typer` CLI sibling at `app/cli.py` sharing Pydantic models with the FastAPI app (one schema, two interfaces)
+- [x] **API-09**: Ships `typer` CLI sibling at `app/cli.py` sharing Pydantic models with the FastAPI app (one schema, two interfaces)
 - [x] **API-10**: Ships `pyinstrument` middleware enabling `?profile=true` query param → returns rendered flamegraph HTML (dev-only, env-gated)
 - [x] **API-11**: Ships `anyio` + `httpx` + `asgi-lifespan` canonical async test setup; example `tests/test_app.py` exercises lifespan + one route
 - [ ] **API-12**: Ships `schemathesis` wired into `just verify` — fuzzes the live OpenAPI schema for 5xx, schema violations, auth bypasses
@@ -241,7 +241,7 @@ Mapped to roadmap phases on 2026-05-18. 95/95 v0.1 requirements covered, no orph
 | HARN-03 | Phase 4 | Complete |
 | HARN-04 | Phase 2 | Pending |
 | HARN-05 | Phase 2 | Pending |
-| HARN-06 | Phase 4 | Pending |
+| HARN-06 | Phase 4 | Complete |
 | HARN-07 | Phase 2 | Pending |
 | HARN-08 | Phase 2 | Pending |
 | MCP-01 | Phase 3 | Pending |
@@ -295,7 +295,7 @@ Mapped to roadmap phases on 2026-05-18. 95/95 v0.1 requirements covered, no orph
 | API-06 | Phase 4 | Complete |
 | API-07 | Phase 4 | Complete |
 | API-08 | Phase 4 | Complete |
-| API-09 | Phase 4 | Pending |
+| API-09 | Phase 4 | Complete |
 | API-10 | Phase 4 | Complete |
 | API-11 | Phase 4 | Complete |
 | API-12 | Phase 4 | Pending |
