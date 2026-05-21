@@ -148,14 +148,14 @@ Every requirement implementation must answer all six rows. If any cell is blank,
 - [x] **API-09**: Ships `typer` CLI sibling at `app/cli.py` sharing Pydantic models with the FastAPI app (one schema, two interfaces)
 - [x] **API-10**: Ships `pyinstrument` middleware enabling `?profile=true` query param → returns rendered flamegraph HTML (dev-only, env-gated)
 - [x] **API-11**: Ships `anyio` + `httpx` + `asgi-lifespan` canonical async test setup; example `tests/test_app.py` exercises lifespan + one route
-- [ ] **API-12**: Ships `schemathesis` wired into `just verify` — fuzzes the live OpenAPI schema for 5xx, schema violations, auth bypasses
+- [x] **API-12**: Ships `schemathesis` wired into `just verify` — fuzzes the live OpenAPI schema for 5xx, schema violations, auth bypasses
 - [ ] **API-13**: Ships `dirty-equals` + `polyfactory` for ergonomic test assertions and fixture factories
 - [ ] **API-14**: Ships `Testcontainers` Postgres fixture (`@pytest.fixture` returning a containerized DB) for integration tests; cached image
 - [x] **API-15**: Opt-in `has_logfire=true` Copier prompt — installs `logfire` (Pydantic-team OTel) which auto-traces every Anthropic/OpenAI/httpx call with token counts; composes with LLM add-on
 - [x] **API-16**: Opt-in `has_fastapi_mcp=true` Copier prompt — installs `fastapi-mcp` and adds 3-line mount turning the FastAPI app into its own MCP server (every route becomes an MCP tool)
 - [x] **API-17**: Generated project ships `Dockerfile` (multi-stage: `uv` build + slim runtime), `docker-compose.yml` (api + postgres + jaeger), and `.dockerignore` — `just docker-up` brings up the full local stack
-- [ ] **API-18**: `just verify` Backend slice runs: schema validation → schemathesis fuzz → smoke (`/healthz`, `/__debug/state`) → integration tests with Testcontainers
-- [ ] **API-19**: README documents the canonical FastAPI layout (`app/{main,api,services,models,settings}.py`, `tests/`, `alembic/`) and explains where to add new routes/services without breaking conventions
+- [x] **API-18**: `just verify` Backend slice runs: schema validation → schemathesis fuzz → smoke (`/healthz`, `/__debug/state`) → integration tests with Testcontainers
+- [x] **API-19**: README documents the canonical FastAPI layout (`app/{main,api,services,models,settings}.py`, `tests/`, `alembic/`) and explains where to add new routes/services without breaking conventions
 
 ### Documentation & Validation (DOC)
 
@@ -298,14 +298,14 @@ Mapped to roadmap phases on 2026-05-18. 95/95 v0.1 requirements covered, no orph
 | API-09 | Phase 4 | Complete |
 | API-10 | Phase 4 | Complete |
 | API-11 | Phase 4 | Complete |
-| API-12 | Phase 4 | Pending |
+| API-12 | Phase 4 | Complete |
 | API-13 | Phase 4 | Pending |
 | API-14 | Phase 4 | Pending |
 | API-15 | Phase 4 | Complete |
 | API-16 | Phase 4 | Complete |
 | API-17 | Phase 4 | Complete |
-| API-18 | Phase 4 | Pending |
-| API-19 | Phase 4 | Pending |
+| API-18 | Phase 4 | Complete |
+| API-19 | Phase 4 | Complete |
 | DOC-01 | Phase 6 | Pending |
 | DOC-02 | Phase 6 | Pending |
 | DOC-03 | Phase 6 | Pending |
