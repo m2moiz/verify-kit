@@ -1,0 +1,34 @@
+# promptfoo.config.yaml — declarative eval gate for {{ project_name }}.
+#
+# Run locally:   just eval
+# Run in CI:     .github/workflows/nightly-eval.yml (Sunday 04:00 UTC)
+#
+# Cost enforcement is layered in TWO places (neither is promptfoo's own
+# --max-cost flag — that is informational only):
+#   1. .github/workflows/nightly-eval.yml runs a real pre-flight estimator
+#      (rows x worst-case per-row tokencost) BEFORE invoking promptfoo and
+#      refuses to start if the estimate exceeds EVAL_BUDGET_USD.
+#   2. `just eval` writes machine-readable results to .verify/eval-results.json
+#      so the verify-kit-eval SKILL.md (.claude/skills/) can consume them.
+#
+# The env.X substitutions below are promptfoo's own env interpolation —
+# the entire YAML body is wrapped in a Copier raw block so neither the
+# {env.EVAL_MODEL} nor the {input} placeholders are consumed by Copier.
+
+{% raw %}
+description: "verify-kit starter eval — replace rows with your own use case"
+
+providers:
+  - id: "anthropic:messages:{{env.EVAL_MODEL}}"
+    config:
+      apiKey: "{{env.ANTHROPIC_API_KEY}}"
+
+prompts:
+  - file://prompts/summarize.txt
+
+tests: file://datasets/golden.jsonl
+
+defaultTest:
+  options:
+    cache: true
+{% endraw %}
