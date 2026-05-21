@@ -1,0 +1,439 @@
+"""harness/llm.py — single source of truth for LLM calls in verify-kit.
+
+This module provides the ``@llm_call`` + ``@cost_budget`` decorator pair and
+the D-03 routing adapter that every LLM call site goes through. Every
+verify-kit-shipped call site (e.g. ``POST /summarize``, eval scaffolding,
+tests) MUST call :func:`call_llm` rather than reaching for
+``pydantic_ai.Agent.run()`` or ``litellm.completion()`` directly — going
+through :func:`call_llm` is what makes the OTel ``gen_ai.*`` span attribute
+contract and the ``USE_CLAUDE_CODE_SDK`` routing switch load-bearing.
+
+LOAD-BEARING DECORATOR ORDERING RULE (Pitfall 3)
+-------------------------------------------------
+
+When stacking ``@cost_budget`` and ``@llm_call`` on the same function, the
+``@cost_budget`` decorator MUST be the OUTER decorator (written above) and
+``@llm_call`` MUST be the INNER decorator (written below). In Python,
+decorators are *applied* bottom-up but *executed* top-down at call time,
+so this ordering guarantees that ``@llm_call`` records the cost into the
+contextvar accumulator BEFORE ``@cost_budget`` reads that same accumulator
+to decide whether to raise :class:`CostBudgetExceeded`. Reversing the
+ordering (``@llm_call`` OUTER + ``@cost_budget`` INNER) means
+``@cost_budget`` checks the accumulator before any cost has been recorded
+for the current call — the budget check becomes a no-op for the very call
+it is supposed to guard.
+
+Canonical usage::
+
+    from harness.llm import cost_budget, llm_call, call_llm
+
+    @cost_budget(usd=0.05, on_exceed="raise")   # OUTER — runs after inner records cost
+    @llm_call(name="summarize")                  # INNER — runs first, records cost + span
+    async def summarize(text: str) -> dict:
+        return await call_llm(f"Summarize: {text}")
+
+Decorator-ordering correctness is forcing-functioned by the behavior test
+``test_decorator_ordering_outer_budget_raises`` in Plan 05-03.
+
+ROUTING (D-01 / D-02 / D-03)
+----------------------------
+
+:func:`_routing_path` implements the D-03 rule precisely:
+
+* Returns ``"claude-agent-sdk"`` when ``USE_CLAUDE_CODE_SDK=1`` is set
+  in the environment, OR when ``ANTHROPIC_API_KEY`` is unset and the
+  ``claude_agent_sdk`` package is importable.
+* Returns ``"litellm"`` otherwise.
+
+The claude-agent-sdk path routes through the operator's local Claude Code
+OAuth session (Claude Max subscription quota) — no API key required for
+local development. The litellm path uses ``ANTHROPIC_API_KEY`` for
+production / CI deployments.
+
+Both paths emit identical OTel ``gen_ai.*`` span shapes, with one
+documented asymmetry (Pitfall 5): the claude-agent-sdk path reports
+``verify_kit.cost_usd=0.0`` because the SDK does not expose token-usage
+metadata on its message stream. The real cost lands in the operator's
+Claude Max dashboard rather than in the span attribute. README LLM-12
+documents this trade-off for consumers.
+"""
+from __future__ import annotations
+
+import contextvars
+import os
+from time import monotonic
+from typing import Any, Callable, Literal
+
+from harness.logging import log
+from harness.observability import tracer
+
+
+# ---------------------------------------------------------------------------
+# Cost accumulator + typed exception
+# ---------------------------------------------------------------------------
+
+# Contextvar so async tasks have isolated budgets; copy-on-write semantics
+# mean spawned tasks inherit the parent budget but their own writes do not
+# leak back up to the parent context.
+_cumulative_cost_usd: contextvars.ContextVar[float] = contextvars.ContextVar(
+    "verify_kit_cumulative_cost_usd", default=0.0
+)
+
+
+class CostBudgetExceeded(RuntimeError):
+    """Raised when accumulated LLM cost crosses the ``@cost_budget`` ceiling.
+
+    Carries the three pieces of information a caller needs to decide how
+    to react: the budget ceiling that was crossed, the cumulative cost at
+    the moment of the check, and the name of the function whose call
+    pushed the accumulator over the line.
+    """
+
+    def __init__(
+        self, budget_usd: float, accumulated_usd: float, call_name: str
+    ) -> None:
+        self.budget_usd = budget_usd
+        self.accumulated_usd = accumulated_usd
+        self.call_name = call_name
+        super().__init__(
+            f"cost budget exceeded in {call_name!r}: "
+            f"accumulated ${accumulated_usd:.6f} > budget ${budget_usd:.6f}"
+        )
+
+
+def reset_cost_accumulator() -> None:
+    """Reset the per-context cost accumulator to ``0.0``.
+
+    Test helper. Tests that exercise ``@cost_budget`` should call this in a
+    fixture so accumulator state from prior tests does not leak in.
+    """
+    _cumulative_cost_usd.set(0.0)
+
+
+# ---------------------------------------------------------------------------
+# Routing
+# ---------------------------------------------------------------------------
+
+
+def _routing_path() -> Literal["claude-agent-sdk", "litellm"]:
+    """Decide which adapter ``call_llm`` will dispatch to (D-03).
+
+    Returns ``"claude-agent-sdk"`` when ``USE_CLAUDE_CODE_SDK=1`` is set, OR
+    when ``ANTHROPIC_API_KEY`` is unset and the ``claude_agent_sdk`` package
+    is importable. Returns ``"litellm"`` otherwise. The decision is recomputed
+    on every call — env-var changes during a process lifetime take effect
+    immediately, which keeps tests reliable.
+    """
+    if os.environ.get("USE_CLAUDE_CODE_SDK") == "1":
+        return "claude-agent-sdk"
+    if not os.environ.get("ANTHROPIC_API_KEY"):
+        try:
+            import claude_agent_sdk  # noqa: F401 — importability probe only
+        except ImportError:
+            return "litellm"
+        return "claude-agent-sdk"
+    return "litellm"
+
+
+# ---------------------------------------------------------------------------
+# Adapters
+# ---------------------------------------------------------------------------
+
+
+async def call_via_claude_agent_sdk(
+    prompt: str, *, model: str | None = None
+) -> dict[str, Any]:
+    """D-01/D-03 development-path adapter via Claude Code OAuth session.
+
+    Returns a dict whose shape matches the litellm adapter's so the decorator
+    can extract span attributes without branching on routing path. Pitfall 5:
+    the SDK does NOT expose token-usage on the message stream — every span
+    on this path therefore reports ``input_tokens=0`` / ``output_tokens=0``
+    / ``cost_usd=0.0``. The real cost is reported on the operator's Claude
+    Max subscription dashboard, NOT in the span. README LLM-12 documents
+    this asymmetry for consumers.
+    """
+    from claude_agent_sdk import (
+        AssistantMessage,
+        ClaudeAgentOptions,
+        TextBlock,
+        query,
+    )
+
+    options = ClaudeAgentOptions()
+    parts: list[str] = []
+    async for message in query(prompt=prompt, options=options):
+        if isinstance(message, AssistantMessage):
+            for block in message.content:
+                if isinstance(block, TextBlock):
+                    parts.append(block.text)
+    content = "".join(parts)
+    return {
+        "content": content,
+        # Pitfall 5: SDK does not expose usage; report zero rather than omit
+        # the keys so the decorator's attribute-extraction logic stays
+        # branchless across routing paths.
+        "usage": {"input_tokens": 0, "output_tokens": 0},
+        "model": "claude-agent-sdk",
+        "response_model": "claude-agent-sdk",
+        "provider": "claude-code-sdk",
+        "cost_usd": 0.0,
+        "retry_count": 0,
+    }
+
+
+async def call_via_litellm(
+    prompt: str, *, model: str | None = None
+) -> dict[str, Any]:
+    """D-02/D-03 production-path adapter via litellm.
+
+    Uses ``litellm.acompletion`` for the provider call and computes ``cost_usd``
+    from the response usage block via ``tokencost``. Returns the same dict
+    shape as :func:`call_via_claude_agent_sdk` so the decorator's
+    attribute-extraction logic is branchless.
+
+    ``response_model`` echoes the model the provider actually used (read from
+    ``response.model`` on the litellm completion object); ``retry_count``
+    reads from ``response._hidden_params["attempted_retries"]`` when litellm
+    exposes it, otherwise defaults to 0.
+    """
+    from litellm import acompletion
+
+    requested_model = model or os.environ.get(
+        "LLM_DEFAULT_MODEL", "anthropic/claude-haiku-4-5"
+    )
+
+    response = await acompletion(
+        model=requested_model,
+        messages=[{"role": "user", "content": prompt}],
+    )
+
+    # Extract content + usage from the litellm response. The choices[0]
+    # path is the documented surface and is stable across providers.
+    content = ""
+    try:
+        content = response.choices[0].message.content or ""
+    except (AttributeError, IndexError, KeyError):
+        content = ""
+
+    usage_obj = getattr(response, "usage", None) or {}
+    input_tokens = int(
+        getattr(usage_obj, "prompt_tokens", None)
+        or (usage_obj.get("prompt_tokens", 0) if isinstance(usage_obj, dict) else 0)
+        or 0
+    )
+    output_tokens = int(
+        getattr(usage_obj, "completion_tokens", None)
+        or (
+            usage_obj.get("completion_tokens", 0)
+            if isinstance(usage_obj, dict)
+            else 0
+        )
+        or 0
+    )
+
+    cost_usd = 0.0
+    try:
+        from tokencost import (
+            calculate_completion_cost,
+            calculate_prompt_cost,
+        )
+
+        prompt_cost = calculate_prompt_cost(prompt, requested_model)
+        completion_cost = calculate_completion_cost(content, requested_model)
+        cost_usd = float(prompt_cost) + float(completion_cost)
+    except Exception:
+        # tokencost may not have pricing for every model — default to 0.0
+        # rather than fail the call. Span attribute still carries the value.
+        cost_usd = 0.0
+
+    response_model = getattr(response, "model", None) or requested_model
+    hidden = getattr(response, "_hidden_params", None) or {}
+    retry_count = 0
+    if isinstance(hidden, dict):
+        retry_count = int(hidden.get("attempted_retries", 0) or 0)
+
+    return {
+        "content": content,
+        "usage": {
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+        },
+        "model": requested_model,
+        "response_model": response_model,
+        "provider": "litellm",
+        "cost_usd": cost_usd,
+        "retry_count": retry_count,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Decorator: @llm_call
+# ---------------------------------------------------------------------------
+
+
+def llm_call(*, name: str) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+    """Wrap an async function so every call emits an OTel ``llm.<name>`` span.
+
+    The span carries the FULL set of attributes required by phase 5 success
+    criterion #2: ``gen_ai.operation.name``, ``gen_ai.request.model``,
+    ``gen_ai.response.model``, ``gen_ai.usage.input_tokens``,
+    ``gen_ai.usage.output_tokens``, ``verify_kit.cost_usd``,
+    ``verify_kit.latency_ms``, ``verify_kit.routing_path``,
+    ``verify_kit.retry_count``. Every attribute is set unconditionally
+    (with 0 / empty-string fallback) so consumers can always assume the
+    full schema is present.
+
+    Decorator ordering: when stacking with ``@cost_budget``, ``@llm_call``
+    MUST be the INNER decorator. See module docstring for full rationale.
+    """
+
+    def _decorator(fn: Callable[..., Any]) -> Callable[..., Any]:
+        async def _inner(*args: Any, **kwargs: Any) -> Any:
+            start = monotonic()
+            routing_path = _routing_path()
+            with tracer.start_as_current_span(f"llm.{name}") as span:
+                span.set_attribute("gen_ai.operation.name", name)
+                span.set_attribute("verify_kit.routing_path", routing_path)
+                try:
+                    result = await fn(*args, **kwargs)
+                except Exception as exc:
+                    span.record_exception(exc)
+                    raise
+                # Extract span attributes from the adapter result dict. Every
+                # attribute is set unconditionally — missing keys fall back
+                # to 0 / empty string rather than being omitted.
+                cost_usd = 0.0
+                req_model = ""
+                resp_model = ""
+                input_tokens = 0
+                output_tokens = 0
+                retry_count = 0
+                if isinstance(result, dict):
+                    try:
+                        cost_usd = float(result.get("cost_usd", 0.0) or 0.0)
+                    except (TypeError, ValueError):
+                        cost_usd = 0.0
+                    req_model = str(result.get("model", "") or "")
+                    resp_model = str(
+                        result.get("response_model", req_model) or req_model
+                    )
+                    usage = result.get("usage") or {}
+                    if isinstance(usage, dict):
+                        try:
+                            input_tokens = int(usage.get("input_tokens", 0) or 0)
+                        except (TypeError, ValueError):
+                            input_tokens = 0
+                        try:
+                            output_tokens = int(usage.get("output_tokens", 0) or 0)
+                        except (TypeError, ValueError):
+                            output_tokens = 0
+                    try:
+                        retry_count = int(result.get("retry_count", 0) or 0)
+                    except (TypeError, ValueError):
+                        retry_count = 0
+                latency_ms = int((monotonic() - start) * 1000)
+                span.set_attribute("gen_ai.request.model", req_model)
+                span.set_attribute("gen_ai.response.model", resp_model)
+                span.set_attribute("gen_ai.usage.input_tokens", input_tokens)
+                span.set_attribute("gen_ai.usage.output_tokens", output_tokens)
+                span.set_attribute("verify_kit.cost_usd", cost_usd)
+                span.set_attribute("verify_kit.latency_ms", latency_ms)
+                span.set_attribute("verify_kit.retry_count", retry_count)
+                _cumulative_cost_usd.set(_cumulative_cost_usd.get() + cost_usd)
+                log.info(
+                    "llm_call.complete",
+                    name=name,
+                    cost_usd=cost_usd,
+                    latency_ms=latency_ms,
+                    input_tokens=input_tokens,
+                    output_tokens=output_tokens,
+                    retry_count=retry_count,
+                    routing_path=routing_path,
+                )
+                return result
+
+        _inner.__name__ = fn.__name__
+        _inner.__doc__ = fn.__doc__
+        _inner.__wrapped__ = fn  # type: ignore[attr-defined]
+        return _inner
+
+    return _decorator
+
+
+# ---------------------------------------------------------------------------
+# Decorator: @cost_budget
+# ---------------------------------------------------------------------------
+
+
+def cost_budget(
+    *, usd: float, on_exceed: str = "raise"
+) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+    """Raise :class:`CostBudgetExceeded` when cumulative cost > ``usd``.
+
+    LOAD-BEARING DECORATOR ORDERING RULE: ``@cost_budget`` MUST be the OUTER
+    decorator (written above ``@llm_call``). Reasoning: ``@cost_budget``
+    reads the cumulative-cost contextvar AFTER the wrapped function returns,
+    and ``@llm_call`` records the cost into that contextvar before returning.
+    So OUTER ``@cost_budget`` + INNER ``@llm_call`` means: inner records
+    cost, outer checks budget, raises if over. Reversing the order makes the
+    budget check fire before any cost has been recorded for the current call
+    — a no-op guard.
+
+    ``on_exceed`` reserved for future modes (e.g. ``"warn"``); only
+    ``"raise"`` is supported in v0.1.
+    """
+
+    def _decorator(fn: Callable[..., Any]) -> Callable[..., Any]:
+        async def _inner(*args: Any, **kwargs: Any) -> Any:
+            result = await fn(*args, **kwargs)
+            accumulated = _cumulative_cost_usd.get()
+            if accumulated > usd and on_exceed == "raise":
+                raise CostBudgetExceeded(usd, accumulated, fn.__name__)
+            return result
+
+        _inner.__name__ = fn.__name__
+        _inner.__doc__ = fn.__doc__
+        _inner.__wrapped__ = fn  # type: ignore[attr-defined]
+        return _inner
+
+    return _decorator
+
+
+# ---------------------------------------------------------------------------
+# Public entry point — every verify-kit call site uses this
+# ---------------------------------------------------------------------------
+
+
+@llm_call(name="call_llm")
+async def call_llm(prompt: str, *, model: str | None = None):
+    """Public LLM entry point. Dispatches via :func:`_routing_path` (D-03 / LLM-03).
+
+    Every verify-kit-shipped call site (``POST /summarize`` from 05-05,
+    eval scaffolding, tests) goes through this function rather than
+    importing ``pydantic_ai.Agent`` or ``litellm.acompletion`` directly.
+    Routing the call through here is what makes the OTel ``gen_ai.*``
+    contract and the ``USE_CLAUDE_CODE_SDK`` switch load-bearing — bypassing
+    this function bypasses both.
+
+    The inner adapter functions (:func:`call_via_claude_agent_sdk` and
+    :func:`call_via_litellm`) are NOT individually decorated with
+    ``@llm_call`` — adding a second decorator would double-emit spans for
+    every call. The dispatcher gets the single ``llm.call_llm`` span; the
+    adapter is just the body the span wraps.
+    """
+    if _routing_path() == "claude-agent-sdk":
+        return await call_via_claude_agent_sdk(prompt, model=model)
+    return await call_via_litellm(prompt, model=model)
+
+
+__all__ = [
+    "call_llm",
+    "llm_call",
+    "cost_budget",
+    "CostBudgetExceeded",
+    "reset_cost_accumulator",
+    "_routing_path",
+    "call_via_claude_agent_sdk",
+    "call_via_litellm",
+]
