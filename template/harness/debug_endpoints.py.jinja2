@@ -1,0 +1,43 @@
+"""harness.debug_endpoints — HARN-03 debug router for FastAPI dev environments.
+
+Exposes /__debug/state and /__debug/events routes that read from the .verify/
+directory. The router is built by make_debug_router(cwd) and should only be
+mounted in ENV=dev (see app/main.py create_app for the conditional mount).
+
+NEVER reads Path.cwd() — every disk access is rooted at the cwd parameter
+captured in the closure. See REVIEW-CHECKLIST §1.
+"""
+from __future__ import annotations
+import json
+from pathlib import Path
+from fastapi import APIRouter, HTTPException
+from sse_starlette.sse import EventSourceResponse
+
+
+def make_debug_router(cwd: Path) -> APIRouter:
+    """Build a /__debug router rooted at the explicit cwd argument.
+
+    NEVER reads Path.cwd() — every disk read is rooted at the cwd parameter.
+    Mount only in ENV=dev; production excludes the router so /__debug/* returns 404.
+    """
+    router = APIRouter()
+    state_path = cwd / ".verify" / "state.json"
+    events_path = cwd / ".verify" / "events.jsonl"
+
+    @router.get("/state")
+    async def state() -> dict:
+        if not state_path.exists():
+            raise HTTPException(404, "no state file yet — run `just verify` first")
+        return json.loads(state_path.read_text())
+
+    @router.get("/events")
+    async def events() -> EventSourceResponse:
+        async def gen():
+            if not events_path.exists():
+                yield {"event": "empty", "data": "no events yet"}
+                return
+            for line in events_path.read_text().splitlines():
+                yield {"event": "verify-event", "data": line}
+        return EventSourceResponse(gen())
+
+    return router

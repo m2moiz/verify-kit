@@ -1,0 +1,31 @@
+from __future__ import annotations
+import re
+
+
+UUID4_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$")
+
+
+def test_x_request_id_generated_when_not_provided(client_dev):
+    r = client_dev.get("/healthz")
+    assert "x-request-id" in {k.lower() for k in r.headers}
+    rid = r.headers.get("x-request-id") or r.headers.get("X-Request-ID")
+    assert UUID4_RE.match(rid), f"expected UUID4, got {rid!r}"
+
+
+def test_x_request_id_echoed_when_provided(client_dev):
+    """When the inbound request carries X-Request-ID, the response echoes it verbatim.
+
+    Requires CorrelationIdMiddleware to be configured with `validator=None` (or a
+    permissive validator) — default UUID4 validator silently rejects non-UUID
+    inbound values. See Plan 04-02 T07 middleware config.
+    """
+    r = client_dev.get("/healthz", headers={"X-Request-ID": "my-custom-id"})
+    rid = r.headers.get("x-request-id") or r.headers.get("X-Request-ID")
+    assert rid == "my-custom-id", f"middleware validator may not be permissive — got rid={rid!r}"
+
+
+def test_echo_route_returns_request_id_matching_header(client_dev):
+    r = client_dev.post("/echo", json={"message": "hi"}, headers={"X-Request-ID": "abc-123"})
+    assert r.status_code == 200
+    assert r.json()["request_id"] == "abc-123"
+    assert r.headers.get("x-request-id") == "abc-123" or r.headers.get("X-Request-ID") == "abc-123"

@@ -1,0 +1,146 @@
+from __future__ import annotations
+from contextlib import asynccontextmanager
+from pathlib import Path
+from fastapi import FastAPI, Request
+from fastapi.responses import HTMLResponse
+from asgi_correlation_id import CorrelationIdMiddleware
+import secure
+import structlog
+
+from app.api import router as api_router
+from app.settings import load as load_settings
+from harness.debug_endpoints import make_debug_router
+from harness.logging import configure_logging, log
+from harness.trace_id import set_trace_id, reset_trace_id
+
+
+# Middleware order (outermost -> innermost — what we WANT at request time):
+#   1. secure (OWASP headers — outermost so it wraps every response incl. errors)
+#   2. CorrelationIdMiddleware (set X-Request-ID before any logging happens)
+#   3. structlog ASGI access logger (reads request_id from contextvar)
+#   4. pyinstrument (innermost so it profiles only handler work, not other mw)
+#
+# Starlette/FastAPI semantics (CRITICAL — cycle 3 HIGH C):
+#   `app.add_middleware(X)` and `@app.middleware("http")` BOTH wrap the app such
+#   that the LAST-REGISTERED middleware is the OUTERMOST. This is LIFO. To get
+#   the outer→inner stack listed above, we MUST register in REVERSE order:
+#
+#   register first  -> innermost (pyinstrument)
+#   register second -> structlog_access_log
+#   register third  -> CorrelationIdMiddleware
+#   register last   -> secure (outermost — wraps everything else)
+#
+# If this order is flipped (register secure first, pyinstrument last), then
+# structlog_access_log runs BEFORE CorrelationIdMiddleware sets the contextvar,
+# `correlation_id.get()` is `None`, the response header carries no ID, and the
+# request_id propagation test (T14) fails on the captured-logs assertion.
+# Do not reorder unless you have read Starlette's middleware docs and the T14
+# three-way contract test.
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # CWD is captured at instantiation time — see create_app() below.
+    cwd = app.state.cwd
+    settings = load_settings(cwd)
+    configure_logging()
+    app.state.settings = settings
+    log.info("app.startup", env=settings.ENV)
+    try:
+        yield
+    finally:
+        log.info("app.shutdown")
+
+
+def create_app(cwd: Path | None = None) -> FastAPI:
+    """Build a FastAPI app rooted at the explicit cwd argument.
+
+    REVIEW-CHECKLIST §1: cwd defaults to None and resolves to the directory containing
+    main.py — NEVER to Path.cwd(). Production entry points pass cwd explicitly.
+    """
+    if cwd is None:
+        cwd = Path(__file__).resolve().parent.parent  # scaffold root
+    app = FastAPI(title="app", lifespan=lifespan)
+    app.state.cwd = cwd
+
+    # ── Middleware registration (cycle-3 HIGH C: LIFO semantics) ───────────
+    # Register in REVERSE of the desired outer→inner stack. Starlette wraps
+    # last-registered around all prior ones. See the comment block at the top
+    # of this file for the full reasoning.
+
+    # 1. pyinstrument (?profile=true) — registered FIRST so it ends up INNERMOST.
+    @app.middleware("http")
+    async def profile_middleware(request: Request, call_next):
+        settings = app.state.settings
+        if request.query_params.get("profile") == "true" and settings.ENV == "dev" and settings.PROFILE_ENABLED:
+            from pyinstrument import Profiler
+            with Profiler(async_mode="enabled") as p:
+                await call_next(request)
+            return HTMLResponse(p.output_html())
+        return await call_next(request)
+
+    # 2. Structlog ASGI access-log middleware — registered SECOND so it wraps
+    #    pyinstrument but is wrapped BY CorrelationIdMiddleware. By the time
+    #    this middleware's `dispatch` runs, CorrelationIdMiddleware (registered
+    #    AFTER this one, so OUTER) has already set the contextvar — hence
+    #    `correlation_id.get()` returns the inbound or generated UUID.
+    #    Addresses Codex HIGH #2: without this, the API-05/API-06 contract
+    #    (response header + log line + outbound httpx all share the same
+    #    X-Request-ID) is not actually proven.
+    @app.middleware("http")
+    async def structlog_access_log(request: Request, call_next):
+        from asgi_correlation_id import correlation_id as _cid
+        rid = _cid.get()
+        # Bind to contextvars so every structlog.get_logger() call inside the
+        # request scope automatically includes request_id. set_trace_id from
+        # harness/trace_id.py uses contextvars too — same mechanism.
+        token = set_trace_id(rid) if rid else None
+        try:
+            log.info("request.start", method=request.method, path=request.url.path, request_id=rid)
+            response = await call_next(request)
+            log.info("request.end", status=response.status_code, request_id=rid)
+            return response
+        finally:
+            if token is not None:
+                reset_trace_id(token)
+
+    # 3. CorrelationIdMiddleware — registered THIRD so it wraps structlog
+    #    (it must run BEFORE structlog so the contextvar is populated when
+    #    structlog reads it). Configure with permissive validator + uuid4
+    #    generator so arbitrary inbound IDs (e.g. "my-custom-id" from upstream
+    #    services or client tests) are accepted unchanged. Default
+    #    asgi-correlation-id 4.3 validator is `is_valid_uuid4` which silently
+    #    rejects non-UUID inbound values — Codex HIGH #3.
+    import uuid as _uuid
+    app.add_middleware(
+        CorrelationIdMiddleware,
+        header_name="X-Request-ID",
+        update_request_header=True,
+        generator=lambda: str(_uuid.uuid4()),
+        validator=None,  # accept any inbound value verbatim
+    )
+
+    # 4. secure OWASP headers — registered LAST so it ends up OUTERMOST and
+    #    wraps every response including error responses surfaced by inner
+    #    middleware.
+    secure_headers = secure.Secure.with_default_headers()
+
+    @app.middleware("http")
+    async def add_secure_headers(request: Request, call_next):
+        response = await call_next(request)
+        await secure_headers.set_headers_async(response)
+        return response
+
+    # Routes
+    app.include_router(api_router)
+
+    # HARN-03 debug router — mounted only in dev so prod gets 404
+    settings_for_mount = load_settings(cwd)
+    if settings_for_mount.ENV == "dev":
+        app.include_router(make_debug_router(cwd), prefix="/__debug")
+
+    return app
+
+
+# Module-level instance for `uvicorn app.main:app`
+app = create_app()
