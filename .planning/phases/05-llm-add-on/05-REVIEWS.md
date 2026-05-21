@@ -1,122 +1,73 @@
 ---
 phase: 5
-cycle: 2
+cycle: 3
 reviewers: [codex]
-reviewed_at: 2026-05-21T18:40:42Z
+reviewed_at: 2026-05-21T19:25:00Z
 plans_reviewed:
   - 05-01-PLAN.md
   - 05-02-PLAN.md
   - 05-03-PLAN.md
   - 05-04-PLAN.md
   - 05-05-PLAN.md
+adversarial: true
 ---
 
-# Cross-AI Plan Review — Phase 5 (Cycle 2)
+# Cross-AI Plan Review — Phase 5 (Cycle 3, Adversarial)
 
-This cycle re-reviews commit `bb201fd` which addressed the 8 HIGH concerns from Cycle 1.
+Cycle 3 is the independent semantic re-review required by `rules/08-plan-convergence-workflow.md` after cycle-2 HIGHs were addressed via manual Edit (the planner had no Agent tool). The reviewer was instructed to be adversarial — assume the prior reviewer and the manual editor missed something — and to hunt explicitly for cwd leaks, post-`return` dead code, missing `cwd=` on subprocess calls, cross-plan contract drift, two-guard path-gating violations, D-21 reflection, and every pattern in `.planning/REVIEW-CHECKLIST.md`.
 
-## Codex Review
+Trajectory: cycle 1 (8 HIGHs) → cycle 2 (5 HIGHs) → cycle 3 (2 HIGHs). Still monotone-decreasing.
+
+## Codex Review (Adversarial)
 
 **Summary**
 
-Overall risk remains **HIGH**. Cycle 2 resolves several prior contract mismatches on paper, especially `tokenx-core`, `promptfoo prompts:`, `.verify/eval-results.json`, and no-arg `fix_propose()`. But the current plan still has execution blockers and new contract drift: it references a missing `.env.example` source file, uses unsafe Jinja path shapes for `tests/llm`, omits primary `_exclude` coverage for the new root `.env.example`, and under-specifies the required LLM span attributes.
+Risk level **HIGH**. The cycle-2 HIGHs are mostly addressed on paper, but the VCR cassette lifecycle is still broken: the plan's clean-render skip guard prevents the only cassette refresh command from ever recording, and the credential scrub test scans a different cassette tree than the one used by the LLM tests.
 
-**Strengths**
+**Newly Raised HIGHs (cycle 3)**
 
-- Prior HIGHs #3, #4, #5, and #6 are substantially addressed.
-- 05-02 now introduces a real `call_llm()` routing entry point and makes `/summarize` consume it.
-- 05-04 now has a prompt producer file and a consistent `.verify/eval-results.json` path.
-- 05-05 adds polarity tests intended to force the prior HIGHs, which is the right direction.
+- **HIGH #1 (cycle-3) — `just refresh-cassettes` cannot populate missing cassettes.**
+  05-03 Task 2 requires the `_skip_when_no_cassette` autouse fixture to call `pytest.skip(...)` whenever a `@pytest.mark.vcr`-marked test's cassette is absent ([05-03-PLAN.md:164](/Users/moiz/Documents/code/verify-kit/.planning/phases/05-llm-add-on/05-03-PLAN.md)). 05-04 Task 2 then defines `refresh-cassettes` as `rm -rf tests/llm/cassettes/` followed by `uv run pytest tests/llm/ --record-mode=once` ([05-04-PLAN.md:182](/Users/moiz/Documents/code/verify-kit/.planning/phases/05-llm-add-on/05-04-PLAN.md)). That deletes the cassette, then the autouse fixture skips the test before VCR can record — the very tests that should be re-recording are skipped first. The plan claims the skip "dissolves" after `refresh-cassettes` ([05-03-PLAN.md:231](/Users/moiz/Documents/code/verify-kit/.planning/phases/05-llm-add-on/05-03-PLAN.md)), but no cassette can be created under this flow. Fix shape: gate the skip on `record_mode == "none"` (read from the vcr_config fixture or via a recording-mode env var), or have `refresh-cassettes` set `VERIFY_KIT_RECORDING=1` that the autouse fixture honors as an override.
 
-**Concerns**
+- **HIGH #2 (cycle-3) — credential scrub test scans `tests/cassettes`, but LLM cassettes live under `tests/llm/cassettes`.**
+  `test_no_plaintext_credentials_in_cassettes` walks `tests/cassettes/*.yaml` ([05-03-PLAN.md:218](/Users/moiz/Documents/code/verify-kit/.planning/phases/05-llm-add-on/05-03-PLAN.md)), while the skip fixture and refresh recipe use `tests/llm/cassettes/<module>/<test>.yaml` ([05-03-PLAN.md:230](/Users/moiz/Documents/code/verify-kit/.planning/phases/05-llm-add-on/05-03-PLAN.md), [05-04-PLAN.md:182](/Users/moiz/Documents/code/verify-kit/.planning/phases/05-llm-add-on/05-04-PLAN.md)). The actual recorded LLM cassettes live outside the secret-leak assertion — a leaked Authorization header in a real LLM cassette would never trip the scrub test. Fix shape: canonicalize on `tests/llm/cassettes/**/*.yaml` everywhere (recipe + scrub test + skip fixture), OR have the scrub test walk both `tests/cassettes/**` and `tests/llm/cassettes/**`. The two cassette roots cannot diverge in scope.
 
-- **HIGH — 05-01 still references a missing app `.env.example` template.**  
-  05-01 Task 4 says to read and append `template/{% if has_backend %}app{% endif %}/.env.example.jinja2`, but `rg --files template | rg 'env|\\.env'` shows no such file exists. The plan says “append, do not rewrite,” so execution will fail or force the executor to invent a new file outside the plan. Source: current template has no `.env.example`; only `template/{% if has_db %}alembic{% endif %}/env.py.jinja2` exists.
+**Prior HIGH Status (cycle 2 → cycle 3)**
 
-- **HIGH — 05-03 uses an unsafe Jinja path shape for `tests/llm`.**  
-  Planned paths like `template/tests/{% if has_llm %}llm{% endif %}/test_llm_call.py.jinja2` put the conditional on a directory segment under universal `tests/`. Existing Phase 4 safe pattern uses concrete parent dirs plus filename-level gates, e.g. `template/tests/backend/{% if has_backend %}test_app.py{% endif %}.jinja2`. If `has_llm=false`, the planned shape risks rendering files into `tests/` rather than `tests/llm/`, and `_exclude: tests/llm/**` would not catch that. This violates the two-guard path contract.
-
-- **HIGH — root `.env.example` lacks a primary `_exclude` gate.**  
-  05-01 adds `template/{% if has_llm and not has_backend %}.env.example{% endif %}.jinja2`, but Task 2 does not add a matching `_exclude` entry for `.env.example`. This is a new root-level LLM artifact and should be covered by the primary gate in [copier.yml](/Users/moiz/Documents/code/verify-kit/copier.yml:26), not only by a conditional filename.
-
-- **HIGH — 05-02 does not meet the stated `@llm_call` span contract.**  
-  The phase success criteria require prompt/response/cost/latency/retry-count and `gen_ai.*` attributes. 05-02 only requires `gen_ai.operation.name`, `verify_kit.cost_usd`, `verify_kit.latency_ms`, and `verify_kit.routing_path`. It omits at least `gen_ai.request.model`, `gen_ai.response.model`, `gen_ai.usage.input_tokens`, `gen_ai.usage.output_tokens`, and `verify_kit.retry_count`.
-
-- **HIGH — pydantic-ai is installed but no longer actually used as the primary framework.**  
-  05-02’s production path uses raw LiteLLM, and 05-05 explicitly forbids `/summarize` from importing `pydantic_ai.Agent`. That addresses routing, but it conflicts with LLM-02’s “pydantic-ai as primary agent/typed-call framework” requirement. Current plans mostly prove pydantic-ai imports, not that verify-kit scaffolds around it.
-
-- **MEDIUM — cassette skip/recording behavior is underspecified and may fight `refresh-cassettes`.**  
-  05-03 sets `vcr_config["record_mode"] = "none"` while 05-04 expects `pytest --record-mode=once` to re-record. That may work depending on pytest-recording precedence, but the plan should explicitly verify that CLI `--record-mode=once` overrides the fixture. Otherwise `just refresh-cassettes` could still skip or refuse recording.
-
-- **MEDIUM — `test_instructor_patch` may depend on an unpinned `anthropic` package.**  
-  05-03 plans `instructor.from_anthropic(anthropic.Anthropic())`, but `anthropic` is not explicitly added in 05-01. It may arrive transitively, but this is not grounded in the repo or plan.
-
-- **MEDIUM — README migration verification suggests a skipped check.**  
-  05-05 says verify migration with `just verify --check=eval`, but 05-03’s eval check intentionally returns `status="skip"` and only points to `just eval`. That command will not prove a Langfuse trace or eval run.
-
-**Prior HIGH Status**
-
-| Prior HIGH | Status | Evidence |
+| Cycle-2 HIGH | Status | Evidence |
 |---|---:|---|
-| LLM `.env.example` missing for `has_llm=true, has_backend=false` | PARTIAL | 05-01 Task 5 adds root `.env.example`, but Task 4 references a missing app env file and root env lacks `_exclude`. |
-| 05-02 did not implement D-03 routing | FULLY | 05-02 Task 2 adds `call_llm()` dispatching via `_routing_path()`; 05-05 Task 1 requires `/summarize` to call it. |
-| Wrong `[dependency-groups]` table | FULLY | 05-01 Task 3 explicitly uses `[project.optional-dependencies].dev` and forbids `[dependency-groups]`. |
-| Promptfoo config lacked `prompts:` | FULLY | 05-04 Task 1 adds `prompts:` and `eval/prompts/summarize.txt`. |
-| Eval output path drift | FULLY | 05-04 Tasks 2–3 and 05-05 Task 2 align on `.verify/eval-results.json`. |
-| `fix_propose` signature drift | FULLY | 05-05 Task 2 documents no-arg `fix_propose()` matching [tools.py](/Users/moiz/Documents/code/verify-kit/template/harness/mcp/tools.py.jinja2:162). |
-| VCR tests fail on clean scaffold | PARTIAL | 05-03 adds skip-when-no-cassette, but path-gating and record-mode precedence remain risky. |
-| Nightly cost cap only checked env var | PARTIAL | 05-04 adds an estimator, but it is static/coarse and may not reflect actual prompt/model costs. |
+| Missing backend `.env.example` template | FULLY | 05-01 has explicit precondition: `ls` the backend env file and recreate Phase 4 baseline if absent before appending ([05-01-PLAN.md:209](/Users/moiz/Documents/code/verify-kit/.planning/phases/05-llm-add-on/05-01-PLAN.md)). |
+| Unsafe `tests/{% if has_llm %}llm{% endif %}` path shape | FULLY | 05-03 frontmatter + tasks use hard-coded `tests/llm/` plus filename-level gates ([05-03-PLAN.md:10](/Users/moiz/Documents/code/verify-kit/.planning/phases/05-llm-add-on/05-03-PLAN.md), [05-03-PLAN.md:195](/Users/moiz/Documents/code/verify-kit/.planning/phases/05-llm-add-on/05-03-PLAN.md)). |
+| Root `.env.example` lacks primary `_exclude` gate | FULLY | 05-01 requires `{% if not has_llm %}.env.example{% endif %}` in `_exclude` ([05-01-PLAN.md:140](/Users/moiz/Documents/code/verify-kit/.planning/phases/05-llm-add-on/05-01-PLAN.md), [05-01-PLAN.md:154](/Users/moiz/Documents/code/verify-kit/.planning/phases/05-llm-add-on/05-01-PLAN.md)). |
+| `@llm_call` span contract under-specified | FULLY | 05-02 now requires full `gen_ai.*`, token usage, retry count, and model attrs ([05-02-PLAN.md:143](/Users/moiz/Documents/code/verify-kit/.planning/phases/05-llm-add-on/05-02-PLAN.md), [05-02-PLAN.md:220](/Users/moiz/Documents/code/verify-kit/.planning/phases/05-llm-add-on/05-02-PLAN.md)). |
+| pydantic-ai role conflicts with call routing | FULLY | D-21 explicitly defines pydantic-ai as consumer-facing typed-call layer, NOT verify-kit's routing entry point ([05-CONTEXT.md:61](/Users/moiz/Documents/code/verify-kit/.planning/phases/05-llm-add-on/05-CONTEXT.md), [05-CONTEXT.md:65](/Users/moiz/Documents/code/verify-kit/.planning/phases/05-llm-add-on/05-CONTEXT.md)); README task documents that split ([05-05-PLAN.md:246](/Users/moiz/Documents/code/verify-kit/.planning/phases/05-llm-add-on/05-05-PLAN.md)). |
 
-**Source-Grounding Pass**
+**MEDIUM / LOW concerns**
 
-| Symbol / Path | Status | Evidence |
-|---|---:|---|
-| `has_llm`, `llm_backend` | VERIFIED | [copier.yml](/Users/moiz/Documents/code/verify-kit/copier.yml:144), [copier.yml](/Users/moiz/Documents/code/verify-kit/copier.yml:167) |
-| `_exclude` block | VERIFIED | [copier.yml](/Users/moiz/Documents/code/verify-kit/copier.yml:26) |
-| `[project.optional-dependencies].dev` | VERIFIED | [pyproject](/Users/moiz/Documents/code/verify-kit/template/pyproject.toml.jinja2:59) |
-| `[dependency-groups]` | MISSING | Not present; 05-01 correctly avoids it. |
-| `template/{% if has_backend %}app{% endif %}/.env.example.jinja2` | MISSING | No `.env.example` template exists under `template/`. |
-| Existing `app/api.py.jinja2` route structure | VERIFIED | [api.py.jinja2](/Users/moiz/Documents/code/verify-kit/template/{% if has_backend %}app{% endif %}/api.py.jinja2:1) |
-| `/healthz`, `/echo`, `/events/stream` | VERIFIED | [api.py.jinja2](/Users/moiz/Documents/code/verify-kit/template/{% if has_backend %}app{% endif %}/api.py.jinja2:12) |
-| `tracer`, `_otel_enabled` | VERIFIED | [observability.py](/Users/moiz/Documents/code/verify-kit/template/harness/observability.py.jinja2:26) |
-| `log` | VERIFIED | [logging.py](/Users/moiz/Documents/code/verify-kit/template/harness/logging.py.jinja2:120) |
-| `get_trace_id`, `set_trace_id` | VERIFIED | [trace_id.py](/Users/moiz/Documents/code/verify-kit/template/harness/trace_id.py.jinja2:25) |
-| `@register` | VERIFIED | [registry.py](/Users/moiz/Documents/code/verify-kit/template/harness/registry.py.jinja2:19) |
-| `CheckResult(status=...)` | VERIFIED | [models.py](/Users/moiz/Documents/code/verify-kit/template/harness/models.py.jinja2:61) |
-| `CheckTier` values | VERIFIED | [models.py](/Users/moiz/Documents/code/verify-kit/template/harness/models.py.jinja2:22) |
-| `harness/checks/__init__.py` registration side-effect | VERIFIED | [checks __init__](/Users/moiz/Documents/code/verify-kit/template/harness/checks/__init__.py.jinja2:1) |
-| CLI `verify --check` | VERIFIED | [cli.py](/Users/moiz/Documents/code/verify-kit/template/harness/cli.py.jinja2:163) |
-| MCP `fix_propose()` no args | VERIFIED | [tools.py](/Users/moiz/Documents/code/verify-kit/template/harness/mcp/tools.py.jinja2:162) |
-| `_CLEAN_ENV` | MISSING | Not present in [tests/_helpers.py](/Users/moiz/Documents/code/verify-kit/tests/_helpers.py:1); 05-05 plans to add it. |
-| `call_llm`, `llm_call`, `cost_budget` | PLANNED | Produced by 05-02. |
-| Promptfoo `-o output.json` | VERIFIED EXTERNAL | Context7 Promptfoo docs confirm `promptfoo eval -o results.json` / `--output results.json`. |
-
-**Suggestions**
-
-- Add a 05-01 task to create the missing backend `.env.example` file, or change Task 4 from “append existing” to “create if absent” with source-grounded acceptance criteria.
-- Change `tests/llm` paths to the proven Phase 4 shape: `template/tests/llm/{% if has_llm %}test_llm_call.py{% endif %}.jinja2`.
-- Add `_exclude` entries for the root `.env.example` artifact and any gated `.gitkeep` that can otherwise collapse into `.jinja2`.
-- Update 05-02 span contract to set model, token usage, retry count, and response metadata from adapter results.
-- Either actually use pydantic-ai in the standard call path, or revise LLM-02/phase success criteria to say pydantic-ai is shipped as an optional ergonomic layer rather than primary.
+- **MEDIUM — verification snippets repeatedly use `subprocess.run(...)` without `cwd=`.** Most use absolute source/destination paths, so practical risk is lower than helper/test code that would inherit process CWD, but it violates the explicitly-requested cwd-leak discipline from REVIEW-CHECKLIST §1.
+- **LOW — 05-01 Task 2 prose says "eleven entries" but describes `harness/llm.py` twice and vaguely references "corresponding gitkeep"** ([05-01-PLAN.md:138](/Users/moiz/Documents/code/verify-kit/.planning/phases/05-llm-add-on/05-01-PLAN.md)). The acceptance criteria list is clearer than the narrative; the prose should be tightened.
 
 **Risk Assessment**
 
-**HIGH.** The replan is materially better than Cycle 1, but it still has execution blockers and path-gating hazards that can leak files into wrong scaffold cells. The missing `.env.example` source and unsafe `tests/{% if has_llm %}llm{% endif %}` shape should be fixed before execution. Also, the LLM span contract needs tightening or the phase will pass structural tests while missing key observability requirements.
-
-I attempted the required beads close commands, but both failed because the local Dolt server is unreachable in this sandbox: `dial tcp 127.0.0.1:3307: connect: operation not permitted`.
+**HIGH.** Verdict: do not execute as-is. The remaining blocker is concentrated in the cassette lifecycle: first-run cleanliness, refresh, and secret scrubbing do not form a coherent contract. Once both cycle-3 HIGHs are fixed, the rest of the cycle-2 HIGHs look resolved and the phase is executable.
 
 ---
 
 ## Consensus Summary
 
-Single reviewer (Codex). Cycle 2 confirms 4 of 8 prior HIGHs are FULLY resolved (D-03 routing, `[project.optional-dependencies]`, promptfoo `prompts:`, eval output path, `fix_propose` signature). Two are PARTIALLY resolved (LLM `.env.example`, VCR cassette skip), and the replan introduced fresh HIGHs.
+Single adversarial reviewer (Codex). Cycle 3 confirms all 5 cycle-2 HIGHs are FULLY resolved, but exposes 2 newly-introduced HIGHs in the cassette lifecycle that prior cycles missed:
 
 ### Agreed Concerns (single reviewer)
-- 05-01 references a missing `.env.example.jinja2` source file (execution blocker).
-- 05-03 uses unsafe Jinja directory-segment gating for `tests/llm/` (violates Phase 4 two-guard pattern).
-- Root `.env.example` lacks a matching `_exclude` gate.
-- 05-02 LLM span contract is under-specified vs phase success criteria.
-- pydantic-ai is installed but not actually used as the primary framework path, conflicting with LLM-02.
+1. `just refresh-cassettes` is self-defeating: the autouse skip fires before VCR records (HIGH #1).
+2. Credential scrub test and LLM cassette directory diverge — secrets in `tests/llm/cassettes/**` are never scanned (HIGH #2).
 
 ### Divergent Views
 N/A (single reviewer).
+
+### Trajectory
+cycle 1 (8 HIGH) → cycle 2 (5 HIGH) → cycle 3 (2 HIGH). Still monotone-decreasing — not the oscillation signal from rule 08. Both HIGHs are surgical fixes to 05-03 / 05-04 (not structural coupling), so plan-coupling restructure is NOT indicated.
+
+### Recommended Path
+Per the cycle-3 escalation gate (max 3 cycles), the convergence loop exits here. Options:
+- **Manual fix** (recommended): both HIGHs are local edits in 05-03 (skip fixture predicate) and 05-04 (recipe env var) plus a one-line scrub-test path change. Estimated 10–15 min of Edit operations. Per rule 08, run an independent semantic re-review after the manual fix to confirm it didn't introduce new drift — but that re-review is a one-shot, NOT a fourth convergence cycle.
+- **Accept and execute** (NOT recommended): both HIGHs are real execution blockers — `just refresh-cassettes` will silently no-op and credential leaks in LLM cassettes will not be caught.
