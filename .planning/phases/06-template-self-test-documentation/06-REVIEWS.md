@@ -505,3 +505,64 @@ I checked 06-05 release-please, 06-WAVES ordering, 06-10 reconciliation, 06-06 R
 - MEDIUM/LOW: noted but not raised (Pattern 6 coverage drift, 06-WAVES metadata)
 - Locations checked: 06-05 release-please, 06-WAVES ordering, 06-10 reconciliation, 06-06 README auth refs, 06-01 Pattern 6 scrub task, copier.yml `_exclude` block (lines 49-50)
 
+
+---
+
+## Cycle 7 — Codex Adversarial Review (2026-05-23T00:00:00Z)
+
+**Framing:** Six prior reviewers cleared HIGHs across 6 cycles plus 4 manual fix passes. Cycle 6 fix landed (commit f61049f): copier.yml exclude conditions changed from `not has_llm` → `not has_llm and not has_backend`, with render-completeness assertions added across both backend cells. Codex invoked as FINAL adversary for this convergence run.
+
+### Codex Review
+
+**Summary**
+
+One additional HIGH found. The cycle-6 `copier.yml` exclusion fix itself is logically correct across the five 06-08 matrix rows, but it changes the rendered `.env.example` contract and the plans do not update an existing Phase 5 polarity test that still asserts the old contract.
+
+**Concerns**
+
+HIGH: 06-02 changes backend renders to include root `.env.example`, but `tests/test_phase05_polarity.py` still requires root `.env.example` to be absent for backend cells.
+
+Evidence:
+- 06-02 requires root `.env.example` for both backend cells: `.planning/phases/06-template-self-test-documentation/06-02-PLAN.md:254`.
+- 06-02 changes `copier.yml` exclusions to `not has_llm and not has_backend`: `.planning/phases/06-template-self-test-documentation/06-02-PLAN.md:292`.
+- Existing tests still assert old behavior:
+  - backend+llm: `assert not root_env.exists()` at `tests/test_phase05_polarity.py:268`
+  - backend-only: `assert not root_env.exists()` at `tests/test_phase05_polarity.py:290`
+- Later plans still require Phase 5 polarity to pass: `.planning/phases/06-template-self-test-documentation/06-03-PLAN.md:227`, `.planning/phases/06-template-self-test-documentation/06-09-PLAN.md:98`.
+
+Fix: Add `tests/test_phase05_polarity.py` to 06-02 `files_modified` and explicitly update the env-destination assertions to the new contract. If the intended contract is "root `.env.example` is canonical whenever `has_backend=true`," encode that there. If "exactly one `.env.example` per cell" is still required, then 06-02 must also merge backend+LLM env slots into the root file and remove/deprecate the backend `app/.env.example`.
+
+**Cycle-6 Fix Trace**
+
+The proposed `copier.yml` condition is otherwise sound:
+- `base` false/false: `not has_llm and not has_backend` is true, root `.env.example` excluded. OK.
+- `+backend` true/false: condition false, new backend root `.env.example` admitted. OK.
+- `+llm` false/true: condition false, existing LLM-only root `.env.example` admitted. OK.
+- `+backend+llm` true/true: condition false, backend root `.env.example` admitted. OK per new 06-02 contract, but conflicts with old Phase 5 test above.
+- `full` true/true: same as backend+llm, plus logfire/fastapi_mcp unaffected. OK.
+
+**Medium/Low Notes**
+
+MEDIUM: 06-01 frontmatter `files_modified` omits its Pattern 6 scrub target. Task 3 edits `template/**/*.jinja2`, but the file list only names OSS boilerplate files. This does not create same-wave overlap with 06-02 because 06-02 is W2, but it weakens the wave/ownership metadata. Add the concrete scrubbed files or `template/**/*.jinja2` to 06-01 frontmatter.
+
+**Source Grounding (verified)**
+
+- `copier.yml` prompts `has_backend`, `has_llm`, `has_logfire`, `has_fastapi_mcp`, `has_db`: `copier.yml:151`
+- Existing root LLM env file: `template/{% if has_llm and not has_backend %}.env.example{% endif %}.jinja2:1`
+- Existing backend app env file: `template/{% if has_backend %}app{% endif %}/.env.example.jinja2:1`
+- `Settings.load(cwd)` reads root `.env`: `template/{% if has_backend %}app{% endif %}/settings.py.jinja2:22`
+- `create_app` and lifespan settings pattern: `template/{% if has_backend %}app{% endif %}/main.py.jinja2:55`
+- `EchoRequest.message`: `template/{% if has_backend %}app{% endif %}/models.py.jinja2:14`
+- `SummarizeRequest`, `call_llm`, `cost_budget`: `template/{% if has_backend %}app{% endif %}/api.py.jinja2:57`
+- `@register`, `CheckResult`, `CheckTier`: `template/harness/registry.py.jinja2:19`, `template/harness/models.py.jinja2:21`
+
+**Risk Assessment**
+
+Overall risk: HIGH until the legacy Phase 5 polarity test is updated. The implementation plan now correctly admits the backend root env file, but the test suite still encodes the old exclusion contract and will fail in 06-03/06-09.
+
+### Cycle 7 Summary
+
+- HIGHs found: **1** (06-02 plan must update `tests/test_phase05_polarity.py` to match new env-destination contract; otherwise 06-03 verify gate and 06-09 final smoke will fail on backend cells)
+- MEDIUM: 06-01 frontmatter `files_modified` should list Pattern 6 scrub target (`template/**/*.jinja2`)
+- Cycle-6 copier.yml fix VERIFIED sound across all 5 matrix rows — but contract change has downstream test impact
+- Locations checked: 06-02 PLAN lines 241-300, copier.yml:49-50, tests/test_phase05_polarity.py:240-300, 06-03 PLAN, 06-05 release-please, 06-07 PR template, 06-WAVES wave 1, 06-09 LLM README pass, 06-10 reconciliation
