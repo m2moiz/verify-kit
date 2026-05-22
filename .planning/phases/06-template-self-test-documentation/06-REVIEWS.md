@@ -417,3 +417,62 @@ Current Phase 6 plan risk remains HIGH. The hardening trio is much improved, but
 1. 06-10 Phase 4 validation short-circuit assumption contradicts `04-VALIDATION.md` open HIGH gaps: [06-10-PLAN.md](/Users/moiz/Documents/code/verify-kit/.planning/phases/06-template-self-test-documentation/06-10-PLAN.md:90), [04-VALIDATION.md](/Users/moiz/Documents/code/verify-kit/.planning/phases/04-backend-fastapi-add-on/04-VALIDATION.md:4).
 2. 06-08 matrix omits `has_db`, despite `has_db` being a live prompt/default and DB file gate: [06-08-PLAN.md](/Users/moiz/Documents/code/verify-kit/.planning/phases/06-template-self-test-documentation/06-08-PLAN.md:111), [copier.yml](/Users/moiz/Documents/code/verify-kit/copier.yml:173).
 3. 06-06 README quickstart omits the required `copier-templates-extensions` install path: [06-06-PLAN.md](/Users/moiz/Documents/code/verify-kit/.planning/phases/06-template-self-test-documentation/06-06-PLAN.md:112), [copier.yml](/Users/moiz/Documents/code/verify-kit/copier.yml:10).
+
+---
+
+## Cycle 5 — Codex (Adversarial Re-Review, 2026-05-23)
+
+**Framing:** Four prior cycles + two manual-fix passes (latest 24f6ea0) cleared HIGHs. Trend 6 → 2 → 4 → 3. Adversarial prompt instructed Codex to hunt for cycle-4 fix gaps, NEW drift from those edits, missed HIGHs in less-attended plans (06-01, 06-05, 06-WAVES, 06-CONTEXT, 06-RESEARCH), cwd leaks, Pattern 6 leaks in template/*, and producer/consumer contract drift.
+
+**Verdict:** HIGHs FOUND: 2 — both NEW, both in 06-02 and surrounding template/* surface area. Cycle-4 fixes themselves (H1 06-10, H2 06-08, H3 06-06) are VERIFIED in the plans.
+
+**Consolidated HIGHs**
+
+| Severity | Plan | Citation | Finding |
+|---|---|---|---|
+| HIGH | 06-02 | [06-02-PLAN.md](/Users/moiz/Documents/code/verify-kit/.planning/phases/06-template-self-test-documentation/06-02-PLAN.md:259), [settings.py.jinja2](/Users/moiz/Documents/code/verify-kit/template/{% if has_backend %}app{% endif %}/settings.py.jinja2:22) | Auth token is documented in rendered `app/.env.example`, but the app only loads root `.env`; tests write root `.env`, so the plan can pass while the consumer-facing env example is nonfunctional. |
+| HIGH | 06-02 / Pattern 6 | [06-02-PLAN.md](/Users/moiz/Documents/code/verify-kit/.planning/phases/06-template-self-test-documentation/06-02-PLAN.md:296), [main.py.jinja2](/Users/moiz/Documents/code/verify-kit/template/{% if has_backend %}app{% endif %}/main.py.jinja2:66) | Pattern 6 enforcement is too narrow: it checks only the new `app/.env.example`, while touched/generated template files already ship planning/review IDs like `cycle-3 HIGH`, `Codex HIGH`, `Plan 04-07`, `REVIEW-CHECKLIST`, etc. |
+
+**06-02 Assessment**
+
+1. **HIGH: auth env example path does not match the app’s settings loader**
+
+06-02 claims the backend env layout is `template/{% if has_backend %}app{% endif %}/.env.example.jinja2`, rendered to `app/.env.example`, and explicitly writes the auth token slot only there: [06-02-PLAN.md](/Users/moiz/Documents/code/verify-kit/.planning/phases/06-template-self-test-documentation/06-02-PLAN.md:259), [06-02-PLAN.md](/Users/moiz/Documents/code/verify-kit/.planning/phases/06-template-self-test-documentation/06-02-PLAN.md:269).
+
+But the actual app loader reads only `cwd / ".env"`: [settings.py.jinja2](/Users/moiz/Documents/code/verify-kit/template/{% if has_backend %}app{% endif %}/settings.py.jinja2:22). The app lifespan uses that loader through `create_app(cwd=...)`: [main.py.jinja2](/Users/moiz/Documents/code/verify-kit/template/{% if has_backend %}app{% endif %}/main.py.jinja2:41), [main.py.jinja2](/Users/moiz/Documents/code/verify-kit/template/{% if has_backend %}app{% endif %}/main.py.jinja2:55).
+
+The proposed test then writes `tmp/.env`, not `tmp/app/.env`, so it proves the runtime path but not the documented consumer path: [06-02-PLAN.md](/Users/moiz/Documents/code/verify-kit/.planning/phases/06-template-self-test-documentation/06-02-PLAN.md:273), [06-02-PLAN.md](/Users/moiz/Documents/code/verify-kit/.planning/phases/06-template-self-test-documentation/06-02-PLAN.md:288).
+
+Fix: document `VERIFYKIT_AUTH_TOKEN=` in a root `.env.example` for every backend render, or change `load(cwd)` to intentionally read `app/.env` too. Add a test that copies the rendered env example to the actual runtime `.env` location and verifies prod auth no longer returns 503.
+
+2. **HIGH: Pattern 6 check misses existing planning-ID leaks in shipped template files**
+
+06-02 only forces Pattern 6 against the new `app/.env.example`: [06-02-PLAN.md](/Users/moiz/Documents/code/verify-kit/.planning/phases/06-template-self-test-documentation/06-02-PLAN.md:296). It also tells the executor to preserve the existing middleware block: [06-02-PLAN.md](/Users/moiz/Documents/code/verify-kit/.planning/phases/06-template-self-test-documentation/06-02-PLAN.md:205).
+
+That preserved generated file already contains consumer-visible internal review references: `cycle-3 HIGH C`, `Codex HIGH #2`, `Codex HIGH #3`, and `REVIEWS-RESPONSE.md`: [main.py.jinja2](/Users/moiz/Documents/code/verify-kit/template/{% if has_backend %}app{% endif %}/main.py.jinja2:66), [main.py.jinja2](/Users/moiz/Documents/code/verify-kit/template/{% if has_backend %}app{% endif %}/main.py.jinja2:87), [main.py.jinja2](/Users/moiz/Documents/code/verify-kit/template/{% if has_backend %}app{% endif %}/main.py.jinja2:113), [main.py.jinja2](/Users/moiz/Documents/code/verify-kit/template/{% if has_backend %}app{% endif %}/main.py.jinja2:136). Other shipped templates contain `Plan 03-01`, `Plan 04-07`, `REVIEW-CHECKLIST`, and bead IDs, for example [pyproject.toml.jinja2](/Users/moiz/Documents/code/verify-kit/template/pyproject.toml.jinja2:23) and [models.py.jinja2](/Users/moiz/Documents/code/verify-kit/template/{% if has_backend %}app{% endif %}/models.py.jinja2:7).
+
+Fix: add a Phase 6 scrub task or a broad rendered-output assertion for generated consumer files, not just the newly added env example. Keep durable technical comments, but remove planning IDs, review-cycle labels, bead IDs, and reviewer names from `template/*`.
+
+**Source-Grounding Pass**
+
+| Symbol / path / flag | Status | Evidence |
+|---|---|---|
+| `Settings.load(cwd)` reads root `.env` | VERIFIED | [settings.py.jinja2](/Users/moiz/Documents/code/verify-kit/template/{% if has_backend %}app{% endif %}/settings.py.jinja2:22) |
+| `create_app(cwd)` + lifespan settings binding | VERIFIED | [main.py.jinja2](/Users/moiz/Documents/code/verify-kit/template/{% if has_backend %}app{% endif %}/main.py.jinja2:41), [main.py.jinja2](/Users/moiz/Documents/code/verify-kit/template/{% if has_backend %}app{% endif %}/main.py.jinja2:55) |
+| `template/{% if has_backend %}app{% endif %}/.env.example.jinja2` | MISSING currently; planned new file | No match in `rg --files template`; plan references it at [06-02-PLAN.md](/Users/moiz/Documents/code/verify-kit/.planning/phases/06-template-self-test-documentation/06-02-PLAN.md:242) |
+| `VERIFYKIT_AUTH_TOKEN` | MISSING currently; planned producer symbol | Plan adds it; existing `settings.py.jinja2` has only `ENV`, `LOG_LEVEL`, `LOG_FORMAT`, `DATABASE_URL`, `PROFILE_ENABLED`: [settings.py.jinja2](/Users/moiz/Documents/code/verify-kit/template/{% if has_backend %}app{% endif %}/settings.py.jinja2:15) |
+| `X-VerifyKit-Token` / `require_auth` | MISSING currently; planned producer symbols | 06-02 owns them: [06-02-PLAN.md](/Users/moiz/Documents/code/verify-kit/.planning/phases/06-template-self-test-documentation/06-02-PLAN.md:112) |
+| `has_backend`, `has_llm`, `has_logfire`, `has_fastapi_mcp`, `has_db` | VERIFIED | [copier.yml](/Users/moiz/Documents/code/verify-kit/copier.yml:151), [copier.yml](/Users/moiz/Documents/code/verify-kit/copier.yml:156), [copier.yml](/Users/moiz/Documents/code/verify-kit/copier.yml:161), [copier.yml](/Users/moiz/Documents/code/verify-kit/copier.yml:167), [copier.yml](/Users/moiz/Documents/code/verify-kit/copier.yml:173) |
+| `_jinja_extensions` / `copier-templates-extensions` requirement | VERIFIED | [copier.yml](/Users/moiz/Documents/code/verify-kit/copier.yml:7), [copier.yml](/Users/moiz/Documents/code/verify-kit/copier.yml:10) |
+| `_tasks` requiring `--trust` | VERIFIED | [copier.yml](/Users/moiz/Documents/code/verify-kit/copier.yml:66) |
+| `EchoRequest.message` | VERIFIED | [models.py.jinja2](/Users/moiz/Documents/code/verify-kit/template/{% if has_backend %}app{% endif %}/models.py.jinja2:14) |
+| `/summarize`, `call_llm`, `cost_budget` | VERIFIED | [api.py.jinja2](/Users/moiz/Documents/code/verify-kit/template/{% if has_backend %}app{% endif %}/api.py.jinja2:15), [api.py.jinja2](/Users/moiz/Documents/code/verify-kit/template/{% if has_backend %}app{% endif %}/api.py.jinja2:72), [api.py.jinja2](/Users/moiz/Documents/code/verify-kit/template/{% if has_backend %}app{% endif %}/api.py.jinja2:82) |
+| `@register`, `CheckResult`, `CheckTier` | VERIFIED | [registry.py.jinja2](/Users/moiz/Documents/code/verify-kit/template/harness/registry.py.jinja2:19), [models.py.jinja2](/Users/moiz/Documents/code/verify-kit/template/harness/models.py.jinja2:22), [models.py.jinja2](/Users/moiz/Documents/code/verify-kit/template/harness/models.py.jinja2:61) |
+| `just eval` | VERIFIED | [justfile.jinja2](/Users/moiz/Documents/code/verify-kit/template/justfile.jinja2:110) |
+| Phase 4 validation beads `verify-kit-plk/c5a/r7v` | VERIFIED in STATE; `bd show` blocked by sandboxed Dolt access | [STATE.md](/Users/moiz/Documents/code/verify-kit/.planning/STATE.md:88) |
+| 06-08 cycle-4 `has_db` fix | VERIFIED in plan | [06-08-PLAN.md](/Users/moiz/Documents/code/verify-kit/.planning/phases/06-template-self-test-documentation/06-08-PLAN.md:111) |
+| 06-06 cycle-4 quickstart fix | VERIFIED in plan | [06-06-PLAN.md](/Users/moiz/Documents/code/verify-kit/.planning/phases/06-template-self-test-documentation/06-06-PLAN.md:114) |
+
+`bd export` could not run because the Dolt server is unreachable under the current sandbox (`127.0.0.1:3307` connection denied).
+
+HIGHs FOUND: 2
