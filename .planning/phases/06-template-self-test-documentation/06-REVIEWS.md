@@ -215,3 +215,128 @@ The body correctly retargets `models.py.jinja2`, but the commit strategy still s
 ### Decision
 
 **Cycle 2 surfaces 2 new HIGHs.** Both are concrete bug shapes (cwd-leak, lifespan-skip) that would silently break the test snippets at execute-phase time. The convergence loop should advance to Cycle 3 to address them.
+
+---
+
+# Cycle 3 Review (Codex — Adversarial Final Pass)
+
+**Reviewer:** Codex CLI (gpt-5.5)
+**Reviewed at:** 2026-05-22T22:22:30Z
+**Framing:** Final adversarial pass; assume cycle-2 reviewer missed something. Source-grounding pass MANDATORY.
+
+## Codex Review
+
+**Final Adversarial Review**
+
+I found additional HIGHs.
+
+### Source-Grounding Pass
+
+**Verified:**
+- `create_app(cwd=...)` exists and module-level `app = create_app()` exists: `template/{% if has_backend %}app{% endif %}/main.py.jinja2:55, 171`
+- Lifespan sets `app.state.settings`: `template/{% if has_backend %}app{% endif %}/main.py.jinja2:41`
+- Settings uses uppercase fields and `load(cwd)`, no `get_settings`: `template/{% if has_backend %}app{% endif %}/settings.py.jinja2:7`
+- `/echo` uses `EchoRequest.message`, not `text`: `template/{% if has_backend %}app{% endif %}/models.py.jinja2:14`
+- `/summarize` uses `call_llm` bound in `app.api`: `template/{% if has_backend %}app{% endif %}/api.py.jinja2:15`
+- Lifespan-aware TestClient convention exists: `template/tests/backend/{% if has_backend %}conftest.py{% endif %}.jinja2:24`
+- `_CLEAN_ENV` exists: `tests/_helpers.py:130`
+- `just eval` exists: `template/justfile.jinja2:110`
+
+**Missing / drift:**
+- `register` is NOT exported from `harness.checks`; it lives in `harness.registry`: `template/harness/registry.py.jinja2:19`
+- `CheckResult` is NOT exported from `harness.checks`; it lives in `harness.models`: `template/harness/models.py.jinja2:61`
+- `template/harness/llm.py.jinja2` does not exist as a source path. Actual template path is `template/harness/{% if has_llm %}llm.py{% endif %}.jinja2`.
+
+### Cycle-2 Fix Audit
+
+The two cycle-2 fixes look correctly applied in the plan text:
+- `VERIFY_KIT_ROOT` is now required before `cd /tmp`; no `Path.cwd()` fallback remains in 06-02/03/04 verify snippets.
+- Test snippets use `create_app(cwd=...)` plus `with TestClient(application) as client:` and explicitly forbid bare `TestClient(app)`.
+- No new drift from the `application` variable rename detected.
+
+### HIGH Concerns (4 new)
+
+**1. HIGH — 06-07 "add a new check" snippet is source-drifted and will not run.**
+Evidence at `.planning/phases/06-template-self-test-documentation/06-07-PLAN.md:91`:
+```python
+from harness.checks import register, CheckResult
+@register(id="my-check", tier="universal")
+```
+Actual source:
+- `register` is `from harness.registry import register`, not `harness.checks`.
+- `CheckResult` is `from harness.models import CheckResult`.
+- `register()` takes positional `check_id`, not keyword `id` (`template/harness/registry.py.jinja2:19`).
+- `tier="universal"` is invalid; `CheckTier` is `quick | standard | slow` (`template/harness/models.py.jinja2:21`).
+
+Fix:
+```python
+from harness.models import CheckResult
+from harness.registry import register
+
+@register("my-check", tier="quick", category="custom")
+def my_check(cwd) -> CheckResult:
+    return CheckResult(check_id="my-check", status="pass", duration_ms=0)
+```
+
+**2. HIGH — 06-08 self-test CI installs Copier without the required template extension.**
+Evidence at `06-08-PLAN.md:117`: `uv tool install copier`. But `copier.yml:7` declares `_jinja_extensions` via `copier_templates_extensions.TemplateExtensionLoader` and documents the required install command. The workflow installs a standalone tool without the extension, so `copier copy` can fail before the matrix tests anything.
+
+Fix: `uv tool install copier --with copier-templates-extensions` everywhere Phase 6 invokes Copier on a clean machine / CI runner.
+
+**3. HIGH — 06-06 README quickstart omits the `--trust` requirement.**
+Evidence at `06-06-PLAN.md:112`:
+```bash
+copier copy gh:m2moiz/verify-kit my-project && cd my-project && just verify
+```
+But `copier.yml:66` has `_tasks`, and Copier 9.15 requires `--trust` for unsafe features (Jinja extensions, migrations, tasks). This threatens ROADMAP SC2 / UX-08: the new reader's first command is not the same command CI uses and may prompt or fail.
+
+Fix:
+```bash
+uv tool install copier --with copier-templates-extensions
+copier copy --trust gh:m2moiz/verify-kit my-project
+cd my-project
+just verify
+```
+
+**4. HIGH — 06-09 references a non-existent source path.**
+Evidence at `06-09-PLAN.md:72` says to confirm exports in `template/harness/llm.py.jinja2`, but that file does not exist. Actual path: `template/harness/{% if has_llm %}llm.py{% endif %}.jinja2`. An executor following the plan literally hits a missing file.
+
+### Per-Plan Feedback
+
+- **06-01:** Solid. Static OSS files, YAML parse checks, no source drift. Risk LOW.
+- **06-02:** Strong after cycle-2 fixes. Auth contract source-grounded. Risk MEDIUM.
+- **06-03:** Strong. Patch target `app.api.call_llm` correct. Risk MEDIUM.
+- **06-04:** Strong. Correctly retargeted to `models.py` and uses `message`. Risk LOW/MEDIUM.
+- **06-05:** Mostly fine. No HIGH found.
+- **06-06:** HIGH quickstart issue (#3 above).
+- **06-07:** HIGH API snippet drift (#1 above).
+- **06-08:** HIGH CI install drift (#2 above).
+- **06-09:** HIGH missing source path (#4 above).
+- **06-10:** Acceptable. Risk LOW.
+
+### Risk Assessment
+
+Auth/summarize/echo implementation plans have converged. The remaining blocking risk is "first command / CI command / contributor docs command" drift. Left unfixed, Phase 6 ships documentation and CI that fail before the actual template behavior is exercised. 06-07 would bake a broken extension guide into CONTRIBUTING — exactly matching REVIEW-CHECKLIST Pattern 4.
+
+---
+
+## Cycle 3 Consensus Summary
+
+### Newly Raised HIGHs (4)
+
+| # | Plan | Pattern | Description |
+|---|------|---------|-------------|
+| 1 | 06-07 | REVIEW-CHECKLIST Pattern 4 (source drift in extension guide) | `harness.checks` imports + `@register(id=..., tier="universal")` decorator signature is wrong on all four fronts; will not run |
+| 2 | 06-08 | CI environment drift | `uv tool install copier` omits `--with copier-templates-extensions`; Copier templates fail to render before matrix tests run |
+| 3 | 06-06 | UX-08 / SC2 quickstart drift | README `copier copy` command omits `--trust` flag required by Copier 9.15 for `_tasks` + Jinja extensions |
+| 4 | 06-09 | Source path drift (REVIEW-CHECKLIST §3) | `template/harness/llm.py.jinja2` referenced but actual path is `template/harness/{% if has_llm %}llm.py{% endif %}.jinja2` |
+
+### Cycle-2 Fix Verification
+
+- VERIFY_KIT_ROOT required-env + sanity-assert pattern: ✅ correctly applied
+- `create_app(cwd=scratch) + with TestClient(application) as client:` pattern: ✅ correctly applied
+- No drift introduced by `application` variable rename: ✅ confirmed
+
+### Decision
+
+**Cycle 3 surfaces 4 new HIGHs.** All are concrete bug shapes catchable only by adversarial source-grounding: a wrong import path, a missing Copier flag, a missing CI dependency, and a non-existent file reference. Trend is no longer monotone-decreasing (6 → 2 → 4), but the new HIGHs are NOT in the previously-fixed areas — they are in plans (06-06, 06-07, 06-08, 06-09) that the prior cycles' reviewers spent less time on. Per `.claude/rules/08-plan-convergence-workflow.md`, the convergence loop's max-cycles=3 is now exhausted. Recommended path: **manual fix** of the 4 HIGHs, then independent re-review (per "grep is not verification" memory).
