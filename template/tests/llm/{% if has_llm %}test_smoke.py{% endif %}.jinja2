@@ -53,9 +53,16 @@ def test_pydantic_ai_uses_output_not_data():
             "AgentRunResult exposes the legacy attribute — pydantic-ai downgraded?"
         )
     else:
-        # Fallback: at least confirm pydantic_ai is importable; downstream
-        # usage in /summarize will catch a real API mismatch.
-        assert pydantic_ai is not None
+        # Fail loud: the drift-guard depends on at least one of the three
+        # introspection surfaces being present. If pydantic-ai changes ALL
+        # three, the test would silently pass and Pitfall 4 regressions
+        # would slip through. Force an explicit failure so a human updates
+        # this drift-guard against the new surface.
+        pytest.fail(
+            "AgentRunResult exposes none of model_fields/__dataclass_fields__/"
+            "__annotations__ — introspection surface changed; update this "
+            "drift-guard against the new pydantic-ai API."
+        )
 
 
 def test_instructor_patch():

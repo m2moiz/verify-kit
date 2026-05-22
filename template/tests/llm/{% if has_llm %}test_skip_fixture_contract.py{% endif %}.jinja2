@@ -1,9 +1,8 @@
 """Contract test for the _skip_when_no_cassette record-mode gate.
 
-This test forcing-functions the cycle-3..cycle-6 fix: the autouse skip
-fixture in tests/llm/conftest.py must skip in default mode AND must NOT
-skip under ``--record-mode=once`` (else ``just refresh-cassettes`` is
-self-defeating).
+The autouse skip fixture in tests/llm/conftest.py must skip in default
+mode AND must NOT skip under ``--record-mode=once`` (else
+``just refresh-cassettes`` is self-defeating).
 
 Uses pytest's ``pytester`` plugin (canonical mechanism for testing
 fixtures): each test spawns an isolated sub-pytest run against a stub
@@ -69,7 +68,8 @@ def test_record_mode_once_does_not_skip(pytester):
     result = pytester.runpytest_subprocess("-q", "--record-mode=once")
     outcomes = result.parseoutcomes()
     # Critical assertion: under --record-mode=once the fixture must NOT skip.
-    # If skipped >= 1, the fixture is still self-defeating (the cycle-3 bug).
+    # If skipped >= 1, the fixture is self-defeating — `just refresh-cassettes`
+    # would never populate any cassette because the skip fires before VCR records.
     assert outcomes.get("skipped", 0) == 0, (
         f"--record-mode=once must NOT trigger skip; got: {outcomes}"
     )

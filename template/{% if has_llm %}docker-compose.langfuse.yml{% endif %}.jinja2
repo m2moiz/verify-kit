@@ -31,9 +31,9 @@ services:
       CLICKHOUSE_PASSWORD: clickhouse
       REDIS_HOST: redis
       REDIS_PORT: 6379
-      SALT: ${LANGFUSE_SALT:-changeme-please-set-LANGFUSE_SALT}
-      ENCRYPTION_KEY: ${LANGFUSE_ENCRYPTION_KEY:-changeme-please-set-LANGFUSE_ENCRYPTION_KEY}
-      NEXTAUTH_SECRET: ${LANGFUSE_NEXTAUTH_SECRET:-changeme-please-set-LANGFUSE_NEXTAUTH_SECRET}
+      SALT: ${LANGFUSE_SALT:?LANGFUSE_SALT must be set; generate with: openssl rand -base64 32}
+      ENCRYPTION_KEY: ${LANGFUSE_ENCRYPTION_KEY:?LANGFUSE_ENCRYPTION_KEY must be set; generate with: openssl rand -hex 32}
+      NEXTAUTH_SECRET: ${LANGFUSE_NEXTAUTH_SECRET:?LANGFUSE_NEXTAUTH_SECRET must be set; generate with: openssl rand -base64 32}
       NEXTAUTH_URL: http://localhost:3000
       LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-}
       LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-}
@@ -56,8 +56,8 @@ services:
       CLICKHOUSE_PASSWORD: clickhouse
       REDIS_HOST: redis
       REDIS_PORT: 6379
-      SALT: ${LANGFUSE_SALT:-changeme-please-set-LANGFUSE_SALT}
-      ENCRYPTION_KEY: ${LANGFUSE_ENCRYPTION_KEY:-changeme-please-set-LANGFUSE_ENCRYPTION_KEY}
+      SALT: ${LANGFUSE_SALT:?LANGFUSE_SALT must be set; generate with: openssl rand -base64 32}
+      ENCRYPTION_KEY: ${LANGFUSE_ENCRYPTION_KEY:?LANGFUSE_ENCRYPTION_KEY must be set; generate with: openssl rand -hex 32}
     networks:
       - langfuse-net
 
