@@ -340,3 +340,80 @@ Auth/summarize/echo implementation plans have converged. The remaining blocking 
 ### Decision
 
 **Cycle 3 surfaces 4 new HIGHs.** All are concrete bug shapes catchable only by adversarial source-grounding: a wrong import path, a missing Copier flag, a missing CI dependency, and a non-existent file reference. Trend is no longer monotone-decreasing (6 → 2 → 4), but the new HIGHs are NOT in the previously-fixed areas — they are in plans (06-06, 06-07, 06-08, 06-09) that the prior cycles' reviewers spent less time on. Per `.claude/rules/08-plan-convergence-workflow.md`, the convergence loop's max-cycles=3 is now exhausted. Recommended path: **manual fix** of the 4 HIGHs, then independent re-review (per "grep is not verification" memory).
+
+---
+
+# Cross-AI Plan Review — Phase 6 (Cycle 4, Final Adversarial Pass)
+
+**Reviewed at:** 2026-05-22T22:56:14Z
+**Reviewer:** Codex CLI
+**Context:** Post-manual-fix verification per .claude/rules/08-plan-convergence-workflow.md ('grep is not verification'). Adversarial framing: hunt for issues prior 3 cycles + manual fix pass missed.
+
+## Codex Review
+
+## Summary
+
+Final adversarial pass found additional HIGHs. The four manual fixes mostly address their narrow claims, but 06-06 and 06-08 still have command/data drift around Copier, and 06-10 is materially wrong against the current Phase 4 validation artifact.
+
+## Strengths
+
+- Manual fix 06-07 is source-grounded: `register()` is in `harness.registry`, positional `check_id`, and `CheckTier` is `quick | standard | slow`.
+- Manual fix 06-08 correctly adds `uv tool install copier --with copier-templates-extensions`, matching `copier.yml`’s `_jinja_extensions`.
+- Manual fix 06-09 correctly references the actual gated LLM path: `template/harness/{% if has_llm %}llm.py{% endif %}.jinja2`.
+- 06-02/03/04 now explicitly avoid the prior cwd fallback leak by requiring `VERIFY_KIT_ROOT`.
+
+## Concerns
+
+### HIGH — 06-10 assumes Phase 4 validation can short-circuit, but the source says validation has open gaps
+
+06-10 says the ceremony should short-circuit if coverage is complete and claims existing validation is likely complete: [06-10-PLAN.md](/Users/moiz/Documents/code/verify-kit/.planning/phases/06-template-self-test-documentation/06-10-PLAN.md:18), [06-10-PLAN.md](/Users/moiz/Documents/code/verify-kit/.planning/phases/06-template-self-test-documentation/06-10-PLAN.md:90).
+
+Actual source contradicts that. `04-VALIDATION.md` frontmatter says `status: gaps_identified`, `gap_count: 10`, with `HIGH: 3`: [04-VALIDATION.md](/Users/moiz/Documents/code/verify-kit/.planning/phases/04-backend-fastapi-add-on/04-VALIDATION.md:4). It then lists HIGH gaps starting at [04-VALIDATION.md](/Users/moiz/Documents/code/verify-kit/.planning/phases/04-backend-fastapi-add-on/04-VALIDATION.md:29), [04-VALIDATION.md](/Users/moiz/Documents/code/verify-kit/.planning/phases/04-backend-fastapi-add-on/04-VALIDATION.md:71), and [04-VALIDATION.md](/Users/moiz/Documents/code/verify-kit/.planning/phases/04-backend-fastapi-add-on/04-VALIDATION.md:106).
+
+`STATE.md` also says three Phase 4 validation HIGHs were filed and deferred to Phase 6: [STATE.md](/Users/moiz/Documents/code/verify-kit/.planning/STATE.md:88). 06-10 must reconcile the existing gaps/beads, not treat them as newly surfaced or likely no-op.
+
+### HIGH — 06-08 self-test matrix omits `has_db`, leaving the no-backend rows ambiguous or broken
+
+06-08 says each matrix row only passes JSON for `has_backend`, `has_llm`, `has_logfire`, and `has_fastapi_mcp`: [06-08-PLAN.md](/Users/moiz/Documents/code/verify-kit/.planning/phases/06-template-self-test-documentation/06-08-PLAN.md:111). But `copier.yml` defines `has_db` with default `true`: [copier.yml](/Users/moiz/Documents/code/verify-kit/copier.yml:173), and DB file exclusion depends on `not has_db`: [copier.yml](/Users/moiz/Documents/code/verify-kit/copier.yml:37).
+
+Existing polarity tests explicitly set `has_db=False` for no-backend renders, which is strong evidence the answer matters: [test_phase04_scaffold_polarity.py](/Users/moiz/Documents/code/verify-kit/tests/test_phase04_scaffold_polarity.py:92), [test_phase04_scaffold_polarity.py](/Users/moiz/Documents/code/verify-kit/tests/test_phase04_scaffold_polarity.py:161).
+
+Fix: each matrix row should set `has_db` explicitly. Likely `false` for `base` and `llm`, `true` for backend rows unless testing a no-DB backend cell intentionally.
+
+### HIGH — 06-06 README quickstart still omits the required Copier extension install
+
+06-06 quickstart only documents `copier copy --trust gh:m2moiz/verify-kit ...`: [06-06-PLAN.md](/Users/moiz/Documents/code/verify-kit/.planning/phases/06-template-self-test-documentation/06-06-PLAN.md:112). But `copier.yml` requires `copier_templates_extensions.TemplateExtensionLoader` and even comments that users must install Copier with `--with copier-templates-extensions`: [copier.yml](/Users/moiz/Documents/code/verify-kit/copier.yml:7), [copier.yml](/Users/moiz/Documents/code/verify-kit/copier.yml:10).
+
+06-08 correctly fixes CI with `uv tool install copier --with copier-templates-extensions`: [06-08-PLAN.md](/Users/moiz/Documents/code/verify-kit/.planning/phases/06-template-self-test-documentation/06-08-PLAN.md:117). The README must include the same prerequisite or the public quickstart can fail before rendering.
+
+## Source-Grounding Pass
+
+| Item | Status | Evidence |
+|---|---:|---|
+| `register(check_id, *, tier="standard", ...)` | VERIFIED | [registry.py.jinja2](/Users/moiz/Documents/code/verify-kit/template/harness/registry.py.jinja2:19) |
+| `CheckResult(status=..., check_id=...)` | VERIFIED | [models.py.jinja2](/Users/moiz/Documents/code/verify-kit/template/harness/models.py.jinja2:61) |
+| `CheckTier = quick | standard | slow` | VERIFIED | [models.py.jinja2](/Users/moiz/Documents/code/verify-kit/template/harness/models.py.jinja2:22) |
+| `Settings.load(cwd)` and no `get_settings` | VERIFIED | [settings.py.jinja2](/Users/moiz/Documents/code/verify-kit/template/{% if has_backend %}app{% endif %}/settings.py.jinja2:22) |
+| `create_app(cwd)` stores `app.state.settings` in lifespan | VERIFIED | [main.py.jinja2](/Users/moiz/Documents/code/verify-kit/template/{% if has_backend %}app{% endif %}/main.py.jinja2:41) |
+| `/echo` uses `EchoRequest.message`, not `text` | VERIFIED | [models.py.jinja2](/Users/moiz/Documents/code/verify-kit/template/{% if has_backend %}app{% endif %}/models.py.jinja2:14) |
+| `/summarize` binds `call_llm` in `app.api` | VERIFIED | [api.py.jinja2](/Users/moiz/Documents/code/verify-kit/template/{% if has_backend %}app{% endif %}/api.py.jinja2:15) |
+| LLM source path gated as `template/harness/{% if has_llm %}llm.py{% endif %}.jinja2` | VERIFIED | [rg output path exists](/Users/moiz/Documents/code/verify-kit/template/harness/{% if has_llm %}llm.py{% endif %}.jinja2:1) |
+| `copier-templates-extensions` required | VERIFIED | [copier.yml](/Users/moiz/Documents/code/verify-kit/copier.yml:7) |
+| `has_db` omitted from 06-08 matrix | AMBIGUOUS/HIGH | [06-08-PLAN.md](/Users/moiz/Documents/code/verify-kit/.planning/phases/06-template-self-test-documentation/06-08-PLAN.md:111), [copier.yml](/Users/moiz/Documents/code/verify-kit/copier.yml:173) |
+
+## Suggestions
+
+- Revise 06-10 to start from the existing `04-VALIDATION.md` gap inventory and linked Beads issues, then define explicit closure criteria for those three HIGHs.
+- Add `has_db` to every 06-08 matrix `data` object.
+- Add a README prerequisite line before the quickstart: `uv tool install copier --with copier-templates-extensions`, or use an equivalent one-shot `uvx --with copier-templates-extensions copier copy ...` form if that is verified.
+- Update 06-08 verification to assert `has_db` appears in every matrix include data string.
+
+## Risk Assessment
+
+Current Phase 6 plan risk remains HIGH. The hardening trio is much improved, but the self-test workflow may exercise the wrong matrix, the README quickstart may fail on a clean machine, and the Phase 4 audit closure plan is contradicted by the existing validation source of truth.
+
+## HIGH Concerns
+
+1. 06-10 Phase 4 validation short-circuit assumption contradicts `04-VALIDATION.md` open HIGH gaps: [06-10-PLAN.md](/Users/moiz/Documents/code/verify-kit/.planning/phases/06-template-self-test-documentation/06-10-PLAN.md:90), [04-VALIDATION.md](/Users/moiz/Documents/code/verify-kit/.planning/phases/04-backend-fastapi-add-on/04-VALIDATION.md:4).
+2. 06-08 matrix omits `has_db`, despite `has_db` being a live prompt/default and DB file gate: [06-08-PLAN.md](/Users/moiz/Documents/code/verify-kit/.planning/phases/06-template-self-test-documentation/06-08-PLAN.md:111), [copier.yml](/Users/moiz/Documents/code/verify-kit/copier.yml:173).
+3. 06-06 README quickstart omits the required `copier-templates-extensions` install path: [06-06-PLAN.md](/Users/moiz/Documents/code/verify-kit/.planning/phases/06-template-self-test-documentation/06-06-PLAN.md:112), [copier.yml](/Users/moiz/Documents/code/verify-kit/copier.yml:10).
