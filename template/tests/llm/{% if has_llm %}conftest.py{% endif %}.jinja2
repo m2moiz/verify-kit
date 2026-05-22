@@ -7,8 +7,8 @@ Two autouse function-scope fixtures:
    between tests (the accumulator is a contextvar — fine within a single
    test but not across them).
 
-2. ``_skip_when_no_cassette`` — first-run-clean discipline (Phase 5
-   review HIGH #7). For any test marked ``@pytest.mark.vcr``: if the
+2. ``_skip_when_no_cassette`` — first-run-clean discipline. For any
+   test marked ``@pytest.mark.vcr``: if the
    active record_mode is ``"none"`` (the CI default — see
    ``tests/conftest.py``) AND the expected cassette file does not yet
    exist on disk, the fixture calls ``pytest.skip(...)`` so the test

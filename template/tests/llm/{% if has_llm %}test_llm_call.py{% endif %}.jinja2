@@ -63,13 +63,6 @@ def span_exporter():
     observability.tracer = saved_tracer
 
 
-def _run(coro):
-    """Run an async coroutine to completion in a sync test."""
-    return asyncio.get_event_loop().run_until_complete(coro) if (
-        loop := asyncio.new_event_loop()
-    ) is None else loop.run_until_complete(coro)
-
-
 def _ar(coro):
     """Synchronously execute an async coro using a fresh event loop."""
     loop = asyncio.new_event_loop()

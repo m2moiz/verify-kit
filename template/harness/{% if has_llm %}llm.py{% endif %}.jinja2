@@ -234,16 +234,16 @@ async def call_via_litellm(
 
     cost_usd = 0.0
     try:
-        from tokencost import (
-            calculate_completion_cost,
-            calculate_prompt_cost,
-        )
+        # Use litellm's completion_cost which reads the provider's reported
+        # usage block on the response object — this matches what the provider
+        # actually billed. The previous tokencost.calculate_*_cost(string, model)
+        # path re-tokenized the prompt/completion strings with tokencost's own
+        # tokenizer, which can drift from the provider's billed tokens.
+        from litellm import completion_cost as _litellm_completion_cost
 
-        prompt_cost = calculate_prompt_cost(prompt, requested_model)
-        completion_cost = calculate_completion_cost(content, requested_model)
-        cost_usd = float(prompt_cost) + float(completion_cost)
+        cost_usd = float(_litellm_completion_cost(completion_response=response) or 0.0)
     except Exception:
-        # tokencost may not have pricing for every model — default to 0.0
+        # litellm may not have pricing for every model — default to 0.0
         # rather than fail the call. Span attribute still carries the value.
         cost_usd = 0.0
 
