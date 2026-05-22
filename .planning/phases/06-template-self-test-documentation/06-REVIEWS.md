@@ -133,3 +133,85 @@ Only one reviewer (Codex) was invoked this cycle, so "consensus" reflects the si
 ### Divergent Views
 
 N/A — single reviewer.
+
+
+---
+
+# Cycle 2 — Adversarial Codex Re-Review (2026-05-22T22:11:06Z)
+
+After commit 97e281f addressed all 6 Cycle 1 HIGHs, a second Codex review was run with adversarial framing ("assume the prior reviewer missed something").
+
+## Codex Review (Cycle 2)
+
+**Findings**
+
+**HIGH — Verification snippets now resolve the template source as `/tmp` when `VERIFY_KIT_ROOT` is unset.**  
+[06-02-PLAN.md](/Users/moiz/Documents/code/verify-kit/.planning/phases/06-template-self-test-documentation/06-02-PLAN.md:164), [06-03-PLAN.md](/Users/moiz/Documents/code/verify-kit/.planning/phases/06-template-self-test-documentation/06-03-PLAN.md:139), and [06-04-PLAN.md](/Users/moiz/Documents/code/verify-kit/.planning/phases/06-template-self-test-documentation/06-04-PLAN.md:136) all start with `cd /tmp`, then compute:
+
+```python
+src = pathlib.Path(os.environ.get('VERIFY_KIT_ROOT', pathlib.Path.cwd()))
+```
+
+If `VERIFY_KIT_ROOT` is not set, `src == /tmp`, so `copier copy ... str(src) ...` tries to copy from `/tmp`, not the verify-kit repo. This means the commit’s “hard-coded path replaced with VERIFY_KIT_ROOT env + Path.cwd fallback” fix does not actually work end-to-end. It converted an operator-specific path into a cwd leak.
+
+Fix shape: do not `cd /tmp` before deriving `src`, or require `VERIFY_KIT_ROOT` explicitly, or derive the repo root before changing cwd.
+
+**HIGH — New auth/summarize/echo scratch tests use bare `TestClient(app)` and skip FastAPI lifespan, which breaks `request.app.state.settings`.**  
+06-02 says the polarity test should run `from app.main import app; client = TestClient(app)` at [06-02-PLAN.md](/Users/moiz/Documents/code/verify-kit/.planning/phases/06-template-self-test-documentation/06-02-PLAN.md:259). 06-03 repeats the same pattern at [06-03-PLAN.md](/Users/moiz/Documents/code/verify-kit/.planning/phases/06-template-self-test-documentation/06-03-PLAN.md:193). Existing scaffold tests explicitly document that bare `TestClient(app)` skips lifespan and leaves `app.state.settings` unbound: [conftest.py.jinja2](/Users/moiz/Documents/code/verify-kit/template/tests/backend/{% if has_backend %}conftest.py{% endif %}.jinja2:25). The app only sets `app.state.settings` inside lifespan: [main.py.jinja2](/Users/moiz/Documents/code/verify-kit/template/{% if has_backend %}app{% endif %}/main.py.jinja2:41).
+
+This is not just a test-style issue. 06-02’s new `require_auth` reads `request.app.state.settings` at [06-02-PLAN.md](/Users/moiz/Documents/code/verify-kit/.planning/phases/06-template-self-test-documentation/06-02-PLAN.md:136). The planned tests will fail with `AttributeError` or will be rewritten ad hoc by the executor, weakening the forcing-function coverage.
+
+Fix shape: scratch-side tests must use `create_app(cwd=scratch)` and `with TestClient(app) as client:` after writing the intended `.env`, matching the existing backend fixture pattern.
+
+**MEDIUM — 06-02 still has internal contract drift about the LLM-only `.env.example`.**  
+The task title/files/read-first/action still say “both `.env.example` variants” and list the LLM-only root env file at [06-02-PLAN.md](/Users/moiz/Documents/code/verify-kit/.planning/phases/06-template-self-test-documentation/06-02-PLAN.md:227), then line [249](/Users/moiz/Documents/code/verify-kit/.planning/phases/06-template-self-test-documentation/06-02-PLAN.md:249) says “append” the auth slot after describing both files. Only later does line [255](/Users/moiz/Documents/code/verify-kit/.planning/phases/06-template-self-test-documentation/06-02-PLAN.md:255) say the LLM-only file is skipped. The intended fix summary is correct, but the plan still gives contradictory executor instructions.
+
+**MEDIUM — 06-04 commit strategy still says the implementation commit changes `api.py.jinja2`.**  
+The body correctly retargets `models.py.jinja2`, but the commit strategy still says the first commit is “api.py.jinja2 changes” at [06-04-PLAN.md](/Users/moiz/Documents/code/verify-kit/.planning/phases/06-template-self-test-documentation/06-04-PLAN.md:240). This is residual symbol/file drift, not execution-blocking by itself.
+
+**Cycle-2 Fix Verification**
+
+1. `/healthz` exclusion moved into `require_auth`: yes, plan text now uses `request.url.path == "/healthz"` and removed `api.py` route edits.
+2. Settings access uses `request.app.state.settings.VERIFYKIT_AUTH_TOKEN`: yes.
+3. 06-04 retargeted `app/models.py.jinja2`, `EchoRequest.message`, `_CONTROL_CHARS_ECHO`: yes, with stale commit-strategy wording.
+4. Backend `.env.example` path corrected: mostly yes, but Task 3 still contradicts itself about the LLM-only root file.
+5. Monkeypatch target changed to `app.api.call_llm`: yes in target name, but scratch test instructions import `app` as the FastAPI instance first and need care to avoid shadowing the package.
+6. Planning IDs stripped from rendered `.env.example`: yes in the canonical comment and grep guard.
+
+**Hunt Target Summary**
+
+- cwd/path leaks: additional HIGH found in `cd /tmp` + `Path.cwd()` fallback.
+- statements after `return`: no additional dead-code-after-return issue found in the changed canonical snippets.
+- subprocess missing `cwd=`: present in the verification snippets; combined with `cd /tmp`, it causes the HIGH source-root leak above.
+- cross-plan contract drift: no new HIGH, but 06-02 env-file instructions drift internally.
+- fixes from `97e281f`: fixes mostly landed, but the path portability fix is broken end-to-end.
+- symbol drift: `EchoRequest.message`, `_CONTROL_CHARS_ECHO`, `/healthz` mechanism are corrected; residual `api.py.jinja2` wording remains in 06-04 commit strategy.
+
+---
+
+## Cycle 2 Consensus Summary
+
+### Newly Raised HIGHs (2)
+
+1. **VERIFY_KIT_ROOT cwd-fallback leak in verification snippets** — 06-02/03/04 all do `cd /tmp` then `Path(os.environ.get('VERIFY_KIT_ROOT', Path.cwd()))`. When the env var is unset, `src` resolves to `/tmp`, not the verify-kit repo. The bonus MEDIUM fix from commit 97e281f is broken end-to-end and converted a hard-coded-path issue into a cwd-leak issue (REVIEW-CHECKLIST §1).
+2. **Bare `TestClient(app)` skips lifespan; `request.app.state.settings` will be unbound** — 06-02 polarity test and 06-03 monkeypatch test both use `TestClient(app)` directly without the lifespan context manager. The new `require_auth` reads `request.app.state.settings.VERIFYKIT_AUTH_TOKEN`, which is only set inside lifespan (verified in template/.../main.py.jinja2:41 and conftest.py.jinja2:25). Tests will AttributeError or get silently rewritten by the executor, defeating the forcing-function (REVIEW-CHECKLIST §3 cross-plan contract drift between plan tests and existing scaffold fixtures).
+
+### Fix-Verification Outcomes (Cycle 1 HIGHs)
+
+| # | Cycle 1 HIGH | Cycle 2 Verdict |
+|---|--------------|-----------------|
+| 1 | /healthz exclusion in require_auth body | ✅ FIXED |
+| 2 | Settings read via request.app.state.settings.VERIFYKIT_AUTH_TOKEN | ✅ FIXED (but tests don't trigger lifespan — see new HIGH 2) |
+| 3 | 06-04 retargeted to models.py.jinja2, EchoRequest.message, _CONTROL_CHARS_ECHO | ✅ FIXED (residual prose drift in commit strategy — MEDIUM) |
+| 4 | .env.example path corrected to template/{% if has_backend %}app{% endif %}/.env.example.jinja2 | ✅ FIXED (residual internal contradiction about LLM-only root file — MEDIUM) |
+| 5 | Monkeypatch target → app.api.call_llm | ✅ FIXED (test instructions may shadow `app` symbol — caution flagged) |
+| 6 | Planning IDs stripped + grep guard | ✅ FIXED |
+
+### Remaining MEDIUMs (2)
+
+- 06-02 internal contract drift about LLM-only `.env.example` (task title vs. line 255 skip)
+- 06-04 commit strategy still says first commit is "api.py.jinja2 changes" — residual symbol drift
+
+### Decision
+
+**Cycle 2 surfaces 2 new HIGHs.** Both are concrete bug shapes (cwd-leak, lifespan-skip) that would silently break the test snippets at execute-phase time. The convergence loop should advance to Cycle 3 to address them.
