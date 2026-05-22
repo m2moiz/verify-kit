@@ -8,11 +8,11 @@
 
 ## Phases
 
-- [ ] **Phase 1: Template Skeleton & Toolchain** — Copier engine, mise/just/Makefile shim, devcontainer toggle, base CI, AGENTS.md, editor-agnostic conventions
-- [ ] **Phase 2: Universal Harness Core** — Python `harness/` package: verify aggregator, structlog/Rich logging, trace_id middleware, cache, format contracts, miette errors, UX polish, OTel scaffold
-- [ ] **Phase 3: Agent Integration & IDE** — MCP server (13 tools + CLI twins), Claude Code hooks + skills, per-agent rules files (CLAUDE/cursor/windsurf/copilot), per-agent MCP snippets, .vscode files with problem matchers
+- [x] **Phase 1: Template Skeleton & Toolchain** — Copier engine, mise/just/Makefile shim, devcontainer toggle, base CI, AGENTS.md, editor-agnostic conventions (completed 2026-05-18; VERIFICATION + SECURITY + UAT all PASSED)
+- [x] **Phase 2: Universal Harness Core** — Python `harness/` package: verify aggregator, structlog/Rich logging, trace_id middleware, cache, format contracts, miette errors, UX polish, OTel scaffold (completed 2026-05-18; VERIFICATION status: gaps_found — SC#1 `<2s first-run` budget partial, deferred to Phase 6 hardening)
+- [x] **Phase 3: Agent Integration & IDE** — MCP server (13 tools + CLI twins), Claude Code hooks + skills, per-agent rules files (CLAUDE/cursor/windsurf/copilot), per-agent MCP snippets, .vscode files with problem matchers (completed 2026-05-19; VERIFICATION PASSED 5/5 must-haves, 62/66 tests)
 - [x] **Phase 4: Backend (FastAPI) Add-on** — opt-in `has_backend=true`: 12 default libs + opt-in `has_logfire`/`has_fastapi_mcp`, Dockerfile + docker-compose, `/__debug/*` wired, schemathesis fuzz in verify, Testcontainers integration tests (completed 2026-05-21)
-- [x] **Phase 5: LLM Add-on** — opt-in `has_llm=true`: pydantic-ai + instructor + litellm + tokencost + autoevals + vcrpy, `@llm_call` / `@cost_budget` decorators, Langfuse Cloud/self-host options, Promptfoo + nightly-eval workflow (completed 2026-05-21)
+- [x] **Phase 5: LLM Add-on** — opt-in `has_llm=true`: pydantic-ai + instructor + litellm + tokencost + autoevals + vcrpy, `@llm_call` / `@cost_budget` decorators, Langfuse Cloud/self-host options, Promptfoo + nightly-eval workflow (completed 2026-05-22; 4 OSS-blocker beads filed: verify-kit-3u2/yr7/93h/1v6)
 - [ ] **Phase 6: Template Self-Test & Documentation** — repo's own CI runs `copier copy` onto scratch dir per add-on matrix and asserts `just verify` exits 0; README + CHANGELOG (SemVer with consumer-breaking-changes callout) + CONTRIBUTING + architecture diagram + dual-audience checklist enforcement
 
 ## Phase Details
