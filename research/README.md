@@ -21,7 +21,8 @@ last_updated: 2026-05-17
 | All key decisions with rationale | [[00-decision-log]] |
 | Why we rejected X | [[00-stack-decisions#Explicitly rejected]] |
 | The dual-audience checklist | [[00-architecture-overview#Dual-audience checklist]] |
-| Session retrospectives + mistakes log | [[synthesis/session-2026-05-18-phase-1-and-2-buildout]] |
+| Session retrospectives + mistakes log | [[synthesis/session-2026-05-18-phase-1-and-2-buildout]], [[synthesis/session-2026-05-22-phase-5-llm-and-verification]] |
+| **Atomic learnings (reusable patterns)** | [[learnings/README]] |
 | Vault tooling (audit script, etc.) | [[scripts/README]] |
 
 ## 🧪 Research waves
