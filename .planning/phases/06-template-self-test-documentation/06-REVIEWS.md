@@ -476,3 +476,32 @@ Fix: add a Phase 6 scrub task or a broad rendered-output assertion for generated
 `bd export` could not run because the Dolt server is unreachable under the current sandbox (`127.0.0.1:3307` connection denied).
 
 HIGHs FOUND: 2
+
+---
+
+## Cycle 6 — Codex Adversarial Review (2026-05-22T23:48:11Z)
+
+**Framing:** Five prior reviewers cleared HIGHs across 5 cycles plus 3 manual fix passes. Codex invoked as adversary tasked to find what they missed.
+
+### Codex Review
+
+HIGH FOUND — 06-02’s new root backend `.env.example` is excluded in backend-only renders.
+
+06-02 adds `template/{% if has_backend %}.env.example{% endif %}.jinja2` and says backend renders must expose root `.env.example` with `VERIFYKIT_AUTH_TOKEN=`. But `copier.yml` still excludes root `.env.example` whenever `has_llm=false`:
+
+- `06-02-PLAN.md:241-278` adds backend root `.env.example`
+- `copier.yml:49-50` excludes `/.env.example` and `/.env.example.jinja2` under `{% if not has_llm %}`
+- `06-08-PLAN.md:111-116` includes a `backend` matrix row with `has_backend=true, has_llm=false`
+
+So the backend-only row, which is one of the required five matrix cells, will not render the new root auth env example. That means the cycle-5 env-path fix does not actually cover `+backend`, and the consumer-facing auth setup is missing in that supported scaffold.
+
+Fix shape: change the root env exclusion from “not has_llm” to a condition that preserves root `.env.example` when either backend or LLM needs it, e.g. exclude only when `not has_llm and not has_backend`, then add a render assertion for `has_backend=true, has_llm=false` that `scratch/.env.example` exists and contains `VERIFYKIT_AUTH_TOKEN=`.
+
+I checked 06-05 release-please, 06-WAVES ordering, 06-10 reconciliation, 06-06 README auth references, and the broadened Pattern 6 scrub. I found MEDIUM/stale-plan drift in Pattern 6 coverage and 06-WAVES metadata, but the only issue I’d raise to HIGH is the `_exclude` conflict above.
+
+### Cycle 6 Summary
+
+- HIGHs found: **1** (06-02 / copier.yml `_exclude` conflict with new root `.env.example` for `+backend` matrix row)
+- MEDIUM/LOW: noted but not raised (Pattern 6 coverage drift, 06-WAVES metadata)
+- Locations checked: 06-05 release-please, 06-WAVES ordering, 06-10 reconciliation, 06-06 README auth refs, 06-01 Pattern 6 scrub task, copier.yml `_exclude` block (lines 49-50)
+
