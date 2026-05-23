@@ -6,8 +6,9 @@ from sse_starlette.sse import EventSourceResponse
 from app.models import EchoRequest, EchoResponse, HealthResponse
 from app.services import echo
 {% if has_llm %}
+import re
 from time import monotonic
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 # Phase 5 D-03/LLM-03: every verify-kit-shipped LLM call site routes through
 # harness.llm.call_llm — it owns the USE_CLAUDE_CODE_SDK switch and the OTel
 # gen_ai.* contract. Direct imports of typed-agent frameworks are documented
@@ -54,8 +55,37 @@ async def events_stream() -> EventSourceResponse:
 {% if has_llm %}
 
 
+# Starter-grade prompt-injection defenses for /summarize. These are layered
+# checks that run at Pydantic validation time, BEFORE the LLM call:
+#   1. Length cap (Field max_length=5000) — bounds cost runaway (T-06-08).
+#   2. Control-char strip — removes zero-width / null bytes that could
+#      smuggle injection markers past the denylist (T-06-09).
+#   3. Static injection-marker denylist — catches the three obvious shapes
+#      (T-06-07). NOT bulletproof: per OWASP LLM01, prompt injection cannot
+#      be fully prevented by input filtering alone; consumers MUST add
+#      output filtering + classifier prefilter + system-prompt sandwiching
+#      for production use. See README LLM section for the full caveat.
+#   4. Content-Type enforcement — Pydantic-typed request param means
+#      FastAPI returns 422 for non-JSON Content-Type by default.
+_CONTROL_CHARS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+_INJECTION_MARKERS = [
+    re.compile(r"(?i)\b(ignore|disregard|forget)\s+(all\s+)?previous\s+(instructions|prompts)"),
+    re.compile(r"<\|im_(start|end)\|>"),
+    re.compile(r"(?i)###\s*system\b"),
+]
+
+
 class SummarizeRequest(BaseModel):
-    text: str = Field(..., description="Text to summarize in one sentence.")
+    text: str = Field(..., min_length=1, max_length=5000, description="Text to summarize in one sentence.")
+
+    @field_validator("text")
+    @classmethod
+    def _strip_and_check(cls, v: str) -> str:
+        v = _CONTROL_CHARS.sub("", v)
+        for marker in _INJECTION_MARKERS:
+            if marker.search(v):
+                raise ValueError("input contains a disallowed pattern")
+        return v
 
 
 class SummarizeResponse(BaseModel):
