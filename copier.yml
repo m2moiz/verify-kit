@@ -46,8 +46,8 @@ _exclude:
   - "{% if not has_llm %}tests/cassettes/.gitkeep{% endif %}"
   - "{% if not has_llm %}docker-compose.langfuse.yml{% endif %}"
   - "{% if not has_llm %}.github/workflows/nightly-eval.yml{% endif %}"
-  - "{% if not has_llm %}/.env.example{% endif %}"
-  - "{% if not has_llm %}/.env.example.jinja2{% endif %}"
+  - "{% if not has_llm and not has_backend %}/.env.example{% endif %}"
+  - "{% if not has_llm and not has_backend %}/.env.example.jinja2{% endif %}"
   - "{% if llm_backend != 'langfuse-self-host' %}docker-compose.langfuse.yml{% endif %}"
 
 _message_before_copy: "Welcome to verify-kit. ~10 prompts grouped as Identity / Agent integrations / Add-ons / Optional."
