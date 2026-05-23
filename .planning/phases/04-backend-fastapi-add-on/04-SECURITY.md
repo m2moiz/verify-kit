@@ -96,6 +96,7 @@ because Phase 4 plans did not declare a threat model block.
 | Audit Date | Threats Total | Closed | Open | Run By |
 |------------|---------------|--------|------|--------|
 | 2026-05-21 | 14 | 14 | 0 | gsd:secure-phase (code-grep verification, adversarial stance) |
+| 2026-05-23 | 14 | 14 | 0 | Re-audit (Phase 6 closure per 06-10): 04-SECURITY.md frontmatter shows `threats_open == 0`; prior audit still valid; skipping full `/gsd:secure-phase 4` invocation as no-op short-circuit per plan §10. |
 
 ---
 
