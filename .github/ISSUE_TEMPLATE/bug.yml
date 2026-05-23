@@ -1,0 +1,63 @@
+name: Bug report
+description: Report a bug or unexpected behavior in verify-kit.
+title: "[Bug]: "
+labels: [bug, triage]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for filing a bug! Please fill in the form below so the maintainer
+        can reproduce the issue quickly.
+
+  - type: input
+    id: version
+    attributes:
+      label: verify-kit version
+      description: What version are you running? (`grep '^version' pyproject.toml` or look at the git tag.)
+      placeholder: "0.1.0"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: addons
+    attributes:
+      label: Which add-ons did you enable?
+      description: Pick all that apply. Leave empty for the base (no add-ons) scaffold.
+      multiple: true
+      options:
+        - "(none — base)"
+        - "has_backend"
+        - "has_llm"
+        - "has_logfire"
+        - "has_fastapi_mcp"
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: A clear sequence of commands and expected vs. actual output.
+      placeholder: |
+        1. `copier copy gh:m2moiz/verify-kit my-project`
+        2. `cd my-project`
+        3. `just verify`
+        4. Expected exit 0, got exit N with message X
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: Paste `.verify/report.json` or the failing terminal output.
+      render: shell
+
+  - type: input
+    id: env
+    attributes:
+      label: OS / runner
+      description: Operating system, architecture, and (if relevant) CI runner.
+      placeholder: "macOS 14.5 arm64 / Ubuntu 24.04 x86_64 / Windows WSL2"
+    validations:
+      required: true
