@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v0.1
 milestone_name: milestone
 status: executing
-last_updated: "2026-05-21T22:50:24.484Z"
-last_activity: 2026-05-21 -- Phase 5 Plan 05-01 complete (path-gating contract + 11-pkg deps + LLM env destinations)
+last_updated: "2026-05-23T00:00:00.000Z"
+last_activity: 2026-05-23 -- Phase 6 Plan 06-10 complete (Phase 4 secure-phase + validate-phase deferred audits closed; 3 validation HIGHs reconciled as still-applicable v0.1.1 work)
 progress:
   total_phases: 6
   completed_phases: 3
@@ -75,8 +75,8 @@ After 04-03 wave-promotion fix (wave 2 → wave 3 to honor its `depends_on: [04-
 
 - [x] Execute Phase 4 waves 1-5
 - [x] Phase 4 verify-work (gaps closed in 59d3ae5)
-- [ ] Phase 4 secure-phase (optional follow-up; threat model unaudited)
-- [ ] Phase 4 validate-phase (optional follow-up; Nyquist coverage unaudited)
+- [x] Phase 4 secure-phase (re-run 2026-05-23 per 06-10; short-circuit: threats_open == 0, prior audit still valid)
+- [x] Phase 4 validate-phase (re-run 2026-05-23 per 06-10; reconciled 3 deferred HIGHs (plk/c5a/r7v) — all still applicable, ship as v0.1.1 work; 0 new gaps)
 - [ ] Plan Phase 5 (LLM add-on)
 
 ### Blockers
