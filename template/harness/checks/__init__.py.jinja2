@@ -1,7 +1,7 @@
 """harness.checks — trigger-import every check submodule so @register() fires.
 
 Importing this subpackage is the side-effecting step that populates
-`harness.registry._checks`. Plan 02-06's CLI imports this package once at
+`harness.registry._checks`. harness.cli imports this package once at
 startup; tests import it to introspect the catalog.
 
 This module exports nothing — it exists solely for the import side-effect.
@@ -14,11 +14,11 @@ from harness.checks import just_list as _just_list  # noqa: F401
 from harness.checks import lint as _lint  # noqa: F401
 from harness.checks import format as _format  # noqa: F401
 {% if has_backend %}
-# Backend slice check (Plan 04-07) — imported for @register side-effect.
+# Backend slice check — imported for @register side-effect.
 from harness.checks import backend as _backend  # noqa: F401
 {% endif %}
 {% if has_llm %}
-# Optional eval check (Plan 05-03 / D-15) — imported for @register side-effect.
+# Optional eval check — imported for @register side-effect.
 # Returns status="skip" with a hint pointing at `just eval`; discoverable via
 # `verify-kit list-checks` but never runs in the umbrella `just verify`.
 from harness.checks import eval as _eval  # noqa: F401

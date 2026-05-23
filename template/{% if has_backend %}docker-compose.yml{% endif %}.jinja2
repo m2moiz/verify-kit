@@ -25,7 +25,7 @@ services:
 {% if has_db %}
 
   postgres:
-    # Image pin: postgres:16-alpine — must match Testcontainers fixture in Plan 04-03 T05.
+    # Image pin: postgres:16-alpine — must match the Testcontainers fixture pin used in the integration test suite.
     image: postgres:16-alpine
     environment:
       POSTGRES_USER: postgres

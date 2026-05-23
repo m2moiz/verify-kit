@@ -63,10 +63,11 @@ def create_app(cwd: Path | None = None) -> FastAPI:
     app = FastAPI(title="app", lifespan=lifespan)
     app.state.cwd = cwd
 
-    # ── Middleware registration (cycle-3 HIGH C: LIFO semantics) ───────────
+    # ── Middleware registration (LIFO semantics) ──────────────────────────
     # Register in REVERSE of the desired outer→inner stack. Starlette wraps
-    # last-registered around all prior ones. See the comment block at the top
-    # of this file for the full reasoning.
+    # last-registered around all prior ones — so register the secure-headers
+    # outermost layer LAST and pyinstrument innermost layer FIRST. See the
+    # comment block at the top of this file for the full reasoning.
 
     # 1. pyinstrument (?profile=true) — registered FIRST so it ends up INNERMOST.
     @app.middleware("http")
@@ -84,9 +85,9 @@ def create_app(cwd: Path | None = None) -> FastAPI:
     #    this middleware's `dispatch` runs, CorrelationIdMiddleware (registered
     #    AFTER this one, so OUTER) has already set the contextvar — hence
     #    `correlation_id.get()` returns the inbound or generated UUID.
-    #    Addresses Codex HIGH #2: without this, the API-05/API-06 contract
-    #    (response header + log line + outbound httpx all share the same
-    #    X-Request-ID) is not actually proven.
+    #    Without this, the API-05/API-06 contract (response header + log line
+    #    + outbound httpx all share the same X-Request-ID) is not actually
+    #    proven end-to-end.
     @app.middleware("http")
     async def structlog_access_log(request: Request, call_next):
         from asgi_correlation_id import correlation_id as _cid
@@ -110,7 +111,8 @@ def create_app(cwd: Path | None = None) -> FastAPI:
     #    generator so arbitrary inbound IDs (e.g. "my-custom-id" from upstream
     #    services or client tests) are accepted unchanged. Default
     #    asgi-correlation-id 4.3 validator is `is_valid_uuid4` which silently
-    #    rejects non-UUID inbound values — Codex HIGH #3.
+    #    rejects non-UUID inbound values — disable it so the request-id flow
+    #    survives upstream-set non-UUID identifiers.
     import uuid as _uuid
     app.add_middleware(
         CorrelationIdMiddleware,
@@ -133,7 +135,8 @@ def create_app(cwd: Path | None = None) -> FastAPI:
 
     # has_logfire opt-in: auto-instrument FastAPI + httpx + LLM SDKs.
     # Inert when LOGFIRE_TOKEN is unset — local stdout sink only.
-    # Addresses Codex MEDIUM (REVIEWS-RESPONSE.md — logfire boot noise).
+    # The explicit send_to_logfire=False branch silences the initialization
+    # warning logfire emits at import time when no token is configured.
     {% if has_backend and has_logfire %}
     import os as _os
     import logfire

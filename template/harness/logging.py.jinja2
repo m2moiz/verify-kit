@@ -50,7 +50,7 @@ def _add_trace_id(
     """Inject the HARN-04 trace_id contextvar into every log event.
 
     Lazily imported so ``harness.logging`` does not hard-depend on
-    ``harness.trace_id`` at module load (Plan 02-01 owns trace_id; this
+    ``harness.trace_id`` at module load (the trace_id module owns the contextvar; this
     plan runs in parallel). When the import fails (very early bootstrap)
     the processor degrades to a no-op rather than raising.
     """

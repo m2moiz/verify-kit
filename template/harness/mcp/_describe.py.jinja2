@@ -1,7 +1,7 @@
-"""harness.mcp._describe — shared `describe` payload builder (Plan 03-01 T04).
+"""harness.mcp._describe — shared `describe` payload builder.
 
 Both the CLI ``verify-kit describe`` command and the MCP ``describe`` tool
-call :func:`describe_envelope` so the byte-identical contract (Plan 03-01
+call :func:`describe_envelope` so the byte-identical contract (Phase 3
 T08 Category A) is enforced by construction — there's only one payload
 builder.
 
@@ -30,15 +30,15 @@ def describe_envelope() -> dict:
     """Return the FMT-04 introspection envelope as a plain dict.
 
     Shape is identical to the JSON that ``verify-kit describe --format=json``
-    emits (Plan 03-01 T08 Category A).
+    emits.
     """
     commands_info = [
         {"name": "verify", "help": "Run verification checks."},
         {"name": "list-checks", "help": "List registered checks."},
         {"name": "describe", "help": "Emit the introspection envelope."},
         {"name": "trace", "help": "Render the most recent verify-kit trace."},
-        {"name": "mcp", "help": "verify-kit MCP server (Plan 03-01)."},
-        {"name": "ralph", "help": "Ralph loop wrapper (Plan 03-02)."},
+        {"name": "mcp", "help": "verify-kit MCP server."},
+        {"name": "ralph", "help": "Ralph loop wrapper."},
     ]
     payload = {
         "version": "1",

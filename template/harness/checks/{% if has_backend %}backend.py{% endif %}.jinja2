@@ -49,8 +49,8 @@ def run(cwd: Path) -> CheckResult:
             ),
         )
 
-    # Step 2: schemathesis schema-fuzz. Cycle-3 fix (HIGH F / cycle-2 PARTIAL #4):
-    # the cycle-2 plan SKIPPED schemathesis when the live app was unreachable,
+    # Step 2: schemathesis schema-fuzz. An earlier implementation SKIPPED
+    # schemathesis entirely when the live app was unreachable,
     # so `just verify` (which does NOT start docker) never ran the fuzz — API-18
     # was unproven. The umbrella check now ALWAYS runs schemathesis. If the live
     # app is reachable, we fuzz the LIVE OpenAPI (over-network — the canonical
@@ -98,7 +98,7 @@ def run(cwd: Path) -> CheckResult:
     else:
         # In-process path: fuzz via ASGITransport using the T07 helper.
         # Calls harness.checks.backend_inprocess_fuzz (the sibling file
-        # written by Plan 04-07 T07). Using subprocess keeps the heavy
+        # written by the in-process fuzz module). Using subprocess keeps the heavy
         # hypothesis engine isolated from the harness runner process.
         r2 = subprocess.run(
             [

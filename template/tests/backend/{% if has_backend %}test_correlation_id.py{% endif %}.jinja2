@@ -17,7 +17,7 @@ def test_x_request_id_echoed_when_provided(client_dev):
 
     Requires CorrelationIdMiddleware to be configured with `validator=None` (or a
     permissive validator) — default UUID4 validator silently rejects non-UUID
-    inbound values. See Plan 04-02 T07 middleware config.
+    inbound values. See the middleware-registration block in app/main.py.
     """
     r = client_dev.get("/healthz", headers={"X-Request-ID": "my-custom-id"})
     rid = r.headers.get("x-request-id") or r.headers.get("X-Request-ID")

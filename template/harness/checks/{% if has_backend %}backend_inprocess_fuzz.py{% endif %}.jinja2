@@ -5,7 +5,7 @@ on localhost:8000 is unreachable. Loads `app.main:create_app`, constructs the
 ASGI app, and runs schemathesis against it in-process via ASGITransport so no
 requests leave the process and no socket bind is required.
 
-This file closes the cycle-3 HIGH F / cycle-2 PARTIAL #4 gap: previously,
+This file closes the silent-skip gap: previously,
 `just verify` (which does NOT bring up docker) silently skipped the
 schemathesis fuzz step, leaving API-18 unproven in the umbrella verify path.
 

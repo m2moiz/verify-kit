@@ -9,7 +9,7 @@ Implements HARN-08 and Decisions 2.1–2.4:
 - ``PRAGMA journal_mode=WAL`` on every connection so concurrent ``pytest -n``
   test runs do not crash with ``database is locked`` (R3 mitigation)
 - ``sqlite3.DatabaseError`` is caught and re-raised as :class:`CacheCorruptError`
-  so the CLI (Plan 02-06) can map it to ``EXIT_CACHE_CORRUPT = 10``
+  so the CLI can map it to ``EXIT_CACHE_CORRUPT = 10``
 
 Public surface: ``CacheStore``, ``make_cache_key``, ``hash_inputs``,
 ``get_tool_version``, ``CacheCorruptError``.
@@ -75,7 +75,7 @@ _TOTAL_SIZE = "SELECT COALESCE(SUM(size_bytes),0) FROM results"
 class CacheCorruptError(Exception):
     """Raised when ``.verify/cache.db`` cannot be opened / read.
 
-    CLI bridge: Plan 02-06's CLI catches this and exits with
+    CLI bridge: harness.cli catches this and exits with
     ``EXIT_CACHE_CORRUPT = 10`` (see ``harness.models``). The user runs
     ``just verify-clean`` to delete the file and rebuild.
     """
@@ -237,7 +237,7 @@ class CacheStore:
         """LRU-evict the oldest 10% when total size exceeds ``max_bytes``.
 
         Returns the number of rows evicted (0 if under cap). Called by the
-        runner facade (Plan 02-06) before returning the report so the cache
+        runner facade before returning the report so the cache
         cannot grow without bound between runs.
         """
         with self._conn() as conn:

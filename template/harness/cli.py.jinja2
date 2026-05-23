@@ -1,4 +1,4 @@
-"""harness.cli — Typer multi-command surface for verify-kit (Plan 02-06).
+"""harness.cli — Typer multi-command surface for verify-kit.
 
 Commands:
     verify       — run checks, emit chosen format, ALWAYS write 3 disk reports.
@@ -280,8 +280,8 @@ def describe(
 ) -> None:
     """Emit the FMT-04 introspection envelope as JSON.
 
-    Byte-identical with the MCP ``describe`` tool (Plan 03-01 T08 Cat A) —
-    both go through :func:`harness.mcp._describe.describe_envelope`.
+    Byte-identical with the MCP ``describe`` tool — both go through
+    :func:`harness.mcp._describe.describe_envelope`.
     """
     if output_format != "json":
         matches = suggest(output_format, ["json"])
@@ -323,7 +323,7 @@ def trace(
 
     trace_data = _jaeger.fetch_latest_trace()
     if output_format == "json":
-        # Byte-identical with MCP trace_last tool (Plan 03-01 T08 Cat A).
+        # Byte-identical with the MCP trace_last tool.
         payload = trace_data if trace_data is not None else {"status": "no_traces"}
         sys.stdout.write(json.dumps(payload))
         sys.stdout.write("\n")
@@ -432,10 +432,10 @@ def ralph_status_cmd(
         raise typer.Exit(code=EXIT_BAD_INPUT)
 
 
-# ── mcp serve (Plan 03-01 T05) ──────────────────────────────────────────────
+# ── mcp serve ───────────────────────────────────────────────────────────────
 
 mcp_app = typer.Typer(
-    help="verify-kit MCP server (Plan 03-01).",
+    help="verify-kit MCP server.",
     no_args_is_help=True,
 )
 app.add_typer(mcp_app, name="mcp")

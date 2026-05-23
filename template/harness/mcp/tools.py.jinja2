@@ -1,4 +1,4 @@
-"""harness.mcp.tools — register the 13 verify-kit MCP tools (Plan 03-01 T04).
+"""harness.mcp.tools — register the 13 verify-kit MCP tools.
 
 Canonical roster (set equality with MCP-02 §2.2 of 03-RESEARCH.md):
 
@@ -11,7 +11,7 @@ Each tool function:
        by ``harness.mcp.server.serve``). NEVER reads the process CWD.
     2. Delegates to the same Python helper the CLI twin uses, so a CLI
        ``--format=json`` invocation and the MCP tool's text result are
-       byte-identical after JSON normalization (Plan 03-01 T08 contract).
+       byte-identical after JSON normalization.
     3. Sets ``ToolAnnotations(readOnlyHint=..., destructiveHint=...,
        idempotentHint=...)`` to the §2.2 table values.
 
@@ -24,7 +24,7 @@ Smoke + verify_check check IDs:
     ``smoke`` runs the registry's ``quick`` tier (no explicit filter — the
     cheapest real registered check). ``verify_check`` defaults to
     ``mise.toml.valid`` (Phase-2 quick check) when callers omit ``name``.
-    Both match the Plan 03-01 T08 CLI twins exactly.
+    Both match the CLI twins exactly (byte-identical MCP↔CLI contract).
 """
 from __future__ import annotations
 
@@ -127,7 +127,7 @@ def register_tools(mcp: FastMCP, *, cwd: Path) -> None:
     def describe() -> dict:
         """Emit the FMT-04 introspection envelope (commands, schemas, checks)."""
         # Built via the same helper the CLI ``describe`` command uses, so the
-        # byte-identical CLI↔MCP equality test passes (Plan 03-01 T08).
+        # byte-identical CLI↔MCP equality test passes.
         from harness.mcp._describe import describe_envelope
 
         result = describe_envelope()

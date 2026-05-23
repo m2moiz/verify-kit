@@ -20,15 +20,15 @@ dependencies = [
     "opentelemetry-api==1.41.1",
     "opentelemetry-sdk==1.41.1",
     "opentelemetry-exporter-otlp-proto-grpc==1.41.1",
-    # MCP server (Plan 03-01). fastmcp pulls `mcp` + `starlette`; we declare
-    # them explicitly so the bearer-auth middleware import (Plan 03-01 T03)
-    # and ToolAnnotations import (Plan 03-01 T04) are always satisfiable.
-    "fastmcp>=3.3,<4",  # bumped from >=2.0,<3.0 — pydantic-ai 1.100 transitively requires fastmcp>=3.3 via pydantic-ai-slim[fastmcp]; Phase 3 plans must validate against 3.x APIs when executed (bearer-auth + ToolAnnotations imports may have moved)
+    # MCP server dependencies. fastmcp pulls `mcp` + `starlette`; we declare
+    # them explicitly so the bearer-auth middleware import and
+    # ToolAnnotations import are always satisfiable.
+    "fastmcp>=3.3,<4",  # pydantic-ai 1.100 transitively requires fastmcp>=3.3 via pydantic-ai-slim[fastmcp]; validate against 3.x APIs (bearer-auth + ToolAnnotations import paths may have moved)
     "mcp>=1.0",
     "starlette>=0.37",
     "uvicorn>=0.30",
 {% if has_backend %}
-    # FastAPI backend add-on (Plan 04-02)
+    # FastAPI backend add-on
     "fastapi[standard]>=0.115",
     "pydantic-settings>=2.5",
     "asgi-correlation-id>=4.3",
@@ -41,27 +41,27 @@ dependencies = [
     "dirty-equals>=0.8",
 {% endif %}
 {% if has_backend and has_db %}
-    # Async DB stack (Plan 04-03)
+    # Async DB stack
     "sqlalchemy[asyncio]>=2.0",
     "asyncpg>=0.29",
     "alembic>=1.13",
 {% endif %}
 {% if has_backend and has_logfire %}
-    # Logfire opt-in (Plan 04-06) — auto-traces FastAPI + httpx + LLM SDKs
+    # Logfire opt-in — auto-traces FastAPI + httpx + LLM SDKs
     "logfire>=0.50",
 {% endif %}
 {% if has_backend and has_fastapi_mcp %}
-    # FastAPI-MCP opt-in (Plan 04-06) — mounts all routes as MCP tools
+    # FastAPI-MCP opt-in — mounts all routes as MCP tools
     "fastapi-mcp>=0.3",
 {% endif %}
 {% if has_llm %}
-    # LLM add-on runtime deps (Plan 05-01)
-    "pydantic-ai-slim[anthropic,openai]>=1.100,<2",  # was "pydantic-ai" meta-pkg — that transitively pulls [mistral] which needs otel-semantic-conventions 0.60b1,<0.61 conflicting with Phase 2 otel-sdk==1.41.1 (which pins 0.62b1). Slim + explicit provider extras avoids the conflict.
+    # LLM add-on runtime deps
+    "pydantic-ai-slim[anthropic,openai]>=1.100,<2",  # slim + explicit provider extras avoids the otel-semantic-conventions version conflict the full meta-package introduces via [mistral] (needs 0.60b1,<0.61 while otel-sdk==1.41.1 pins 0.62b1)
     "instructor>=1.15,<2",
     "litellm>=1.85,<2",
     "tokencost>=0.1.26",
     "autoevals>=0.2,<0.3",
-    "opentelemetry-instrumentation-httpx>=0.62b1,<0.63",  # matches Phase 2 otel-sdk==1.41.1 -> semantic-conventions==0.62b1 (beads verify-kit-x60)
+    "opentelemetry-instrumentation-httpx>=0.62b1,<0.63",  # must match otel-sdk==1.41.1 -> semantic-conventions==0.62b1
     "traceloop-sdk>=0.60,<1",
     "claude-agent-sdk>=0.2.83",
     "langfuse>=4.6,<5",
@@ -78,17 +78,17 @@ dev = [
     "pytest-asyncio>=0.24",
     "httpx>=0.27",
     "respx>=0.21",
-    # schemathesis API fuzz testing (Plan 04-07). Pinned to 4.x because the
-    # justfile recipe uses 4.x-only flags (--max-response-time replaced 3.x's
-    # --hypothesis-deadline; was caught by 04-VERIFICATION.md gap 1 follow-up).
+    # schemathesis API fuzz testing. Pinned to 4.x because the justfile recipe
+    # uses 4.x-only flags (--max-response-time, which replaced 3.x's
+    # --hypothesis-deadline).
     "schemathesis>=4,<5",
 {% endif %}
 {% if has_backend and has_db %}
-    # Testcontainers for DB integration tests (Plan 04-03)
+    # Testcontainers for DB integration tests
     "testcontainers[postgres]>=4.7",
 {% endif %}
 {% if has_llm %}
-    # LLM add-on dev deps (Plan 05-01)
+    # LLM add-on dev deps
     "vcrpy>=8.1,<9",
     "pytest-recording>=0.13.4",
 {% endif %}

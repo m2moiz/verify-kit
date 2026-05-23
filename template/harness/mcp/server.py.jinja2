@@ -1,4 +1,4 @@
-"""harness.mcp.server — fastmcp server entry for verify-kit (Plan 03-01 T02).
+"""harness.mcp.server — fastmcp server entry for verify-kit.
 
 Public surface: ``serve(cwd, transport="stdio", host="127.0.0.1", port=7878,
 token=None) -> None``.
@@ -9,7 +9,7 @@ Cwd contract (REVIEW-CHECKLIST §1):
     inside the tool layer is closed over this argument by
     :func:`harness.mcp.tools.register_tools`.
 
-HTTP auth boundary (Plan 03-01 T03 review fix HIGH-#2):
+HTTP auth boundary:
     fastmcp does NOT expose a stable per-call middleware injection point in
     ``mcp.run(transport="http")``. The supported integration shape is:
         app = mcp.http_app()                     # Starlette ASGI app

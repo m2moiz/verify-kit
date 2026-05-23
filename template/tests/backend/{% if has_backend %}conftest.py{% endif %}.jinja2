@@ -22,10 +22,10 @@ def app_prod(tmp_path: Path):
 
 @pytest.fixture
 def client_dev(app_dev):
-    # CRITICAL (cycle 3 — Codex HIGH B): use TestClient as a context manager
-    # so Starlette/FastAPI invokes the lifespan handler. Bare `TestClient(app)`
-    # SKIPS lifespan, so `app.state.settings` (set inside lifespan) is unbound
-    # and every route that reads `request.app.state.settings` raises AttributeError.
+    # CRITICAL: use TestClient as a context manager so Starlette/FastAPI
+    # invokes the lifespan handler. Bare `TestClient(app)` SKIPS lifespan,
+    # so `app.state.settings` (set inside lifespan) is unbound and every
+    # route that reads `request.app.state.settings` raises AttributeError.
     # See https://fastapi.tiangolo.com/advanced/testing-events/.
     with TestClient(app_dev) as client:
         yield client
@@ -38,7 +38,7 @@ def client_prod(app_prod):
         yield client
 
 {% if has_db %}
-# ── DB fixtures (Plan 04-03) — merged inline to avoid pytest_plugins fragility ──
+# ── DB fixtures — merged inline to avoid pytest_plugins fragility ──
 import os
 import subprocess
 import pytest_asyncio
@@ -48,8 +48,9 @@ from testcontainers.postgres import PostgresContainer
 def _docker_daemon_running() -> bool:
     """Return True iff `docker info` exits 0 within 30s.
 
-    Addresses Codex HIGH #9: `shutil.which("docker")` returns True even when
-    the daemon is stopped, leading to false-pass / hang in Testcontainers.
+    `shutil.which("docker")` returns True even when the daemon is stopped,
+    leading to false-pass / hang in Testcontainers — we probe the daemon
+    explicitly instead.
 
     Timeout is 30s (not 5s) because Docker Desktop on macOS has a slow
     first-call path through its virtualization proxy; a 5s budget produces
@@ -72,7 +73,7 @@ def pg_container():
 
     Uses postgres:16-alpine to match docker-compose.yml. Calls `alembic upgrade head`
     against the container URL once it starts. Skips cleanly if the Docker daemon
-    is not running (HIGH #9).
+    is not running.
     """
     if not _docker_daemon_running():
         pytest.skip("Docker daemon not running (docker info failed) — skipping Testcontainers tests")
