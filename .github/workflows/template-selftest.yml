@@ -1,0 +1,57 @@
+# Self-test workflow for verify-kit.
+#
+# Per DOC-04, every PR runs `copier copy` across the 5 add-on combos and
+# asserts `just verify` exits 0 in the rendered scratch project. Per D-02,
+# the 5 combos are: base, backend, llm, backend-llm, full.
+#
+# Auth contract (06-02): each job sets both VERIFYKIT_AUTH_TOKEN and ENV=dev
+# at the job level — defense-in-depth so the dev-mode fallback covers any row
+# whose generated app does not explicitly read the token.
+
+name: template-selftest
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+jobs:
+  selftest:
+    runs-on: ubuntu-latest
+    env:
+      VERIFYKIT_AUTH_TOKEN: dev-token-for-tests
+      ENV: dev
+    strategy:
+      fail-fast: false
+      matrix:
+        combo: [base, backend, llm, backend-llm, full]
+        include:
+          - combo: base
+            data: '{"has_backend": false, "has_llm": false, "has_logfire": false, "has_fastapi_mcp": false, "has_db": false}'
+          - combo: backend
+            data: '{"has_backend": true, "has_llm": false, "has_logfire": false, "has_fastapi_mcp": false, "has_db": true}'
+          - combo: llm
+            data: '{"has_backend": false, "has_llm": true, "has_logfire": false, "has_fastapi_mcp": false, "has_db": false}'
+          - combo: backend-llm
+            data: '{"has_backend": true, "has_llm": true, "has_logfire": false, "has_fastapi_mcp": false, "has_db": true}'
+          - combo: full
+            data: '{"has_backend": true, "has_llm": true, "has_logfire": true, "has_fastapi_mcp": true, "has_db": true}'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: jdx/mise-action@v2
+
+      - name: Install copier
+        run: uv tool install copier --with copier-templates-extensions
+
+      - name: Render scratch project
+        run: |
+          SCRATCH="/tmp/scratch-${{ matrix.combo }}"
+          copier copy --trust --defaults \
+            --data-file <(echo '${{ matrix.data }}') \
+            "$GITHUB_WORKSPACE" "$SCRATCH"
+
+      - name: Run just verify in scratch
+        working-directory: /tmp/scratch-${{ matrix.combo }}
+        run: just verify
