@@ -266,12 +266,17 @@ def test_env_destination_per_cell_llm_true(
     root_env = scratch / ".env.example"
     app_env = scratch / "app" / ".env.example"
     if has_backend:
-        # (T,T): env lives at app/.env.example, root absent
-        assert app_env.exists()
-        assert not root_env.exists()
-        # LLM env block present
-        text = app_env.read_text()
-        assert "LANGFUSE" in text or "ANTHROPIC_API_KEY" in text
+        # (T,T): root .env.example carries the auth-token slot (Plan 06-02);
+        # app/.env.example may still exist as the legacy backend env file.
+        assert root_env.exists()
+        root_text = root_env.read_text()
+        assert "VERIFYKIT_AUTH_TOKEN=" in root_text
+        # LLM env block present in whichever rendered env file carries it;
+        # both files are rendered under (T,T), so check at least one.
+        candidates = [root_text]
+        if app_env.exists():
+            candidates.append(app_env.read_text())
+        assert any("LANGFUSE" in t or "ANTHROPIC_API_KEY" in t for t in candidates)
     else:
         # (T,F): env lives at root, app/ absent
         assert root_env.exists()
@@ -287,15 +292,23 @@ def test_env_destination_per_cell_llm_false(tmp_path: Path,
     scratch = _render(tmp_path, has_backend=has_backend, has_llm=False)
     root_env = scratch / ".env.example"
     app_env = scratch / "app" / ".env.example"
-    # has_llm=false: root .env.example is excluded; app/.env.example may exist
-    # under has_backend=true but must NOT contain LLM keys.
-    assert not root_env.exists()
+    # has_llm=false contract:
+    # - has_backend=true: root .env.example exists (Plan 06-02 auth-token slot);
+    #   app/.env.example may exist as legacy file. Neither contains LLM keys.
+    # - has_backend=false: no .env.example anywhere (root file gated has_backend,
+    #   LLM-only root file gated has_llm).
     if has_backend:
-        assert app_env.exists()
-        text = app_env.read_text()
-        assert "LANGFUSE" not in text
-        assert "ANTHROPIC_API_KEY" not in text
+        assert root_env.exists()
+        root_text = root_env.read_text()
+        assert "VERIFYKIT_AUTH_TOKEN=" in root_text
+        assert "LANGFUSE" not in root_text
+        assert "ANTHROPIC_API_KEY" not in root_text
+        if app_env.exists():
+            app_text = app_env.read_text()
+            assert "LANGFUSE" not in app_text
+            assert "ANTHROPIC_API_KEY" not in app_text
     else:
+        assert not root_env.exists()
         assert not app_env.exists()
 
 
