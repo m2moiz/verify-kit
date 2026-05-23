@@ -33,7 +33,7 @@ Canonical usage::
         return await call_llm(f"Summarize: {text}")
 
 Decorator-ordering correctness is forcing-functioned by the behavior test
-``test_decorator_ordering_outer_budget_raises`` in Plan 05-03.
+``test_decorator_ordering_outer_budget_raises``.
 
 ROUTING (D-01 / D-02 / D-03)
 ----------------------------
@@ -409,7 +409,7 @@ def cost_budget(
 async def call_llm(prompt: str, *, model: str | None = None):
     """Public LLM entry point. Dispatches via :func:`_routing_path` (D-03 / LLM-03).
 
-    Every verify-kit-shipped call site (``POST /summarize`` from 05-05,
+    Every verify-kit-shipped call site (``POST /summarize``,
     eval scaffolding, tests) goes through this function rather than
     importing ``pydantic_ai.Agent`` or ``litellm.acompletion`` directly.
     Routing the call through here is what makes the OTel ``gen_ai.*``

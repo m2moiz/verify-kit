@@ -8,7 +8,7 @@ WORKDIR /app
 # Copy lockfile + manifest first so dep install layer caches.
 COPY pyproject.toml uv.lock* ./
 
-# ── DEPS-ONLY install (cycle-3 HIGH D) ────────────────────────────────────
+# ── DEPS-ONLY install ─────────────────────────────────────────────────────
 # Install ONLY third-party dependencies into /opt/venv, NOT the project
 # itself. The project (`harness/`, `app/`) does not exist in the image yet
 # — only pyproject.toml + uv.lock have been COPYed. Installing the project
@@ -22,7 +22,7 @@ COPY pyproject.toml uv.lock* ./
 #     skip this layer entirely and install everything after COPY . . below.
 #
 # `pyproject.toml` is NOT a requirements file — `uv pip install -r pyproject.toml`
-# fails at build time (cycle-1 HIGH #5).
+# fails at build time.
 ENV UV_PROJECT_ENVIRONMENT=/opt/venv
 RUN uv venv /opt/venv && \
     if [ -f uv.lock ]; then \
@@ -53,7 +53,7 @@ ENV PATH="/opt/venv/bin:$PATH" \
 COPY --from=build /opt/venv /opt/venv
 COPY --from=build /app /app
 EXPOSE 8000
-# Healthcheck hits /healthz — the route Plan 04-02 ships.
+# Healthcheck hits /healthz — the route shipped by app/main.py.
 HEALTHCHECK --interval=10s --timeout=3s --start-period=10s --retries=3 \
     CMD python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/healthz', timeout=2).status == 200 else 1)"
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

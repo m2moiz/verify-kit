@@ -1,9 +1,9 @@
 """harness.core — thin facade over harness.runner.run_phase.
 
-Phase-2 restructure (Plan 02-06, Task 1):
+Phase-2 restructure:
 
 - The Phase-1 _check_* implementations have been migrated into
-  ``harness.checks.*`` and re-registered through ``@register`` (Plan 02-04).
+  ``harness.checks.*`` and re-registered through ``@register``.
 - ``harness.core`` is now a **thin facade**: it does tier/check-id filtering,
   wires up the cache + config, calls ``run_phase``, and packages results into
   a ``VerifyReport``. No check business logic lives here.

@@ -4,8 +4,9 @@ from pydantic import BaseModel, Field
 
 
 class HealthResponse(BaseModel):
-    """GET /healthz response. Single source of truth — Plan 04-07 verify-backend
-    asserts against this class directly (REVIEW-CHECKLIST §3)."""
+    """GET /healthz response. Single source of truth — the verify-backend
+    check asserts against this class directly so the response shape and the
+    assertion cannot drift."""
     status: str = Field(default="ok")
     version: str
     env: str

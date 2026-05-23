@@ -1,4 +1,4 @@
-"""harness.fix — SARIF-driven fix proposal (Plan 03-01 T04).
+"""harness.fix — SARIF-driven fix proposal.
 
 Phase-3 scope (no LLM):
     :func:`propose_from_sarif` reads the latest SARIF report written by
@@ -50,7 +50,7 @@ def propose_from_sarif(*, cwd: Path) -> dict:
     Phase-3 stub: pass-through. Phase-5 will replace this with an LLM that
     transforms ``runs[].results[]`` into ``fixes[]`` proposals — but the
     top-level envelope shape (``version`` + ``runs``) stays the contract
-    that consumers depend on (Plan 03-01 T08).
+    that consumers depend on.
     """
     report_path = cwd / ".verify" / "report.sarif"
     if not report_path.exists():
