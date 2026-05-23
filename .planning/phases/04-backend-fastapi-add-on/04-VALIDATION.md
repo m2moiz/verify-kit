@@ -433,3 +433,28 @@ which undermines the developer UX the quick-path is meant to provide.
 _Validation: 2026-05-21_
 _Validator: Claude (nyquist-auditor)_
 _Cross-reference: 04-VERIFICATION.md (psycopg2 fixture bug documented there, not here)_
+
+---
+
+## Phase 6 Closure Reconciliation (2026-05-23, per 06-10)
+
+`/gsd:validate-phase 4` re-run reconciles the 3 deferred HIGH gaps (originally
+filed as beads at Phase 4 close, deferred to "Phase 6 self-test sweep" per
+STATE.md:88). Reconciliation does NOT no-op — it inspects each Bead against
+post-Phase-5 reality and decides still-applicable vs obsolete.
+
+| Bead ID | Gap | Phase 5 impact? | Decision | Disposition |
+|---------|-----|-----------------|----------|-------------|
+| verify-kit-plk | GAP-01: missing (has_backend=T, has_db=F) polarity test | None — Phase 5 added llm-add-on code; did not touch backend polarity matrix | still applicable | Leave OPEN; v0.1.1 milestone work |
+| verify-kit-c5a | GAP-02: LOGFIRE_TOKEN guard not asserted | None — Phase 5 did not modify logfire opt-in surface | still applicable | Leave OPEN; v0.1.1 milestone work |
+| verify-kit-r7v | GAP-03: verify-backend orphan container teardown unasserted | None — Phase 5 did not modify just verify-backend recipe or docker-compose lifecycle | still applicable | Leave OPEN; v0.1.1 milestone work |
+
+**Outcome:** 0 beads closed as obsolete. 0 new gaps surfaced beyond the existing
+10. `gap_count` and `severity_counts` in frontmatter remain accurate. Per plan
+§10, in-scope generation of the missing tests is OUT of scope for Phase 6 — the
+3 HIGHs ship as documented v0.1.1 follow-up work.
+
+| Audit Date | Action | Run By |
+|------------|--------|--------|
+| 2026-05-21 | Initial Nyquist validation (10 gaps identified) | Claude (nyquist-auditor) |
+| 2026-05-23 | Phase 6 closure reconciliation per 06-10: all 3 HIGHs still applicable; deferred to v0.1.1; no new gaps surfaced | Claude (executor agent, per 06-10 Task 2) |
