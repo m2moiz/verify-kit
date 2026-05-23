@@ -13,7 +13,7 @@
 - [x] **Phase 3: Agent Integration & IDE** — MCP server (13 tools + CLI twins), Claude Code hooks + skills, per-agent rules files (CLAUDE/cursor/windsurf/copilot), per-agent MCP snippets, .vscode files with problem matchers (completed 2026-05-19; VERIFICATION PASSED 5/5 must-haves, 62/66 tests)
 - [x] **Phase 4: Backend (FastAPI) Add-on** — opt-in `has_backend=true`: 12 default libs + opt-in `has_logfire`/`has_fastapi_mcp`, Dockerfile + docker-compose, `/__debug/*` wired, schemathesis fuzz in verify, Testcontainers integration tests (completed 2026-05-21)
 - [x] **Phase 5: LLM Add-on** — opt-in `has_llm=true`: pydantic-ai + instructor + litellm + tokencost + autoevals + vcrpy, `@llm_call` / `@cost_budget` decorators, Langfuse Cloud/self-host options, Promptfoo + nightly-eval workflow (completed 2026-05-22; 4 OSS-blocker beads filed: verify-kit-3u2/yr7/93h/1v6)
-- [ ] **Phase 6: Template Self-Test & Documentation** — repo's own CI runs `copier copy` onto scratch dir per add-on matrix and asserts `just verify` exits 0; README + CHANGELOG (SemVer with consumer-breaking-changes callout) + CONTRIBUTING + architecture diagram + dual-audience checklist enforcement
+- [x] **Phase 6: Template Self-Test & Documentation** — repo's own CI runs `copier copy` onto scratch dir per add-on matrix and asserts `just verify` exits 0; README + CHANGELOG (SemVer with consumer-breaking-changes callout) + CONTRIBUTING + architecture diagram + dual-audience checklist enforcement (executed 2026-05-23; 10/10 plans landed; 4 OSS-blocker beads closed; 3 deferred-human-capture beads filed: verify-kit-pdc, -87i, -adl)
 
 ## Phase Details
 
