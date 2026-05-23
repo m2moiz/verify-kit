@@ -566,3 +566,33 @@ Overall risk: HIGH until the legacy Phase 5 polarity test is updated. The implem
 - MEDIUM: 06-01 frontmatter `files_modified` should list Pattern 6 scrub target (`template/**/*.jinja2`)
 - Cycle-6 copier.yml fix VERIFIED sound across all 5 matrix rows — but contract change has downstream test impact
 - Locations checked: 06-02 PLAN lines 241-300, copier.yml:49-50, tests/test_phase05_polarity.py:240-300, 06-03 PLAN, 06-05 release-please, 06-07 PR template, 06-WAVES wave 1, 06-09 LLM README pass, 06-10 reconciliation
+
+---
+
+## Cycle 8 — Codex Adversarial Review (2026-05-23T00:05:58Z)
+
+**Reviewer:** Codex CLI (adversarial framing)
+**Trend:** 6→2→4→3→2→1→1→? HIGHs
+**Cycle-7 fixes verified:** 06-02 legacy-polarity rewrite (commit 813651d), 06-01 frontmatter MEDIUM
+
+### Adversarial Prompt Focus
+
+(1) Further consumer drift from cycle-7 polarity-test rewrite
+(2) Whether (has_backend=true, has_llm=true) shape invalidates any current passing test
+(3) Under-sampled plans: 06-05 / 06-07 / 06-09 / 06-10 / 06-WAVES / 06-CONTEXT / 06-RESEARCH
+
+### Codex Verdict
+
+NO ADDITIONAL HIGHS FOUND
+
+I checked the live env assertions in [tests/test_phase05_polarity.py](/Users/moiz/Documents/code/verify-kit/tests/test_phase05_polarity.py:259), the 06-02 rewrite instructions in [06-02-PLAN.md](/Users/moiz/Documents/code/verify-kit/.planning/phases/06-template-self-test-documentation/06-02-PLAN.md:298), and grep-scanned tests/plans for `root_env`, `app_env`, `.env.example`, and `VERIFYKIT_AUTH_TOKEN`. The only current failing old-contract test is the known legacy polarity block, and 06-02 explicitly rewrites both backend+LLM and backend-only branches. Other hits are historical Phase 5 docs/summaries, not active gates. I also checked 06-05/06-07/06-09/06-10 plus 06-WAVES/06-CONTEXT/06-RESEARCH for conflicting env-destination contracts; none assert the old root-absent backend contract as an executable plan/gate. `bd export` was attempted but failed because the local Dolt server is unreachable under the read-only sandbox.
+
+### Cycle 8 Outcome
+
+- **HIGHs found: 0**
+- Codex verified: tests/test_phase05_polarity.py:259 live assertions, 06-02-PLAN.md:298 rewrite directives, grep scans for `root_env`, `app_env`, `.env.example`, `VERIFYKIT_AUTH_TOKEN` across tests + plans
+- Only failing old-contract test = the known legacy polarity block, which 06-02 explicitly rewrites for both backend+LLM and backend-only branches
+- Other matches = historical Phase 5 docs/summaries (not active gates)
+- 06-05 / 06-07 / 06-09 / 06-10 / 06-WAVES / 06-CONTEXT / 06-RESEARCH checked — none assert the old root-absent backend contract as an executable plan/gate
+- Convergence exit gate REACHED
+
