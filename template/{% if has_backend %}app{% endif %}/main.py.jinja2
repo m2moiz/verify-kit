@@ -1,13 +1,14 @@
 from __future__ import annotations
 from contextlib import asynccontextmanager
 from pathlib import Path
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, Request
 from fastapi.responses import HTMLResponse
 from asgi_correlation_id import CorrelationIdMiddleware
 import secure
 import structlog
 
 from app.api import router as api_router
+from app.auth import require_auth
 from app.settings import load as load_settings
 from harness.debug_endpoints import make_debug_router
 from harness.logging import configure_logging, log
@@ -60,7 +61,7 @@ def create_app(cwd: Path | None = None) -> FastAPI:
     """
     if cwd is None:
         cwd = Path(__file__).resolve().parent.parent  # scaffold root
-    app = FastAPI(title="app", lifespan=lifespan)
+    app = FastAPI(title="app", lifespan=lifespan, dependencies=[Depends(require_auth)])
     app.state.cwd = cwd
 
     # ── Middleware registration (LIFO semantics) ──────────────────────────

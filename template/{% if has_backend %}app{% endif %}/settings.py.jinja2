@@ -17,6 +17,10 @@ class Settings(BaseSettings):
     LOG_FORMAT: str = Field(default="auto")
     DATABASE_URL: str = Field(default="postgresql+asyncpg://postgres:postgres@localhost:5432/app")
     PROFILE_ENABLED: bool = Field(default=True, description="dev-only pyinstrument toggle")
+    VERIFYKIT_AUTH_TOKEN: str | None = Field(
+        default=None,
+        description="X-VerifyKit-Token header value; unset enables dev fallback when ENV='dev'",
+    )
 
 
 def load(cwd: Path) -> Settings:
