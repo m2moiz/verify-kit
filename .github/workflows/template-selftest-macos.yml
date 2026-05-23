@@ -1,0 +1,57 @@
+# Weekly macOS sibling of template-selftest.yml.
+#
+# Matrix entries must stay in sync with template-selftest.yml (Linux).
+# Per D-04 macOS is weekly-only and non-blocking — surfaces macOS-only
+# regressions without blocking PR merges and without spending per-PR
+# macOS-runner minutes.
+#
+# Note: Testcontainers paths may skip when Docker is unavailable on
+# macos-latest; Phase 4's existing skip-on-no-docker pattern applies. A
+# hang here is a Phase 4 regression, not a Phase 6 self-test bug.
+
+name: template-selftest-macos
+
+on:
+  schedule:
+    - cron: '0 4 * * 0'
+  workflow_dispatch: {}
+
+jobs:
+  selftest:
+    runs-on: macos-latest
+    env:
+      VERIFYKIT_AUTH_TOKEN: dev-token-for-tests
+      ENV: dev
+    strategy:
+      fail-fast: false
+      matrix:
+        combo: [base, backend, llm, backend-llm, full]
+        include:
+          - combo: base
+            data: '{"has_backend": false, "has_llm": false, "has_logfire": false, "has_fastapi_mcp": false, "has_db": false}'
+          - combo: backend
+            data: '{"has_backend": true, "has_llm": false, "has_logfire": false, "has_fastapi_mcp": false, "has_db": true}'
+          - combo: llm
+            data: '{"has_backend": false, "has_llm": true, "has_logfire": false, "has_fastapi_mcp": false, "has_db": false}'
+          - combo: backend-llm
+            data: '{"has_backend": true, "has_llm": true, "has_logfire": false, "has_fastapi_mcp": false, "has_db": true}'
+          - combo: full
+            data: '{"has_backend": true, "has_llm": true, "has_logfire": true, "has_fastapi_mcp": true, "has_db": true}'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: jdx/mise-action@v2
+
+      - name: Install copier
+        run: uv tool install copier --with copier-templates-extensions
+
+      - name: Render scratch project
+        run: |
+          SCRATCH="/tmp/scratch-${{ matrix.combo }}"
+          copier copy --trust --defaults \
+            --data-file <(echo '${{ matrix.data }}') \
+            "$GITHUB_WORKSPACE" "$SCRATCH"
+
+      - name: Run just verify in scratch
+        working-directory: /tmp/scratch-${{ matrix.combo }}
+        run: just verify
