@@ -114,6 +114,18 @@ def main() -> int:
             "positive_data_acceptance",
         ]
     )
+    {% if has_llm %}
+    # Exclude /summarize from in-process fuzz. The route calls a real LLM
+    # provider (Anthropic/OpenAI/etc) via harness.llm.call_llm; in CI or any
+    # local env without an ANTHROPIC_API_KEY the call raises a provider auth
+    # error and the route returns 500, which schemathesis flags as a server
+    # error during the coverage phase → Suite status=ERROR.
+    # The /summarize contract is exercised separately by tests/llm/ with vcrpy
+    # cassettes (no live LLM call). In-process fuzz is for schema/spec
+    # conformance only; external-dependency endpoints are out of scope.
+    schema = schema.exclude(path="/summarize")
+    {% endif %}
+
     # Thread --max-examples through to the hypothesis engine. The schemathesis
     # 4.x API surfaces max_examples on schema.config.generation, not on
     # engine.from_schema(). Without this update the engine runs the default

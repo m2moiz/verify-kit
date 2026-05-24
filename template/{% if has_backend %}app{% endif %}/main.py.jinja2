@@ -173,9 +173,13 @@ def create_app(cwd: Path | None = None) -> FastAPI:
     {% if has_backend and has_fastapi_mcp %}
     # Opt-in: every FastAPI route -> MCP tool (3-line mount).
     # Mounted LAST so it picks up every route including the debug router.
+    # Use mount_http() (Streamable HTTP transport) rather than the deprecated
+    # mount() default. The legacy default was SSE, which made
+    # `TestClient(app).get("/mcp")` hang forever on the open event stream
+    # — surfaced by the full-combo template-selftest run.
     from fastapi_mcp import FastApiMCP
 
-    FastApiMCP(app).mount()
+    FastApiMCP(app).mount_http()
     {% endif %}
 
     return app
