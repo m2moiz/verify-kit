@@ -9,11 +9,13 @@ The emitter respects NO_COLOR (no ANSI) and CI=1 (no_color + force_terminal so
 markup parses but renders without color). highlight=False prevents Rich from
 auto-detecting literal `[code]` strings in error messages and breaking layout.
 """
+
 from __future__ import annotations
 
 import os
 import sys
-from typing import IO, Callable, Iterable
+from collections.abc import Callable, Iterable
+from typing import IO
 
 from rich.console import Console
 from rich.progress import (
@@ -154,9 +156,7 @@ def emit(report: VerifyReport, stream: IO[str] | None = None) -> None:
         console.print(hint)
 
 
-def run_with_spinner(
-    specs: Iterable, runner_fn: Callable
-) -> list[CheckResult]:
+def run_with_spinner(specs: Iterable, runner_fn: Callable) -> list[CheckResult]:
     """Run `runner_fn(spec)` for each spec, optionally inside a Rich spinner.
 
     Spinner appears only when stdout is a TTY AND CI is unset. Otherwise this

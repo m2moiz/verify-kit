@@ -5,7 +5,9 @@ exits 0 (status="pass") when all sub-steps pass, status="fail" on any failure.
 NEVER reads Path.cwd() — every subprocess takes explicit cwd from the harness
 runner's CheckSpec.fn(cwd=cwd) call contract.
 """
+
 from __future__ import annotations
+
 import subprocess
 import time
 from pathlib import Path
@@ -33,7 +35,10 @@ def run(cwd: Path) -> CheckResult:
     # Step 1: pytest unit + integration (Testcontainers handles its own DB).
     r = subprocess.run(
         ["uv", "run", "pytest", "tests/backend/", "-q", "--tb=short"],
-        cwd=cwd, capture_output=True, text=True, timeout=600,
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+        timeout=600,
     )
     if r.returncode != 0:
         return CheckResult(
@@ -59,6 +64,7 @@ def run(cwd: Path) -> CheckResult:
     # never leave the process.
     try:
         import httpx
+
         httpx.get("http://localhost:8000/healthz", timeout=2.0)
         app_running = True
     except Exception:
@@ -68,13 +74,21 @@ def run(cwd: Path) -> CheckResult:
         # Over-network path: schemathesis against the LIVE running app.
         r2 = subprocess.run(
             [
-                "uv", "run", "schemathesis", "run",
+                "uv",
+                "run",
+                "schemathesis",
+                "run",
                 "http://localhost:8000/openapi.json",
-                "--checks", "all",
-                "--max-examples", "20",
+                "--checks",
+                "all",
+                "--max-examples",
+                "20",
                 "--hypothesis-deadline=2000",
             ],
-            cwd=cwd, capture_output=True, text=True, timeout=300,
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            timeout=300,
         )
         if r2.returncode != 0:
             return CheckResult(
@@ -85,8 +99,7 @@ def run(cwd: Path) -> CheckResult:
                 error=ErrorEnvelope(
                     code="backend.schemathesis-live-fail",
                     message=(
-                        f"schemathesis (live) found schema/auth issues:\n"
-                        f"{r2.stdout}\n{r2.stderr}"
+                        f"schemathesis (live) found schema/auth issues:\n{r2.stdout}\n{r2.stderr}"
                     ),
                     fix_command=(
                         f"cd {cwd} && uv run schemathesis run "
@@ -102,20 +115,27 @@ def run(cwd: Path) -> CheckResult:
         # hypothesis engine isolated from the harness runner process.
         r2 = subprocess.run(
             [
-                "uv", "run", "python", "-m",
+                "uv",
+                "run",
+                "python",
+                "-m",
                 "harness.checks.backend_inprocess_fuzz",
-                "--max-examples", "10",
-                "--cwd", str(cwd),
+                "--max-examples",
+                "10",
+                "--cwd",
+                str(cwd),
             ],
-            cwd=cwd, capture_output=True, text=True, timeout=300,
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            timeout=300,
         )
         if r2.returncode != 0:
             return CheckResult(
                 check_id="backend",
                 status="fail",
                 message=(
-                    f"schemathesis (in-process) found schema/auth issues:\n"
-                    f"{r2.stdout}\n{r2.stderr}"
+                    f"schemathesis (in-process) found schema/auth issues:\n{r2.stdout}\n{r2.stderr}"
                 ),
                 duration_ms=int((time.monotonic() - start) * 1000),
                 error=ErrorEnvelope(
@@ -125,8 +145,7 @@ def run(cwd: Path) -> CheckResult:
                         f"{r2.stdout}\n{r2.stderr}"
                     ),
                     fix_command=(
-                        f"cd {cwd} && uv run python -m "
-                        "harness.checks.backend_inprocess_fuzz"
+                        f"cd {cwd} && uv run python -m harness.checks.backend_inprocess_fuzz"
                     ),
                     docs_url="https://schemathesis.readthedocs.io/",
                 ),

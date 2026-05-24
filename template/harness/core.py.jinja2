@@ -20,6 +20,7 @@ silently picks up the wrong config file.
 runs **before** ``return``. Writing ``return report; cache.evict_if_needed(...)``
 makes the eviction call dead code and the cache cap is never enforced.
 """
+
 from __future__ import annotations
 
 import time
@@ -105,12 +106,8 @@ def verify(
             spec = by_id.get(cid)
             if spec is None:
                 matches = suggest(cid, known_ids)
-                hint = (
-                    ", ".join(matches) if matches else "(no close match)"
-                )
-                raise ValueError(
-                    f"Unknown check id {cid!r}. did you mean: {hint}?"
-                )
+                hint = ", ".join(matches) if matches else "(no close match)"
+                raise ValueError(f"Unknown check id {cid!r}. did you mean: {hint}?")
             selected.append(spec)
         filtered = selected
 
@@ -124,7 +121,7 @@ def verify(
         cache = None
     else:
         try:
-            cache = CacheStore((cwd / ".verify" / "cache.db"))
+            cache = CacheStore(cwd / ".verify" / "cache.db")
         except CacheCorruptError:
             # Surface to the CLI which maps to EXIT_CACHE_CORRUPT=10.
             raise

@@ -18,6 +18,7 @@ Canonical usage from any verify-kit module::
     from harness.logging import log
     log.info("starting check", check_id="mise-toml-valid")
 """
+
 from __future__ import annotations
 
 import logging as _stdlib_logging
@@ -44,9 +45,7 @@ def _should_use_json() -> bool:
     return False
 
 
-def _add_trace_id(
-    _logger: Any, _method: str, event_dict: dict[str, Any]
-) -> dict[str, Any]:
+def _add_trace_id(_logger: Any, _method: str, event_dict: dict[str, Any]) -> dict[str, Any]:
     """Inject the HARN-04 trace_id contextvar into every log event.
 
     Lazily imported so ``harness.logging`` does not hard-depend on

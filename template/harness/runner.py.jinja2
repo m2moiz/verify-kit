@@ -15,6 +15,7 @@ keyword argument. The runner calls `spec.fn(cwd=cwd)` so cache-key hashing
 diverge. Public API `core.verify(cwd=p)` therefore both hashes inputs under
 `p` AND executes checks against `p`.
 """
+
 from __future__ import annotations
 
 import time

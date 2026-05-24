@@ -7,9 +7,10 @@ state via `harness.registry._checks.clear()`.
 Decision: no entry-points support in Phase 2 — third-party plugin discovery
 is deferred. Only in-tree `harness/checks/*` modules register here.
 """
+
 from __future__ import annotations
 
-from typing import Callable
+from collections.abc import Callable
 
 from harness.models import CheckSpec, CheckTier
 

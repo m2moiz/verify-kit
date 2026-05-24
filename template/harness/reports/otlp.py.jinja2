@@ -12,6 +12,7 @@ later in-process emits, tests, or multi-command flows.
 When OTel is disabled (no OTEL_EXPORTER_OTLP_ENDPOINT), this writes a single
 warning line to the stream and logs the same via structlog.
 """
+
 from __future__ import annotations
 
 from typing import IO
@@ -36,8 +37,7 @@ def emit(report: VerifyReport, stream: IO[str]) -> None:
 
     force_flush()
     stream.write(
-        f"OTLP spans flushed for {len(report.checks)} checks to "
-        "OTEL_EXPORTER_OTLP_ENDPOINT.\n"
+        f"OTLP spans flushed for {len(report.checks)} checks to OTEL_EXPORTER_OTLP_ENDPOINT.\n"
     )
 
 

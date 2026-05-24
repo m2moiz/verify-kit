@@ -4,6 +4,7 @@ The wire shape mirrors VerifyReport.model_dump(exclude_none=True): each
 CheckResult embeds its ErrorEnvelope under `error` (NOT a parallel array).
 Optional ErrorEnvelope fields collapse out via `exclude_none`.
 """
+
 from __future__ import annotations
 
 import json

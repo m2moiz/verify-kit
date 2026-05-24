@@ -14,6 +14,7 @@ the offline-first UX guarantee (review HIGH-5 + carryover).
 Decision references: Decision 1.2 (dotted codes), 3.2 (@register), 4.1
 (tier="standard"), carryover-cwd (cwd kwarg, subprocess cwd=cwd).
 """
+
 from __future__ import annotations
 
 import json
@@ -24,7 +25,6 @@ from pathlib import Path
 
 from harness.models import CheckResult, ErrorEnvelope
 from harness.registry import register
-
 
 _BIOME_SKIP_MSG = (
     "biome not found locally; add `@biomejs/biome` to devDependencies and run "
@@ -79,8 +79,7 @@ def check_lint_ruff(cwd: Path) -> CheckResult:
                 code="lint.ruff.tool-missing",
                 message="uv binary not found",
                 hint=(
-                    "Install uv via `curl -LsSf https://astral.sh/uv/install.sh | sh` "
-                    "or via mise"
+                    "Install uv via `curl -LsSf https://astral.sh/uv/install.sh | sh` or via mise"
                 ),
                 docs_url="https://docs.astral.sh/uv/getting-started/installation/",
             ),

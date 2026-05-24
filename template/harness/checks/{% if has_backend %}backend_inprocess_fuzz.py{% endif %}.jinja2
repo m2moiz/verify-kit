@@ -12,7 +12,9 @@ schemathesis fuzz step, leaving API-18 unproven in the umbrella verify path.
 Usage:
     uv run python -m harness.checks.backend_inprocess_fuzz [--max-examples N] [--cwd PATH]
 """
+
 from __future__ import annotations
+
 import argparse
 import asyncio
 import sys
@@ -23,15 +25,20 @@ def main() -> int:
     parser = argparse.ArgumentParser(
         description="Run schemathesis fuzz against the FastAPI app in-process."
     )
-    parser.add_argument("--max-examples", type=int, default=10,
-                        help="Hypothesis max_examples per operation (default: 10)")
+    parser.add_argument(
+        "--max-examples",
+        type=int,
+        default=10,
+        help="Hypothesis max_examples per operation (default: 10)",
+    )
     # REVIEW-CHECKLIST §1: cwd must be taken explicitly. The default
     # Path.cwd().resolve() is acceptable here ONLY because the harness runner
     # calls this module as a subprocess with cwd=cwd already set to the
     # scaffold root. The --cwd flag allows the backend check (T02) to pass
     # the scaffold root explicitly for hermetic execution.
-    parser.add_argument("--cwd", type=Path, default=None,
-                        help="Scaffold root directory (defaults to process cwd)")
+    parser.add_argument(
+        "--cwd", type=Path, default=None, help="Scaffold root directory (defaults to process cwd)"
+    )
     args = parser.parse_args()
 
     scaffold_root = args.cwd.resolve() if args.cwd else Path.cwd().resolve()
@@ -56,6 +63,7 @@ def main() -> int:
     # validates schema conformance, not auth.
     try:
         from app.auth import require_auth
+
         app.dependency_overrides[require_auth] = lambda: None
     except ImportError:
         # auth module is optional; if absent, no override is needed.

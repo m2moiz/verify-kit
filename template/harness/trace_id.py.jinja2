@@ -9,17 +9,16 @@ Why contextvars and not threading.local: contextvars propagate correctly
 across `asyncio` task boundaries (the default for FastAPI), while
 threading.local does not.
 """
+
 from __future__ import annotations
 
 import contextvars
+from collections.abc import Iterator
 from contextlib import contextmanager
-from typing import Iterator
 
 # Module-private ContextVar. Use the helpers below — not the var directly —
 # so the import surface stays small and the contract is testable.
-_trace_id: contextvars.ContextVar[str] = contextvars.ContextVar(
-    "trace_id", default=""
-)
+_trace_id: contextvars.ContextVar[str] = contextvars.ContextVar("trace_id", default="")
 
 
 def get_trace_id() -> str:

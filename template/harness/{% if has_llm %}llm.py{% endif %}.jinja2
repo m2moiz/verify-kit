@@ -57,16 +57,17 @@ metadata on its message stream. The real cost lands in the operator's
 Claude Max dashboard rather than in the span attribute. README LLM-12
 documents this trade-off for consumers.
 """
+
 from __future__ import annotations
 
 import contextvars
 import os
+from collections.abc import Callable
 from time import monotonic
-from typing import Any, Callable, Literal
+from typing import Any, Literal
 
 from harness.logging import log
 from harness.observability import tracer
-
 
 # ---------------------------------------------------------------------------
 # Cost accumulator + typed exception
@@ -89,9 +90,7 @@ class CostBudgetExceeded(RuntimeError):
     pushed the accumulator over the line.
     """
 
-    def __init__(
-        self, budget_usd: float, accumulated_usd: float, call_name: str
-    ) -> None:
+    def __init__(self, budget_usd: float, accumulated_usd: float, call_name: str) -> None:
         self.budget_usd = budget_usd
         self.accumulated_usd = accumulated_usd
         self.call_name = call_name
@@ -140,9 +139,7 @@ def _routing_path() -> Literal["claude-agent-sdk", "litellm"]:
 # ---------------------------------------------------------------------------
 
 
-async def call_via_claude_agent_sdk(
-    prompt: str, *, model: str | None = None
-) -> dict[str, Any]:
+async def call_via_claude_agent_sdk(prompt: str, *, model: str | None = None) -> dict[str, Any]:
     """D-01/D-03 development-path adapter via Claude Code OAuth session.
 
     Returns a dict whose shape matches the litellm adapter's so the decorator
@@ -182,9 +179,7 @@ async def call_via_claude_agent_sdk(
     }
 
 
-async def call_via_litellm(
-    prompt: str, *, model: str | None = None
-) -> dict[str, Any]:
+async def call_via_litellm(prompt: str, *, model: str | None = None) -> dict[str, Any]:
     """D-02/D-03 production-path adapter via litellm.
 
     Uses ``litellm.acompletion`` for the provider call and computes ``cost_usd``
@@ -199,9 +194,7 @@ async def call_via_litellm(
     """
     from litellm import acompletion
 
-    requested_model = model or os.environ.get(
-        "LLM_DEFAULT_MODEL", "anthropic/claude-haiku-4-5"
-    )
+    requested_model = model or os.environ.get("LLM_DEFAULT_MODEL", "anthropic/claude-haiku-4-5")
 
     response = await acompletion(
         model=requested_model,
@@ -224,11 +217,7 @@ async def call_via_litellm(
     )
     output_tokens = int(
         getattr(usage_obj, "completion_tokens", None)
-        or (
-            usage_obj.get("completion_tokens", 0)
-            if isinstance(usage_obj, dict)
-            else 0
-        )
+        or (usage_obj.get("completion_tokens", 0) if isinstance(usage_obj, dict) else 0)
         or 0
     )
 
@@ -315,9 +304,7 @@ def llm_call(*, name: str) -> Callable[[Callable[..., Any]], Callable[..., Any]]
                     except (TypeError, ValueError):
                         cost_usd = 0.0
                     req_model = str(result.get("model", "") or "")
-                    resp_model = str(
-                        result.get("response_model", req_model) or req_model
-                    )
+                    resp_model = str(result.get("response_model", req_model) or req_model)
                     usage = result.get("usage") or {}
                     if isinstance(usage, dict):
                         try:

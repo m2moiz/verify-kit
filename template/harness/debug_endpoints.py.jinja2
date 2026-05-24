@@ -7,9 +7,12 @@ mounted in ENV=dev (see app/main.py create_app for the conditional mount).
 NEVER reads Path.cwd() — every disk access is rooted at the cwd parameter
 captured in the closure. See REVIEW-CHECKLIST §1.
 """
+
 from __future__ import annotations
+
 import json
 from pathlib import Path
+
 from fastapi import APIRouter, HTTPException
 from sse_starlette.sse import EventSourceResponse
 
@@ -49,6 +52,7 @@ def make_debug_router(cwd: Path) -> APIRouter:
                 return
             for line in events_path.read_text().splitlines():
                 yield {"event": "verify-event", "data": line}
+
         return EventSourceResponse(gen())
 
     return router

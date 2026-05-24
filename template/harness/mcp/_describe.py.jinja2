@@ -10,6 +10,7 @@ Kept under ``harness.mcp`` (rather than ``harness``) because Phase-2's
 exists to support the new MCP tool without rewriting Phase-2 CLI internals
 beyond a thin call-out.
 """
+
 from __future__ import annotations
 
 from harness.models import (
@@ -55,14 +56,9 @@ def describe_envelope() -> dict:
         "exit_code_precedence": [
             "EXIT_WRITE_FAILED supersedes EXIT_CHECK_FAIL when .verify/report.* cannot be written",
         ],
-        "check_catalog_schema": CheckCatalogEntry.model_json_schema(
-            mode="serialization"
-        ),
+        "check_catalog_schema": CheckCatalogEntry.model_json_schema(mode="serialization"),
         "report_schema": VerifyReport.model_json_schema(mode="serialization"),
-        "checks": [
-            CheckCatalogEntry.from_spec(s).model_dump()
-            for s in _registry_list_checks()
-        ],
+        "checks": [CheckCatalogEntry.from_spec(s).model_dump() for s in _registry_list_checks()],
         "jsonl_summary_marker": {
             "type": "summary",
             "fields": [
