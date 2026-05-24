@@ -1,14 +1,20 @@
 from __future__ import annotations
+
 import asyncio
+
 from asgi_correlation_id import correlation_id
 from fastapi import APIRouter, Request
 from sse_starlette.sse import EventSourceResponse
+
 from app.models import EchoRequest, EchoResponse, HealthResponse
 from app.services import echo
+
 {% if has_llm %}
 import re
 from time import monotonic
+
 from pydantic import BaseModel, Field, field_validator
+
 # Phase 5 D-03/LLM-03: every verify-kit-shipped LLM call site routes through
 # harness.llm.call_llm — it owns the USE_CLAUDE_CODE_SDK switch and the OTel
 # gen_ai.* contract. Direct imports of typed-agent frameworks are documented
@@ -51,6 +57,7 @@ async def events_stream() -> EventSourceResponse:
         for i in range(3):
             await asyncio.sleep(0.01)
             yield {"event": "tick", "data": str(i)}
+
     return EventSourceResponse(gen())
 {% if has_llm %}
 
@@ -76,7 +83,9 @@ _INJECTION_MARKERS = [
 
 
 class SummarizeRequest(BaseModel):
-    text: str = Field(..., min_length=1, max_length=5000, description="Text to summarize in one sentence.")
+    text: str = Field(
+        ..., min_length=1, max_length=5000, description="Text to summarize in one sentence."
+    )
 
     @field_validator("text")
     @classmethod

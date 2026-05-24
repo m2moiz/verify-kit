@@ -21,6 +21,7 @@ The comparison is SHAPE-only:
 
 Marked ``@pytest.mark.slow`` (subprocess-heavy, same gate as smoke).
 """
+
 from __future__ import annotations
 
 import json
@@ -29,7 +30,6 @@ import subprocess
 from pathlib import Path
 
 import pytest
-
 
 SNAPSHOT = Path(__file__).parent / "snapshots" / "report_pass.json"
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -64,8 +64,7 @@ def test_json_output_shape() -> None:
 
     # Top-level keys match exactly.
     assert set(actual.keys()) == set(expected.keys()), (
-        f"top-level keys differ: actual={sorted(actual.keys())} "
-        f"expected={sorted(expected.keys())}"
+        f"top-level keys differ: actual={sorted(actual.keys())} expected={sorted(expected.keys())}"
     )
 
     # format_version is part of the contract — must match byte-for-byte.

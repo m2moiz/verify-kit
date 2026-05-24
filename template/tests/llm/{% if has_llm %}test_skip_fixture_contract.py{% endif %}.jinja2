@@ -9,6 +9,7 @@ fixtures): each test spawns an isolated sub-pytest run against a stub
 vcr-marked test with no cassette, and asserts on outcomes via
 ``result.assert_outcomes`` / ``result.parseoutcomes``.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -56,8 +57,7 @@ def test_default_mode_skips_when_cassette_missing(pytester):
     # fixture branch ran (not pytest's own collection-level skip path).
     all_lines = result.stdout.lines + result.stderr.lines
     assert any("cassette not recorded" in line.lower() for line in all_lines), (
-        "default-mode skip must cite 'cassette not recorded'; got:\n"
-        + "\n".join(all_lines)
+        "default-mode skip must cite 'cassette not recorded'; got:\n" + "\n".join(all_lines)
     )
 
 

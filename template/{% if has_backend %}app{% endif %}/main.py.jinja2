@@ -1,19 +1,19 @@
 from __future__ import annotations
+
 from contextlib import asynccontextmanager
 from pathlib import Path
+
+import secure
+from asgi_correlation_id import CorrelationIdMiddleware
 from fastapi import Depends, FastAPI, Request
 from fastapi.responses import HTMLResponse
-from asgi_correlation_id import CorrelationIdMiddleware
-import secure
-import structlog
 
 from app.api import router as api_router
 from app.auth import require_auth
 from app.settings import load as load_settings
 from harness.debug_endpoints import make_debug_router
 from harness.logging import configure_logging, log
-from harness.trace_id import set_trace_id, reset_trace_id
-
+from harness.trace_id import reset_trace_id, set_trace_id
 
 # Middleware order (outermost -> innermost — what we WANT at request time):
 #   1. secure (OWASP headers — outermost so it wraps every response incl. errors)
@@ -74,8 +74,13 @@ def create_app(cwd: Path | None = None) -> FastAPI:
     @app.middleware("http")
     async def profile_middleware(request: Request, call_next):
         settings = app.state.settings
-        if request.query_params.get("profile") == "true" and settings.ENV == "dev" and settings.PROFILE_ENABLED:
+        if (
+            request.query_params.get("profile") == "true"
+            and settings.ENV == "dev"
+            and settings.PROFILE_ENABLED
+        ):
             from pyinstrument import Profiler
+
             with Profiler(async_mode="enabled") as p:
                 await call_next(request)
             return HTMLResponse(p.output_html())
@@ -92,6 +97,7 @@ def create_app(cwd: Path | None = None) -> FastAPI:
     @app.middleware("http")
     async def structlog_access_log(request: Request, call_next):
         from asgi_correlation_id import correlation_id as _cid
+
         rid = _cid.get()
         # Bind to contextvars so every structlog.get_logger() call inside the
         # request scope automatically includes request_id. set_trace_id from
@@ -115,6 +121,7 @@ def create_app(cwd: Path | None = None) -> FastAPI:
     #    rejects non-UUID inbound values — disable it so the request-id flow
     #    survives upstream-set non-UUID identifiers.
     import uuid as _uuid
+
     app.add_middleware(
         CorrelationIdMiddleware,
         header_name="X-Request-ID",
@@ -140,7 +147,9 @@ def create_app(cwd: Path | None = None) -> FastAPI:
     # warning logfire emits at import time when no token is configured.
     {% if has_backend and has_logfire %}
     import os as _os
+
     import logfire
+
     if _os.environ.get("LOGFIRE_TOKEN"):
         logfire.configure()
     else:
@@ -165,6 +174,7 @@ def create_app(cwd: Path | None = None) -> FastAPI:
     # Opt-in: every FastAPI route -> MCP tool (3-line mount).
     # Mounted LAST so it picks up every route including the debug router.
     from fastapi_mcp import FastApiMCP
+
     FastApiMCP(app).mount()
     {% endif %}
 

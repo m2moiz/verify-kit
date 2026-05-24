@@ -1,11 +1,12 @@
 from __future__ import annotations
+
 import pytest
 from dirty_equals import IsDatetime, IsInt
 from polyfactory.factories.pydantic_factory import ModelFactory
 from pydantic import BaseModel
 from sqlalchemy import select
-from app.schema import User
 
+from app.schema import User
 
 pytestmark = pytest.mark.asyncio
 

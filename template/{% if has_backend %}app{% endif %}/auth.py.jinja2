@@ -1,8 +1,11 @@
 from __future__ import annotations
+
 import secrets
 from typing import Annotated
+
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import APIKeyHeader
+
 from harness.logging import log
 
 _api_key_header = APIKeyHeader(name="X-VerifyKit-Token", auto_error=False)

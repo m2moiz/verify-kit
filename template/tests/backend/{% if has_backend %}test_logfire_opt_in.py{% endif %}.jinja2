@@ -5,16 +5,19 @@ only when has_backend=true; the test code itself uses a Jinja conditional to
 have meaningful assertions when has_logfire=true vs trivial 'no logfire' assertions
 when has_logfire=false).
 """
+
 from __future__ import annotations
-import pytest
 
 {% if has_logfire %}
+
 def test_logfire_is_imported_and_configured_in_app_main():
     """When has_logfire=true, app/main.py must call logfire.configure()."""
+    from pathlib import Path
+
     import app.main  # noqa: F401 — boot the app module
+
     # logfire is imported lazily inside create_app(); ensure the import line exists
     # in the source.
-    from pathlib import Path
     main_py = Path(app.main.__file__).read_text()
     assert "import logfire" in main_py
     assert "logfire.configure()" in main_py
@@ -26,10 +29,13 @@ def test_app_boots_with_logfire_enabled(client_dev):
     r = client_dev.get("/healthz")
     assert r.status_code == 200
 {% else %}
+
 def test_logfire_not_present_when_flag_false():
     """When has_logfire=false, app/main.py must NOT contain logfire references."""
     from pathlib import Path
+
     import app.main
+
     main_py = Path(app.main.__file__).read_text()
     assert "import logfire" not in main_py
     assert "logfire.configure" not in main_py

@@ -1,6 +1,8 @@
 from __future__ import annotations
+
 import re
 from datetime import datetime
+
 from pydantic import BaseModel, Field, field_validator
 
 
@@ -8,6 +10,7 @@ class HealthResponse(BaseModel):
     """GET /healthz response. Single source of truth — the verify-backend
     check asserts against this class directly so the response shape and the
     assertion cannot drift."""
+
     status: str = Field(default="ok")
     version: str
     env: str
