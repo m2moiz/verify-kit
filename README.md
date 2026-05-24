@@ -7,11 +7,12 @@
 ## Quickstart
 
 ```bash
-uv tool install copier --with copier-templates-extensions
-copier copy --trust gh:m2moiz/verify-kit my-project && cd my-project && just verify
+uv tool install copier --with copier-template-extensions
+copier copy --trust gh:m2moiz/verify-kit my-project
+cd my-project && mise trust && mise install && uv sync --extra dev && just verify
 ```
 
-The first line installs Copier with the `copier-templates-extensions` Jinja extension that verify-kit's `copier.yml` declares under `_jinja_extensions`. The second line renders the template into `my-project/` and immediately runs the trust anchor — `just verify` exiting `0` is the contract that the scaffold is healthy on your machine. The `--trust` flag is required because Copier 9.15+ refuses to load templates declaring `_jinja_extensions` (or `_tasks`) without explicit operator opt-in; the repo's own CI uses the same flag.
+The first line installs Copier with the `copier-template-extensions` Jinja extension that verify-kit's `copier.yml` declares under `_jinja_extensions`. The second line renders the template into `my-project/`. The third line runs the per-project bootstrap: `mise trust` is required on first run because mise refuses to load untrusted `.mise.toml` files for safety; `mise install` resolves the pinned Python / Node / Just toolchain; `uv sync --extra dev` installs the dev dependency group (pytest, ruff, etc.) that `just verify` needs; and `just verify` exiting `0` is the contract that the scaffold is healthy on your machine. The `--trust` flag on `copier copy` is required because Copier 9.15+ refuses to load templates declaring `_jinja_extensions` (or `_tasks`) without explicit operator opt-in; the repo's own CI uses the same flag.
 
 ## Why this exists
 
