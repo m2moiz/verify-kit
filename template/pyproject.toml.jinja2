@@ -117,10 +117,12 @@ extend-ignore = ["B008"]
 # Test files: blind-exception asserts, intentional name-bindings, and long
 # parametrize lines are idiomatic.
 "tests/*" = ["B017", "F841", "E501", "E402"]
+{% if has_db %}
 # Alembic auto-generated migrations and the env.py bootstrap have their own
 # conventions (sys.path manipulation before imports; long revision strings).
 "alembic/env.py" = ["E402"]
 "alembic/versions/*" = ["E501"]
+{% endif %}
 # CLI help strings, embedded SQL, and MCP tool docstrings are intentionally
 # long for readability at the call site.
 "harness/cli.py" = ["E501"]

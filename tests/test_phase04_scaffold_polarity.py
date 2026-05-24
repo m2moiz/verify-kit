@@ -151,6 +151,64 @@ def test_has_backend_true_produces_app_tree(tmp_path: Path) -> None:
     )
 
 
+def test_has_backend_true_has_db_false_no_db_files_in_scaffold(tmp_path: Path) -> None:
+    """has_backend=True, has_db=False renders backend WITHOUT db layer.
+
+    Bead verify-kit-plk: polarity matrix had cells (T,T) and (F,F); the
+    (T, F) cell was missing. This test asserts that turning the DB layer
+    OFF while keeping backend ON produces a clean FastAPI scaffold with
+    NO sqlalchemy/alembic artifacts.
+
+    Note: copier.yml's ``has_db`` is gated by ``when: \"{{ has_backend }}\"``,
+    so it only prompts when has_backend=true and defaults to true there.
+    We override explicitly with has_db=False to exercise the (T, F) cell.
+    """
+    scratch = render_scratch_project(
+        tmp_path,
+        **{**_BASE_DATA, "has_backend": True, "has_db": False, "has_logfire": False, "has_fastapi_mcp": False},  # type: ignore[arg-type]
+    )
+
+    assert scratch.is_dir(), f"scaffold root missing: {scratch}"
+
+    # ── (a) Backend IS present ──
+    app_main = scratch / "app" / "main.py"
+    assert app_main.exists(), (
+        "app/main.py must exist when has_backend=True (regardless of has_db)"
+    )
+
+    # ── (b) DB-specific files are ABSENT ──
+    db_files = [
+        scratch / "app" / "db.py",
+        scratch / "app" / "schema.py",
+        scratch / "alembic",
+        scratch / "alembic.ini",
+    ]
+    leaked_db: list[str] = [str(p.relative_to(scratch)) for p in db_files if p.exists()]
+    assert not leaked_db, (
+        "DB-specific files leaked into has_backend=True, has_db=False scaffold:\n"
+        + "\n".join(f"  {p}" for p in sorted(leaked_db))
+    )
+
+    # ── (c) app/settings.py does NOT contain DATABASE_URL ──
+    settings_py = scratch / "app" / "settings.py"
+    if settings_py.exists():
+        settings_text = settings_py.read_text()
+        assert "DATABASE_URL" not in settings_text, (
+            "app/settings.py contains DATABASE_URL field when has_db=False — "
+            "the Jinja gate around the DATABASE_URL field is missing or wrong."
+        )
+
+    # ── (d) pyproject.toml does NOT pull in DB deps ──
+    pyproject = scratch / "pyproject.toml"
+    pyproject_text = pyproject.read_text()
+    forbidden_deps = ["sqlalchemy", "asyncpg", "alembic"]
+    leaked_deps = [d for d in forbidden_deps if d in pyproject_text.lower()]
+    assert not leaked_deps, (
+        f"pyproject.toml lists DB-only deps when has_db=False: {leaked_deps}\n"
+        f"Relevant pyproject content:\n{pyproject_text}"
+    )
+
+
 def test_has_backend_false_produces_zero_backend_files(tmp_path: Path) -> None:
     """has_backend=False renders ZERO backend-specific files or directories.
 
