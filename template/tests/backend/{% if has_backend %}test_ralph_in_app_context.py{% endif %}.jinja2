@@ -13,8 +13,11 @@ The injectable test hook is ``_spawn`` (not ``executor``) — ``executor`` is a 
 ``(cmd: list[str], cwd: Path)`` and returns ``{"done": bool, "cost_usd": float}``.
 See harness/ralph.py _default_executor for the contract (REVIEW-CHECKLIST §3).
 """
+
 from __future__ import annotations
+
 from pathlib import Path
+
 import pytest
 
 from harness import ralph
@@ -55,6 +58,7 @@ def test_ralph_run_returns_canonical_shape(tmp_path: Path):
 
 def test_ralph_run_emits_state_file_at_cwd_relative_path(tmp_path: Path):
     """The .verify/ralph.json state file is written under the explicit cwd argument."""
+
     def stub_spawn(cmd: list[str], cwd: Path) -> dict:
         return {"done": True, "cost_usd": 0.0}
 

@@ -9,6 +9,7 @@ Pitfall 4: pydantic-ai >=1.x uses ``result.output``, not the legacy
 attribute name. Any reference to the legacy name is a regression
 marker and must be removed.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -25,7 +26,6 @@ def test_pydantic_ai_agent_constructs():
 
 def test_pydantic_ai_uses_output_not_data():
     """Pitfall 4 forcing function: AgentRunResult must expose .output."""
-    import pydantic_ai
 
     # pydantic-ai >=1.x exposes AgentRunResult with an ``output`` attribute,
     # NOT the legacy pre-1.0 attribute name. Code that still accesses the

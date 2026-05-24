@@ -10,6 +10,7 @@ minimal pyproject root for unit tests, not a harness host.
 Gated by ``@pytest.mark.slow`` (same gate as Phase 1). Run with
 ``RUN_SLOW_TESTS=1 uv run pytest tests/smoke/``.
 """
+
 from __future__ import annotations
 
 import os
@@ -18,7 +19,6 @@ import subprocess
 from pathlib import Path
 
 import pytest
-
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 

@@ -16,16 +16,19 @@ Test strategy:
             intercepted_log_call['request_id'] ==
             outbound_request.headers['X-Request-ID'].
 """
-from __future__ import annotations
-from unittest.mock import patch, MagicMock, call
-import pytest
-import httpx
-import respx
-from fastapi.testclient import TestClient
-from fastapi import APIRouter
 
-from app.main import create_app
+from __future__ import annotations
+
+from unittest.mock import MagicMock, patch
+
+import httpx
+import pytest
+import respx
+from fastapi import APIRouter
+from fastapi.testclient import TestClient
+
 from app.auth import require_auth
+from app.main import create_app
 
 
 @pytest.fixture
@@ -45,6 +48,7 @@ def app_with_outbound_route(tmp_path):
     @extra.get("/outbound-test")
     async def outbound():
         from asgi_correlation_id import correlation_id
+
         rid = correlation_id.get() or ""
         async with httpx.AsyncClient() as client:
             r = await client.get("https://example.test/api", headers={"X-Request-ID": rid})
@@ -71,9 +75,11 @@ def test_request_id_appears_in_header_log_and_outbound(app_with_outbound_route):
     # respx.mock note: `mock.calls` is cleared when the respx context exits, so
     # ALL outbound-call assertions must happen INSIDE the `with respx.mock` block.
     mock_log = MagicMock()
-    with patch("app.main.log", mock_log), \
-         TestClient(app_with_outbound_route) as client, \
-         respx.mock(assert_all_called=True) as mock:
+    with (
+        patch("app.main.log", mock_log),
+        TestClient(app_with_outbound_route) as client,
+        respx.mock(assert_all_called=True) as mock,
+    ):
         mock.get("https://example.test/api").mock(return_value=httpx.Response(200))
         r = client.get("/outbound-test", headers={"X-Request-ID": "trace-abc-123"})
 

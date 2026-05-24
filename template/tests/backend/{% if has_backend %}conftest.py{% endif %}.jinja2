@@ -1,9 +1,12 @@
 from __future__ import annotations
+
 from pathlib import Path
+
 import pytest
 from fastapi.testclient import TestClient
-from app.main import create_app
+
 from app.auth import require_auth
+from app.main import create_app
 
 
 @pytest.fixture
@@ -47,10 +50,12 @@ def client_prod(app_prod):
         yield client
     app_prod.dependency_overrides.clear()
 
+
 {% if has_db %}
 # ── DB fixtures — merged inline to avoid pytest_plugins fragility ──
 import os
 import subprocess
+
 import pytest_asyncio
 from testcontainers.postgres import PostgresContainer
 
@@ -86,7 +91,9 @@ def pg_container():
     is not running.
     """
     if not _docker_daemon_running():
-        pytest.skip("Docker daemon not running (docker info failed) — skipping Testcontainers tests")
+        pytest.skip(
+            "Docker daemon not running (docker info failed) — skipping Testcontainers tests"
+        )
 
     container = PostgresContainer("postgres:16-alpine")
     container.start()
@@ -118,6 +125,7 @@ def pg_container():
 @pytest_asyncio.fixture
 async def db_session(pg_container):
     from app.db import make_engine, make_sessionmaker
+
     engine = make_engine(pg_container)
     sm = make_sessionmaker(engine)
     async with sm() as session:

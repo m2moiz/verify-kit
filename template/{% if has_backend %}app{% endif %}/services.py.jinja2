@@ -1,5 +1,7 @@
 from __future__ import annotations
-from datetime import datetime, timezone
+
+from datetime import UTC, datetime
+
 from app.models import EchoRequest, EchoResponse
 
 
@@ -8,5 +10,5 @@ def echo(req: EchoRequest, request_id: str) -> EchoResponse:
     return EchoResponse(
         message=req.message,
         request_id=request_id,
-        received_at=datetime.now(tz=timezone.utc),
+        received_at=datetime.now(tz=UTC),
     )

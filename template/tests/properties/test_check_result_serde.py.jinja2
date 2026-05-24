@@ -4,13 +4,13 @@ Per RESEARCH.md §10. Generates 200 examples per run (R8 mitigation: default
 ``max_examples=100`` is too low to catch Unicode/escape-sequence edge cases
 in JSON round-trip).
 """
+
 from __future__ import annotations
 
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from harness.models import CheckResult, ErrorEnvelope
-
 
 _error_strategy = st.builds(
     ErrorEnvelope,

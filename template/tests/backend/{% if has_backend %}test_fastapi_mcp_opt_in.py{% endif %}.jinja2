@@ -1,8 +1,9 @@
 """Polarity test for has_fastapi_mcp."""
+
 from __future__ import annotations
-import pytest
 
 {% if has_fastapi_mcp %}
+
 def test_fastapi_mcp_is_mounted(client_dev):
     """When has_fastapi_mcp=true, FastApiMCP(app).mount() exposes /mcp."""
     # The /mcp endpoint is added by FastApiMCP(app).mount(); a HEAD or GET should
@@ -23,6 +24,7 @@ def test_mcp_tools_introspection(client_dev):
     # At least one candidate must return non-404.
     assert any(s != 404 for s in statuses), f"none of {candidates} returned non-404: {statuses}"
 {% else %}
+
 def test_mcp_route_not_mounted_when_flag_false(client_dev):
     """When has_fastapi_mcp=false, /mcp returns 404."""
     r = client_dev.get("/mcp")

@@ -8,7 +8,9 @@ contract.
 Note: the CLI flag is `--check=backend`, not `--only=backend`. See
 harness/cli.py for the Typer option definition.
 """
+
 from __future__ import annotations
+
 import subprocess
 from pathlib import Path
 
@@ -31,7 +33,8 @@ def test_verify_check_backend_runs_schemathesis_when_app_down(tmp_path: Path):
     r = subprocess.run(
         ["uv", "run", "verify-kit", "verify", "--check=backend"],
         cwd=scaffold_root,
-        capture_output=True, text=True,
+        capture_output=True,
+        text=True,
         timeout=600,
     )
     assert r.returncode == 0, (

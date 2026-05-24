@@ -13,10 +13,10 @@ Forcing functions present here:
     through _routing_path() to either adapter based on env state
     (LLM-03 / D-03 forcing function).
 """
+
 from __future__ import annotations
 
 import asyncio
-import os
 from pathlib import Path
 
 import pytest
@@ -29,7 +29,6 @@ from harness.llm import (
     reset_cost_accumulator,
 )
 
-
 # ── In-memory OTel span exporter setup ────────────────────────────────────────
 #
 # The @llm_call decorator emits spans via harness.observability.tracer. To
@@ -41,7 +40,6 @@ from harness.llm import (
 @pytest.fixture
 def span_exporter():
     """Install an InMemorySpanExporter + return its finished_spans accessor."""
-    from opentelemetry import trace
     from opentelemetry.sdk.trace import TracerProvider
     from opentelemetry.sdk.trace.export import SimpleSpanProcessor
     from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
@@ -80,8 +78,13 @@ def test_decorator_emits_span(span_exporter):
 
     @llm_call(name="x")
     async def fn():
-        return {"cost_usd": 0.001, "model": "test", "response_model": "test",
-                "usage": {"input_tokens": 10, "output_tokens": 5}, "retry_count": 0}
+        return {
+            "cost_usd": 0.001,
+            "model": "test",
+            "response_model": "test",
+            "usage": {"input_tokens": 10, "output_tokens": 5},
+            "retry_count": 0,
+        }
 
     _ar(fn())
     spans = span_exporter.get_finished_spans()
@@ -125,8 +128,13 @@ def test_cost_budget_raises():
     @cost_budget(usd=0.0, on_exceed="raise")
     @llm_call(name="overspend")
     async def fn():
-        return {"cost_usd": 0.001, "model": "m", "response_model": "m",
-                "usage": {"input_tokens": 1, "output_tokens": 1}, "retry_count": 0}
+        return {
+            "cost_usd": 0.001,
+            "model": "m",
+            "response_model": "m",
+            "usage": {"input_tokens": 1, "output_tokens": 1},
+            "retry_count": 0,
+        }
 
     with pytest.raises(CostBudgetExceeded) as exc_info:
         _ar(fn())
@@ -143,8 +151,13 @@ def test_cost_budget_does_not_raise_when_under_budget():
     @cost_budget(usd=999.0, on_exceed="raise")
     @llm_call(name="cheap")
     async def fn():
-        return {"cost_usd": 0.001, "model": "m", "response_model": "m",
-                "usage": {"input_tokens": 1, "output_tokens": 1}, "retry_count": 0}
+        return {
+            "cost_usd": 0.001,
+            "model": "m",
+            "response_model": "m",
+            "usage": {"input_tokens": 1, "output_tokens": 1},
+            "retry_count": 0,
+        }
 
     result = _ar(fn())
     assert result["cost_usd"] == 0.001
@@ -172,16 +185,24 @@ def test_call_llm_dispatches_via_routing_path(monkeypatch, span_exporter):
     """
     import harness.llm as _llm
 
-    claude_sentinel = {"content": "C", "model": "claude-agent-sdk",
-                       "response_model": "claude-agent-sdk",
-                       "usage": {"input_tokens": 0, "output_tokens": 0},
-                       "provider": "claude-code-sdk", "cost_usd": 0.0,
-                       "retry_count": 0}
-    litellm_sentinel = {"content": "L", "model": "litellm-model",
-                        "response_model": "litellm-model",
-                        "usage": {"input_tokens": 1, "output_tokens": 1},
-                        "provider": "litellm", "cost_usd": 0.0001,
-                        "retry_count": 0}
+    claude_sentinel = {
+        "content": "C",
+        "model": "claude-agent-sdk",
+        "response_model": "claude-agent-sdk",
+        "usage": {"input_tokens": 0, "output_tokens": 0},
+        "provider": "claude-code-sdk",
+        "cost_usd": 0.0,
+        "retry_count": 0,
+    }
+    litellm_sentinel = {
+        "content": "L",
+        "model": "litellm-model",
+        "response_model": "litellm-model",
+        "usage": {"input_tokens": 1, "output_tokens": 1},
+        "provider": "litellm",
+        "cost_usd": 0.0001,
+        "retry_count": 0,
+    }
 
     async def _stub_claude(prompt, *, model=None):
         return claude_sentinel
@@ -198,9 +219,7 @@ def test_call_llm_dispatches_via_routing_path(monkeypatch, span_exporter):
     assert result_a is claude_sentinel
     spans = span_exporter.get_finished_spans()
     a_span = next(s for s in spans if s.name == "llm.call_llm")
-    assert dict(a_span.attributes or {}).get("verify_kit.routing_path") == (
-        "claude-agent-sdk"
-    )
+    assert dict(a_span.attributes or {}).get("verify_kit.routing_path") == ("claude-agent-sdk")
 
     # Reset exporter buffer.
     span_exporter.clear()

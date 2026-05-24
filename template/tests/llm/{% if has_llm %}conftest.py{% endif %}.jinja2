@@ -19,6 +19,7 @@ Two autouse function-scope fixtures:
    must proceed and record the cassette. The record-mode gate contract
    is exercised by ``tests/llm/test_skip_fixture_contract.py``.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -78,15 +79,9 @@ def _skip_when_no_cassette(request):
 
     # Default-mode path: skip if the cassette is missing.
     test_module = request.node.module.__name__.rsplit(".", 1)[-1]
-    cassette_path = (
-        Path(__file__).parent
-        / "cassettes"
-        / test_module
-        / f"{request.node.name}.yaml"
-    )
+    cassette_path = Path(__file__).parent / "cassettes" / test_module / f"{request.node.name}.yaml"
     if not cassette_path.exists():
         pytest.skip(
-            f"cassette not recorded: {cassette_path}. "
-            "Run `just refresh-cassettes` to populate."
+            f"cassette not recorded: {cassette_path}. Run `just refresh-cassettes` to populate."
         )
     yield

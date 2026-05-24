@@ -1,5 +1,7 @@
 from __future__ import annotations
+
 from pathlib import Path
+
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -10,6 +12,7 @@ class Settings(BaseSettings):
     NEVER reads Path.cwd() — see REVIEW-CHECKLIST §1. The caller is responsible
     for passing _env_file via load(cwd=...) below.
     """
+
     model_config = SettingsConfigDict(env_file=None, extra="ignore")
 
     ENV: str = Field(default="dev", description="dev | prod | test")
