@@ -16,18 +16,6 @@ from harness.models import CheckResult, ErrorEnvelope
 from harness.registry import register
 
 
-@register(
-    "backend",
-    tier="standard",
-    category="backend",
-    description=(
-        "Runs pytest backend tests, then schemathesis fuzz against the live "
-        "OpenAPI (over-network when app reachable on :8000, in-process via "
-        "ASGITransport otherwise), and smoke-tests /healthz."
-    ),
-    fixable=False,
-    tool="uv",
-)
 def _docker_reachable(timeout_s: float = 3.0) -> bool:
     """Probe whether the Docker daemon answers within `timeout_s`.
 
@@ -54,6 +42,18 @@ def _docker_reachable(timeout_s: float = 3.0) -> bool:
         return False
 
 
+@register(
+    "backend",
+    tier="standard",
+    category="backend",
+    description=(
+        "Runs pytest backend tests, then schemathesis fuzz against the live "
+        "OpenAPI (over-network when app reachable on :8000, in-process via "
+        "ASGITransport otherwise), and smoke-tests /healthz."
+    ),
+    fixable=False,
+    tool="uv",
+)
 def run(cwd: Path) -> CheckResult:
     """Execute the backend slice. cwd is the scaffold root — passed by the harness runner."""
     start = time.monotonic()
