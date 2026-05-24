@@ -28,9 +28,51 @@ from harness.registry import register
     fixable=False,
     tool="uv",
 )
+def _docker_reachable(timeout_s: float = 3.0) -> bool:
+    """Probe whether the Docker daemon answers within `timeout_s`.
+
+    Backend integration tests use Testcontainers-Postgres which requires a
+    reachable Docker daemon. When Docker is not running, Testcontainers hangs
+    on container creation rather than failing fast — which cascades into the
+    harness's 600s pytest timeout. Probing `docker info` upfront lets us skip
+    cleanly with a clear hint, matching the offline-first / graceful-degradation
+    pattern the rest of the harness uses (biome skip when missing, etc.).
+    """
+    import shutil
+
+    if shutil.which("docker") is None:
+        return False
+    try:
+        r = subprocess.run(
+            ["docker", "info", "--format", "{% raw %}{{.ServerVersion}}{% endraw %}"],
+            capture_output=True,
+            text=True,
+            timeout=timeout_s,
+        )
+        return r.returncode == 0 and r.stdout.strip() != ""
+    except (subprocess.TimeoutExpired, OSError):
+        return False
+
+
 def run(cwd: Path) -> CheckResult:
     """Execute the backend slice. cwd is the scaffold root — passed by the harness runner."""
     start = time.monotonic()
+
+    # Preflight: backend integration tests need Docker for Testcontainers-Postgres.
+    # Skip with a clear hint if the daemon is unreachable, instead of timing
+    # out the umbrella `just verify` after 600s on container-startup hang.
+    if not _docker_reachable():
+        return CheckResult(
+            check_id="backend",
+            status="skip",
+            message=(
+                "Docker daemon not reachable; backend integration tests require "
+                "Testcontainers-Postgres. Start Docker Desktop (or your daemon) "
+                "and re-run, or use `just verify-backend` which brings the stack "
+                "up explicitly via docker-compose."
+            ),
+            duration_ms=int((time.monotonic() - start) * 1000),
+        )
 
     # Step 1: pytest unit + integration (Testcontainers handles its own DB).
     r = subprocess.run(
