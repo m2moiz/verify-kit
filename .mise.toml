@@ -1,0 +1,20 @@
+# Toolchain pins for the verify-kit template repo itself.
+#
+# Required by .github/workflows/template-selftest.yml (jdx/mise-action@v2 runs at
+# repo root and installs whatever it finds here). The CONSUMER's toolchain lives
+# at template/.mise.toml.jinja2 — that file is rendered into each scaffolded
+# project and is independent from this one.
+#
+# Keep this minimal: only the tools needed to invoke `copier copy` + drive the
+# selftest workflow + run repo-level tests against scratch renders. Match
+# template/.mise.toml.jinja2 pins for python/node so the parent-vs-child venv
+# uses identical interpreter versions.
+
+[tools]
+python = "3.13"
+node = "24"
+uv = "latest"
+just = "latest"
+
+[env]
+PYTHONDONTWRITEBYTECODE = "1"
