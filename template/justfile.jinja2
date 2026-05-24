@@ -75,20 +75,36 @@ docker-down:
 # tear down. This is the ground truth for phase success criterion 3 — schemathesis
 # MUST run against the live OpenAPI. Use `verify-backend-quick` for local UX
 # without the docker overhead.
+#
+# Cleanup discipline: the `trap` registered as the first script statement runs
+# `docker compose down -v --remove-orphans` on EVERY exit path (success,
+# failure, Ctrl-C). Without it, a mid-recipe failure (pytest red, schemathesis
+# crash, network blip) leaves the docker stack running and orphan containers
+# accumulate across runs.
 verify-backend:
-    @echo "[verify-backend] bringing up stack (api + postgres + jaeger)..."
+    #!/usr/bin/env bash
+    set -e
+    # Project name = basename(cwd), lower-cased — matches docker-compose's
+    # default project derivation. Using `-p` lets the trap tear down by
+    # project label even if docker-compose.yml itself is unparseable
+    # (which is the actual r7v failure mode: a broken compose file made
+    # `docker compose down` exit non-zero, the trap's `|| true` swallowed
+    # it, and containers leaked).
+    _vk_project="$(basename "$PWD" | tr '[:upper:]' '[:lower:]')"
+    trap 'docker compose -p "$_vk_project" down -v --remove-orphans >/dev/null 2>&1 || true' EXIT
+    echo "[verify-backend] bringing up stack (api + postgres + jaeger)..."
     just docker-up
-    @echo "[verify-backend] running pytest backend slice..."
+    echo "[verify-backend] running pytest backend slice..."
     uv run pytest tests/backend/ -v
-    @echo "[verify-backend] running schemathesis fuzz against LIVE OpenAPI..."
+    echo "[verify-backend] running schemathesis fuzz against LIVE OpenAPI..."
     uv run schemathesis run http://localhost:8000/openapi.json --checks all --max-examples 20 --max-response-time 2
-    @echo "[verify-backend] smoke: /healthz"
+    echo "[verify-backend] smoke: /healthz"
     curl -sf http://localhost:8000/healthz
-    @echo "[verify-backend] smoke: /__debug/state (ENV=dev only)"
+    echo "[verify-backend] smoke: /__debug/state (ENV=dev only)"
     curl -sf http://localhost:8000/__debug/state || echo "  (skipped — ENV != dev or no state file)"
-    @echo "[verify-backend] tearing down stack..."
+    echo "[verify-backend] tearing down stack (trap will also fire on exit)..."
     just docker-down
-    @echo "[verify-backend] OK"
+    echo "[verify-backend] OK"
 
 # Quick local-UX path: skip stack startup. Runs pytest + opportunistic fuzz if
 # the app happens to already be reachable. Does NOT prove success criterion 3
