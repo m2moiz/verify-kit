@@ -43,7 +43,7 @@ jobs:
       - uses: jdx/mise-action@v2
 
       - name: Install copier
-        run: uv tool install copier --with copier-templates-extensions
+        run: uv tool install copier --with copier-template-extensions
 
       - name: Render scratch project
         run: |
