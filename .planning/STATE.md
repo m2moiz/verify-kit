@@ -4,7 +4,7 @@ milestone: v0.1
 milestone_name: milestone
 status: executing
 last_updated: "2026-05-23T00:00:00.000Z"
-last_activity: 2026-05-24 -- Phase 6 VERIFIED (10 original plans + 06-11 gap-closure + GAP-8 dep fix; 8 OSS-blocker beads closed total: verify-kit-3u2/yr7/93h/1v6 + verify-kit-7uu/52u/ooj/xv1 + 4 process gaps idp/sjx/ksd/9fh; v0.1 is OSS-ready modulo 3 deferred-human-capture beads pdc/87i/adl and 4 pre-existing Phase 4/3 backlog beads plk/c5a/r7v/xw4)
+last_activity: 2026-05-24 -- Phase 6 VERIFIED + v0.1.1 backlog SWEPT (06-13 closes 4 backlog beads r7v/plk/c5a/xw4; surfaces 1 new harness-vs-recipe gap d1o filed). v0.1 trust anchor: verify-backend recipe clean, scaffold polarity complete, fastmcp 3.x confirmed, logfire guard asserted. Remaining open: 3 deferred-human-capture (pdc/87i/adl) + 1 new harness check scoping bug (d1o). 16 beads closed across the session.
 progress:
   total_phases: 6
   completed_phases: 5
