@@ -12,6 +12,7 @@ UX-06 graceful degradation: when the Jaeger query service is unreachable
 Trust boundary: Jaeger is bound to localhost by ``docker run -p 16686:16686``
 (see ``justfile``). Untrusted-but-local; httpx ``timeout=2.0`` prevents hangs.
 """
+
 from __future__ import annotations
 
 from typing import Any
@@ -19,7 +20,6 @@ from typing import Any
 import httpx
 from rich.console import Console
 from rich.tree import Tree
-
 
 JAEGER_QUERY_URL = "http://localhost:16686/api/traces"
 
@@ -68,14 +68,11 @@ def render_trace_waterfall(trace: dict[str, Any], console: Console | None = None
 
     # Index spans by spanID so we can attach children to parents.
     nodes: dict[str, Tree] = {}
-    span_by_id: dict[str, dict[str, Any]] = {
-        s["spanID"]: s for s in spans if "spanID" in s
-    }
 
     def _label(span: dict[str, Any]) -> str:
         op = span.get("operationName", "<unnamed>")
         dur_us = span.get("duration", 0) or 0
-        return f"{op} [{dur_us/1000:.1f}ms]"
+        return f"{op} [{dur_us / 1000:.1f}ms]"
 
     for span in spans:
         parent_id: str | None = None
