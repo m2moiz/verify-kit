@@ -43,7 +43,7 @@ def _render_and_sync(tmp_path: Path) -> Path:
         has_fastapi_mcp=False,
     )
     subprocess.run(
-        ["uv", "sync", "--extra", "dev"],
+        ["uv", "sync", "--group", "dev"],
         cwd=scratch, check=True, timeout=600, env=_CLEAN_ENV,
         capture_output=True,
     )

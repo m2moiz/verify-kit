@@ -69,7 +69,13 @@ dependencies = [
 {% endif %}
 ]
 
-[project.optional-dependencies]
+[dependency-groups]
+# PEP 735 dev group. `uv run`, `uv sync`, and `uv run --group dev` all
+# include this automatically, so harness subprocess calls to `pytest`,
+# `ruff`, `hypothesis`, etc. resolve without `--extra dev`.
+# Single source of truth: replaces the deprecated [tool.uv].dev-dependencies
+# AND the consumer-facing [project.optional-dependencies].dev (which uv run
+# does not sync by default — that was the root cause of GAP-10 layer 5).
 dev = [
     "pytest>=8",
     "ruff>=0.6",
@@ -103,13 +109,6 @@ app-cli = "app.cli:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["harness"{% if has_backend %}, "app"{% endif %}]
-
-[tool.uv]
-# ruff is in the uv dev-dependencies group so `uv run` syncs it automatically
-# (unlike [project.optional-dependencies] extras, which require --extra dev).
-# This ensures `uv run ruff check .` and `uv run ruff format .` work in the
-# harness checks and in CI without any extra flags.
-dev-dependencies = ["ruff>=0.6"]
 
 [tool.ruff]
 line-length = 100
