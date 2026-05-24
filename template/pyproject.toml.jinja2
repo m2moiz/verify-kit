@@ -104,6 +104,13 @@ app-cli = "app.cli:main"
 [tool.hatch.build.targets.wheel]
 packages = ["harness"{% if has_backend %}, "app"{% endif %}]
 
+[tool.uv]
+# ruff is in the uv dev-dependencies group so `uv run` syncs it automatically
+# (unlike [project.optional-dependencies] extras, which require --extra dev).
+# This ensures `uv run ruff check .` and `uv run ruff format .` work in the
+# harness checks and in CI without any extra flags.
+dev-dependencies = ["ruff>=0.6"]
+
 [tool.ruff]
 line-length = 100
 target-version = "py313"
