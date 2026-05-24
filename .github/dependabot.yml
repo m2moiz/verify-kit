@@ -1,0 +1,66 @@
+# Dependabot — auto-PRs for dependency updates.
+#
+# Three ecosystems cover the verify-kit template repo:
+#   1. pip (Python deps in pyproject.toml + uv.lock)
+#   2. github-actions (workflow file action pins)
+#   3. docker (Dockerfile base images, when present)
+#
+# Conservative defaults: weekly cadence, max 5 open PRs per ecosystem,
+# grouped where it makes sense to reduce review noise. Adjust if PR storm
+# becomes overwhelming.
+version: 2
+updates:
+  # ─── Python dependencies (pyproject.toml + uv.lock) ────────────────
+  - package-ecosystem: pip
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+    open-pull-requests-limit: 5
+    labels: [dependencies, python]
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      # Roll patch + minor updates together to avoid 20 PRs/week.
+      python-minor-and-patch:
+        update-types: [minor, patch]
+      # Group OTel ecosystem — they version-lock against each other
+      # (semantic-conventions pinned to sdk version). Saw this break in
+      # GAP-x60 when one updated independently.
+      otel:
+        patterns:
+          - "opentelemetry-*"
+      # FastAPI ecosystem updates often need to land together.
+      fastapi:
+        patterns:
+          - "fastapi*"
+          - "starlette*"
+          - "uvicorn*"
+
+  # ─── GitHub Actions workflow versions ───────────────────────────────
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+    open-pull-requests-limit: 5
+    labels: [dependencies, ci]
+    commit-message:
+      prefix: "chore(ci)"
+    groups:
+      gh-actions:
+        update-types: [minor, patch]
+
+  # ─── Docker base images (Dockerfile, docker-compose.yml) ────────────
+  - package-ecosystem: docker
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+    open-pull-requests-limit: 3
+    labels: [dependencies, docker]
+    commit-message:
+      prefix: "chore(docker)"
