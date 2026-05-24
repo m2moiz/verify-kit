@@ -38,7 +38,7 @@ jobs:
           - combo: full
             data: '{"has_backend": true, "has_llm": true, "has_logfire": true, "has_fastapi_mcp": true, "has_db": true}'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - uses: jdx/mise-action@v2
 
