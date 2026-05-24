@@ -169,6 +169,107 @@ def test_fresh_scaffold_verify_backend_quick_skips_live_checks(tmp_path: Path):
     )
 
 
+# ── Orphan-container teardown (r7v) ──────────────────────────────────────────
+
+def _scratch_project_label(scratch: Path) -> str:
+    """Compose's default project name = parent dir name, lowercased + sanitized.
+
+    We render into `tmp_path/scratch`, so `docker compose` labels containers
+    with `com.docker.compose.project=scratch`. We grep `docker ps` by that
+    label (NOT by `--filter name=scratch` which matches container *names*,
+    not project labels). This is the deterministic identifier of "did this
+    test's stack get torn down."
+    """
+    return scratch.name
+
+
+def _running_compose_containers_for(project: str) -> list[str]:
+    """Return container names where com.docker.compose.project == project."""
+    r = subprocess.run(
+        ["docker", "ps", "--filter", f"label=com.docker.compose.project={project}",
+         "--format", "{{.Names}}"],
+        capture_output=True, text=True, timeout=30,
+    )
+    if r.returncode != 0:
+        return []
+    return [n for n in r.stdout.strip().splitlines() if n]
+
+
+@pytest.mark.skipif(shutil.which("copier") is None, reason="copier not installed")
+@pytest.mark.skipif(shutil.which("uv") is None, reason="uv not installed")
+@pytest.mark.skipif(shutil.which("just") is None, reason="just not installed")
+@pytest.mark.skipif(shutil.which("docker") is None, reason="docker not available")
+@pytest.mark.skipif(not _docker_daemon_running(), reason="docker daemon not running")
+def test_verify_backend_full_path_leaves_no_orphan_containers(tmp_path: Path):
+    """Bead verify-kit-r7v: `just verify-backend` must clean up containers on
+    every exit path (success AND failure). Proves the `trap`-based cleanup in
+    the justfile recipe.
+    """
+    # ── Success path ──
+    scratch = _render_scratch(tmp_path)
+    project = _scratch_project_label(scratch)
+    env = _scratch_env(scratch)
+    r = subprocess.run(
+        ["just", "verify-backend"],
+        cwd=scratch, capture_output=True, text=True, timeout=1800, env=env,
+    )
+    leftover = _running_compose_containers_for(project)
+    # Belt-and-suspenders cleanup so test failure doesn't leak containers.
+    if leftover:
+        subprocess.run(
+            ["docker", "compose", "down", "-v", "--remove-orphans"],
+            cwd=scratch, timeout=120, check=False, env=env,
+        )
+    assert not leftover, (
+        f"After successful `just verify-backend` (exit {r.returncode}), "
+        f"orphan containers remain for project {project!r}: {leftover}\n"
+        f"stdout tail:\n{r.stdout[-2000:]}\nstderr tail:\n{r.stderr[-2000:]}"
+    )
+
+    # ── Failure path: deliberately break the recipe mid-flight ──
+    # Overwrite docker-compose.yml with invalid YAML so `docker compose up`
+    # fails AFTER the trap has been registered. The trap MUST still fire.
+    compose_path = scratch / "docker-compose.yml"
+    original_compose = compose_path.read_text()
+    # First, bring stack back up so there's something to tear down when the
+    # next failure-recipe runs. We do this by simply re-running docker-up.
+    subprocess.run(
+        ["just", "docker-up"], cwd=scratch, timeout=300, check=False, env=env,
+    )
+    # Now break the compose file. The verify-backend recipe will fail when
+    # `just docker-up` re-runs against a broken compose — the trap then runs
+    # `docker compose down -v --remove-orphans` against the SAME broken file,
+    # which still tears down running containers because compose down works
+    # off the existing project-label state, not just the file's services.
+    try:
+        compose_path.write_text("this: is: not: valid: yaml:\n  - {{{\n")
+        r2 = subprocess.run(
+            ["just", "verify-backend"],
+            cwd=scratch, capture_output=True, text=True, timeout=600, env=env,
+        )
+        # We EXPECT this to fail (broken compose). The contract is: even on
+        # failure, no orphan containers survive.
+        assert r2.returncode != 0, (
+            "Broken compose should have failed verify-backend; got exit 0 — "
+            "the test fixture isn't actually exercising the failure path."
+        )
+    finally:
+        compose_path.write_text(original_compose)
+
+    leftover2 = _running_compose_containers_for(project)
+    if leftover2:
+        # Best-effort cleanup even if assertion is about to fail.
+        subprocess.run(
+            ["docker", "compose", "down", "-v", "--remove-orphans"],
+            cwd=scratch, timeout=120, check=False, env=env,
+        )
+    assert not leftover2, (
+        f"After FAILED `just verify-backend`, orphan containers remain "
+        f"for project {project!r}: {leftover2}. The trap-based cleanup in "
+        f"the justfile recipe did NOT fire on the failure exit path."
+    )
+
+
 # ── has_backend=false polarity (no Docker needed) ────────────────────────────
 
 @pytest.mark.skipif(shutil.which("copier") is None, reason="copier not installed")
