@@ -48,8 +48,13 @@ jobs:
       - name: Render scratch project
         run: |
           SCRATCH="/tmp/scratch-${{ matrix.combo }}"
+          DATAFILE="/tmp/copier-data-${{ matrix.combo }}.json"
+          # Copier 9.15+ validates --data-file as ExistingFile; bash process
+          # substitution produces /dev/fd/63 which fails that check. Write
+          # to a real temp file first.
+          echo '${{ matrix.data }}' > "$DATAFILE"
           copier copy --trust --defaults \
-            --data-file <(echo '${{ matrix.data }}') \
+            --data-file "$DATAFILE" \
             "$GITHUB_WORKSPACE" "$SCRATCH"
 
       - name: Run just verify in scratch
