@@ -9,6 +9,7 @@ project without `mise install` run yet should not hard-fail `verify --quick`
 cwd contract (carryover): subprocess.run passes `cwd=cwd` so `just`
 inspects the project under verification, not the process CWD.
 """
+
 from __future__ import annotations
 
 import subprocess

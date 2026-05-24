@@ -10,15 +10,16 @@ when ``serve`` is called. Every tool function is closed over an explicit
 ``cwd: Path`` — the server NEVER reads ``Path.cwd()`` at import time or
 inside tool bodies (REVIEW-CHECKLIST §1).
 """
-from __future__ import annotations
 
-from harness.mcp.server import serve
+from __future__ import annotations
 
 # Re-export fastmcp's tool decorator under the local name ``Tool`` so callers
 # can write ``from harness.mcp import Tool`` without depending directly on
 # fastmcp's module layout. (Pyright resolves this through the fastmcp package
 # at the consumer's install time.)
 from fastmcp import FastMCP as _FastMCP  # noqa: F401  (re-export anchor)
+
+from harness.mcp.server import serve
 
 Tool = _FastMCP.tool  # type: ignore[assignment]
 

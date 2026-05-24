@@ -14,6 +14,7 @@ Implements HARN-08 and Decisions 2.1–2.4:
 Public surface: ``CacheStore``, ``make_cache_key``, ``hash_inputs``,
 ``get_tool_version``, ``CacheCorruptError``.
 """
+
 from __future__ import annotations
 
 import glob as _glob
@@ -21,12 +22,11 @@ import hashlib
 import sqlite3
 import subprocess
 import time
+from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Iterator
 
 from harness.models import CheckResult
-
 
 # ── SQL constants (verbatim from RESEARCH.md §5) ──────────────────────────────
 
@@ -57,10 +57,7 @@ ON CONFLICT(check_id, key) DO UPDATE SET
 """
 
 _GET = "SELECT result_json, last_hit_at FROM results WHERE check_id=? AND key=?"
-_UPDATE_HIT = (
-    "UPDATE results SET last_hit_at=?, hit_count=hit_count+1 "
-    "WHERE check_id=? AND key=?"
-)
+_UPDATE_HIT = "UPDATE results SET last_hit_at=?, hit_count=hit_count+1 WHERE check_id=? AND key=?"
 _EVICT = """
 DELETE FROM results WHERE (check_id, key) IN (
   SELECT check_id, key FROM results ORDER BY last_hit_at ASC LIMIT ?
@@ -156,9 +153,7 @@ def get_tool_version(tool: str | None) -> str:
     except Exception:
         pass
     try:
-        r = subprocess.run(
-            [tool, "--version"], capture_output=True, text=True, timeout=2
-        )
+        r = subprocess.run([tool, "--version"], capture_output=True, text=True, timeout=2)
         if r.returncode == 0 and r.stdout.strip():
             return r.stdout.strip().split()[-1]
     except Exception:

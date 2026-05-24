@@ -17,6 +17,7 @@ Plan-05's OTLP report emitter calls ``force_flush()`` to drain spans without
 tearing down the provider. Plan-06's CLI registers ``shutdown()`` via
 ``atexit`` for clean process exit.
 """
+
 from __future__ import annotations
 
 import os
@@ -79,7 +80,7 @@ else:
     class _NullSpanCtx:
         """No-op span object. Mirrors opentelemetry.trace.Span surface."""
 
-        def __enter__(self) -> "_NullSpanCtx":
+        def __enter__(self) -> _NullSpanCtx:
             return self
 
         def __exit__(self, *exc: object) -> bool:

@@ -9,6 +9,7 @@ When the harness runner invokes this check it returns ``status="skip"``
 with a hint that points the consumer at the real entry point (``just eval``).
 The runner exits 0 on skip; the umbrella verify therefore exits 0 too.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -35,8 +36,7 @@ def run(cwd: Path) -> CheckResult:
         check_id="eval",
         status="skip",
         message=(
-            "eval is opt-in (D-15). Run `just eval` to execute the Promptfoo "
-            "suite under eval/."
+            "eval is opt-in (D-15). Run `just eval` to execute the Promptfoo suite under eval/."
         ),
         error=ErrorEnvelope(
             code="eval.opt-in",

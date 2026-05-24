@@ -32,6 +32,7 @@ Unquoted nested check IDs (``[tool.verify-kit.checks.lint.ruff]``) are
 **explicitly not supported**: ``lint`` would be ambiguous with a sub-table.
 Use the quoted form instead.
 """
+
 from __future__ import annotations
 
 import tomllib
@@ -43,15 +44,12 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from harness.didyoumean import suggest
 from harness.logging import log
 
-
 # ── Sub-models ───────────────────────────────────────────────────────────────
 
 
 class FormatConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    default: Literal[
-        "pretty", "json", "jsonl", "junit", "sarif", "otlp"
-    ] = "pretty"
+    default: Literal["pretty", "json", "jsonl", "junit", "sarif", "otlp"] = "pretty"
 
 
 class CacheConfig(BaseModel):
@@ -202,14 +200,10 @@ def load_config(pyproject_path: Path = Path("pyproject.toml")) -> HarnessConfig:
                     if field is None:
                         break
                     annotation = field.annotation
-                    if isinstance(annotation, type) and issubclass(
-                        annotation, BaseModel
-                    ):
+                    if isinstance(annotation, type) and issubclass(annotation, BaseModel):
                         model = annotation
                 hint = _suggest_for_error(unknown_key, model)
-                raise ValueError(
-                    f"Unknown config key {unknown_key!r}. {hint}"
-                ) from exc
+                raise ValueError(f"Unknown config key {unknown_key!r}. {hint}") from exc
         # No extra_forbidden — re-raise as ValueError with the pydantic message
         raise ValueError(str(exc)) from exc
 

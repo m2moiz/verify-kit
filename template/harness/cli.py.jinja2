@@ -30,6 +30,7 @@ Atomic disk writes + EXIT_WRITE_FAILED precedence (review MEDIUM-6):
     them raises ``OSError``, the CLI exits ``EXIT_WRITE_FAILED=12`` even when
     checks themselves failed — CI semantics depend on the artifact existing.
 """
+
 from __future__ import annotations
 
 import atexit
@@ -37,7 +38,6 @@ import json
 import os
 import sys
 from pathlib import Path
-from typing import IO
 
 import click
 import typer
@@ -49,7 +49,6 @@ from harness.logging import configure_logging, log
 from harness.models import (
     EXIT_BAD_INPUT,
     EXIT_CACHE_CORRUPT,
-    EXIT_CHECK_FAIL,
     EXIT_OK,
     EXIT_OTEL_UNREACHABLE,
     EXIT_TOOL_MISSING,
@@ -60,7 +59,6 @@ from harness.models import (
 from harness.observability import shutdown
 from harness.registry import list_checks as _registry_list_checks
 from harness.reports import FORMATTERS
-
 
 # ── Module-level one-shot atexit registration (review MEDIUM-5) ──────────────
 _ATEXIT_REGISTERED = False
@@ -154,7 +152,9 @@ def verify(
     fix: bool = typer.Option(False, "--fix/--no-fix", help="Run fixers (Phase 2: metadata-only)."),
     quick: bool = typer.Option(False, "--quick", help="Run only tier='quick' specs."),
     full: bool = typer.Option(False, "--full", help="Run all specs (quick + standard + slow)."),
-    no_cache: bool = typer.Option(False, "--no-cache/--cache", help="Bypass the SQLite result cache for this run."),
+    no_cache: bool = typer.Option(
+        False, "--no-cache/--cache", help="Bypass the SQLite result cache for this run."
+    ),
     output_format: str = typer.Option(
         None,
         "--format",
@@ -360,7 +360,9 @@ app.add_typer(ralph_app, name="ralph")
 def ralph_run_cmd(
     prompt: str = typer.Argument(..., help="Prompt to drive the loop executor."),
     max_iterations: int = typer.Option(5, "--max-iterations", help="Max executor iterations."),
-    cost_cap_usd: float = typer.Option(1.0, "--cost-cap-usd", help="Hard USD ceiling across iterations."),
+    cost_cap_usd: float = typer.Option(
+        1.0, "--cost-cap-usd", help="Hard USD ceiling across iterations."
+    ),
     output_format: str = typer.Option(
         None,
         "--format",
@@ -449,9 +451,7 @@ def _parse_http_endpoint(value: str) -> tuple[str, int]:
     """
     host_part, _, port_part = value.rpartition(":")
     if not port_part or not port_part.isdigit():
-        raise ValueError(
-            f"--http expects '[host]:port', got {value!r}"
-        )
+        raise ValueError(f"--http expects '[host]:port', got {value!r}")
     return (host_part or "127.0.0.1", int(port_part))
 
 
@@ -551,6 +551,7 @@ def app_entry() -> None:
         # robustly via a regex over the message tail.
         if "No such option" in msg and ctx is not None:
             import re
+
             m = re.search(r"-{1,2}([A-Za-z0-9][A-Za-z0-9\-_]*)", msg)
             token = m.group(1) if m else ""
             known = _walk_known_options(ctx)
@@ -565,8 +566,10 @@ def app_entry() -> None:
         # Unknown subcommand: "No such command 'veriy'."
         if "No such command" in msg and ctx is not None:
             token = msg.split("'")[1] if "'" in msg else msg.rsplit(" ", 1)[-1].rstrip(".")
-            group = ctx.command if hasattr(ctx.command, "commands") else (
-                ctx.parent.command if ctx.parent else None
+            group = (
+                ctx.command
+                if hasattr(ctx.command, "commands")
+                else (ctx.parent.command if ctx.parent else None)
             )
             known = list(getattr(group, "commands", {}).keys()) if group is not None else []
             matches = suggest(token, known)

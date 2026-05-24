@@ -6,6 +6,7 @@ Each emitter exposes `emit(report: VerifyReport, stream: IO[str]) -> None`.
 The pretty emitter additionally exposes `run_with_spinner(specs, runner_fn)`
 for the TTY-friendly progress UI (UX-07).
 """
+
 from __future__ import annotations
 
 from harness.reports import (

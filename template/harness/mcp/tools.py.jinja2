@@ -26,13 +26,13 @@ Smoke + verify_check check IDs:
     ``mise.toml.valid`` (Phase-2 quick check) when callers omit ``name``.
     Both match the CLI twins exactly (byte-identical MCP↔CLI contract).
 """
+
 from __future__ import annotations
 
 from pathlib import Path
 
 from fastmcp import FastMCP
 from mcp.types import ToolAnnotations
-
 
 # Default check id used by ``verify_check`` and ``smoke`` when callers omit
 # the name. Picked as a real, fast Phase-2 ``tier="quick"`` registered check
@@ -57,15 +57,13 @@ def register_tools(mcp: FastMCP, *, cwd: Path) -> None:
     from harness import fix as _fix
     from harness import jaeger as _jaeger
     from harness import ralph as _ralph
-    from harness.registry import list_checks as _registry_list_checks
     from harness.models import CheckCatalogEntry
+    from harness.registry import list_checks as _registry_list_checks
 
     # ── Category A: byte-identical (7 tools) ─────────────────────────────
 
     @mcp.tool(
-        annotations=ToolAnnotations(
-            readOnlyHint=True, destructiveHint=False, idempotentHint=True
-        )
+        annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True)
     )
     def verify() -> dict:
         """Run the full verify-kit check suite and return the JSON report."""
@@ -74,9 +72,7 @@ def register_tools(mcp: FastMCP, *, cwd: Path) -> None:
         return result
 
     @mcp.tool(
-        annotations=ToolAnnotations(
-            readOnlyHint=True, destructiveHint=False, idempotentHint=True
-        )
+        annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True)
     )
     def verify_check(name: str = _DEFAULT_CHECK_ID) -> dict:
         """Run a single registered check by id and return the JSON report."""
@@ -85,9 +81,7 @@ def register_tools(mcp: FastMCP, *, cwd: Path) -> None:
         return result
 
     @mcp.tool(
-        annotations=ToolAnnotations(
-            readOnlyHint=True, destructiveHint=False, idempotentHint=True
-        )
+        annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True)
     )
     def list_checks() -> list[dict]:
         """List every registered check as CheckCatalogEntry dicts."""
@@ -96,22 +90,16 @@ def register_tools(mcp: FastMCP, *, cwd: Path) -> None:
         return result
 
     @mcp.tool(
-        annotations=ToolAnnotations(
-            readOnlyHint=True, destructiveHint=False, idempotentHint=True
-        )
+        annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True)
     )
     def smoke() -> dict:
         """Run the cheapest single quick check (tier=quick, default check)."""
-        report = _core.verify(
-            check_ids=[_DEFAULT_CHECK_ID], tier="quick", cwd=cwd
-        )
+        report = _core.verify(check_ids=[_DEFAULT_CHECK_ID], tier="quick", cwd=cwd)
         result = report.model_dump(exclude_none=True, mode="json")
         return result
 
     @mcp.tool(
-        annotations=ToolAnnotations(
-            readOnlyHint=True, destructiveHint=False, idempotentHint=True
-        )
+        annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True)
     )
     def trace_last() -> dict:
         """Return the most recent verify-kit trace from Jaeger (or empty)."""
@@ -120,9 +108,7 @@ def register_tools(mcp: FastMCP, *, cwd: Path) -> None:
         return result
 
     @mcp.tool(
-        annotations=ToolAnnotations(
-            readOnlyHint=True, destructiveHint=False, idempotentHint=True
-        )
+        annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True)
     )
     def describe() -> dict:
         """Emit the FMT-04 introspection envelope (commands, schemas, checks)."""
@@ -136,9 +122,7 @@ def register_tools(mcp: FastMCP, *, cwd: Path) -> None:
     # ── Category B: shape-only (2 tools — ralph_run + fix_propose) ───────
 
     @mcp.tool(
-        annotations=ToolAnnotations(
-            readOnlyHint=False, destructiveHint=False, idempotentHint=False
-        )
+        annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=False)
     )
     def ralph_run(
         prompt: str = "noop",
@@ -155,9 +139,7 @@ def register_tools(mcp: FastMCP, *, cwd: Path) -> None:
         return result
 
     @mcp.tool(
-        annotations=ToolAnnotations(
-            readOnlyHint=True, destructiveHint=False, idempotentHint=False
-        )
+        annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=False)
     )
     def fix_propose() -> dict:
         """Return the full SARIF envelope from .verify/report.sarif (Phase 3: no LLM)."""
@@ -167,9 +149,7 @@ def register_tools(mcp: FastMCP, *, cwd: Path) -> None:
     # ── Category A continued: ralph_status (byte-identical with CLI) ─────
 
     @mcp.tool(
-        annotations=ToolAnnotations(
-            readOnlyHint=True, destructiveHint=False, idempotentHint=True
-        )
+        annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True)
     )
     def ralph_status() -> dict:
         """Return the last Ralph run state (or {status: no_runs})."""
@@ -179,9 +159,7 @@ def register_tools(mcp: FastMCP, *, cwd: Path) -> None:
     # ── Category C: stubs (4 tools) ──────────────────────────────────────
 
     @mcp.tool(
-        annotations=ToolAnnotations(
-            readOnlyHint=True, destructiveHint=False, idempotentHint=True
-        )
+        annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True)
     )
     def debug_state() -> dict:
         """Phase-4 stub: backend debug-state introspection."""
@@ -189,9 +167,7 @@ def register_tools(mcp: FastMCP, *, cwd: Path) -> None:
         return result
 
     @mcp.tool(
-        annotations=ToolAnnotations(
-            readOnlyHint=True, destructiveHint=False, idempotentHint=True
-        )
+        annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True)
     )
     def debug_events() -> dict:
         """Phase-4 stub: backend debug-events stream."""
@@ -199,9 +175,7 @@ def register_tools(mcp: FastMCP, *, cwd: Path) -> None:
         return result
 
     @mcp.tool(
-        annotations=ToolAnnotations(
-            readOnlyHint=False, destructiveHint=False, idempotentHint=False
-        )
+        annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=False)
     )
     def eval_run() -> dict:
         """Phase-5 stub: run an LLM eval suite."""
@@ -209,9 +183,7 @@ def register_tools(mcp: FastMCP, *, cwd: Path) -> None:
         return result
 
     @mcp.tool(
-        annotations=ToolAnnotations(
-            readOnlyHint=True, destructiveHint=False, idempotentHint=True
-        )
+        annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True)
     )
     def eval_compare() -> dict:
         """Phase-5 stub: compare two LLM eval runs."""
