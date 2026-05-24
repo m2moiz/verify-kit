@@ -49,10 +49,30 @@ jobs:
         run: |
           SCRATCH="/tmp/scratch-${{ matrix.combo }}"
           DATAFILE="/tmp/copier-data-${{ matrix.combo }}.json"
-          # Copier 9.15+ validates --data-file as ExistingFile; bash process
-          # substitution produces /dev/fd/63 which fails that check. Write
-          # to a real temp file first.
-          echo '${{ matrix.data }}' > "$DATAFILE"
+          # Merge matrix-row add-on flags with shared identity defaults.
+          # copier.yml has several prompts without defaults (project_name,
+          # author_*) that --defaults can't fill in — we supply them here.
+          cat > /tmp/copier-base.json <<'EOF'
+          {
+            "project_name": "SelftestScratch",
+            "project_description": "verify-kit template self-test scratch (${{ matrix.combo }})",
+            "project_slug": "selftest-scratch",
+            "package_name": "selftest_scratch",
+            "author_name": "verify-kit CI",
+            "author_email": "ci@verify-kit.example",
+            "license": "MIT",
+            "has_claude_code": false,
+            "has_cursor": false,
+            "has_windsurf": false,
+            "has_copilot": false,
+            "has_zed": false,
+            "has_continue": false,
+            "has_devcontainer": false,
+            "llm_backend": "langfuse-cloud"
+          }
+          EOF
+          echo '${{ matrix.data }}' > /tmp/copier-matrix.json
+          jq -s '.[0] * .[1]' /tmp/copier-base.json /tmp/copier-matrix.json > "$DATAFILE"
           copier copy --trust --defaults \
             --data-file "$DATAFILE" \
             "$GITHUB_WORKSPACE" "$SCRATCH"
