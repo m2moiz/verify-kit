@@ -18,7 +18,9 @@ class Settings(BaseSettings):
     ENV: str = Field(default="dev", description="dev | prod | test")
     LOG_LEVEL: str = Field(default="INFO")
     LOG_FORMAT: str = Field(default="auto")
+    {% if has_db %}
     DATABASE_URL: str = Field(default="postgresql+asyncpg://postgres:postgres@localhost:5432/app")
+    {% endif %}
     PROFILE_ENABLED: bool = Field(default=True, description="dev-only pyinstrument toggle")
     VERIFYKIT_AUTH_TOKEN: str | None = Field(
         default=None,
