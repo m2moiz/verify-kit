@@ -107,6 +107,11 @@ Fix: move dev to `[dependency-groups]`, OR document, OR make `just verify` self-
 DeprecationWarning emitted on every polarity test run. Old name still works but will be removed in a future copier-template-extensions release.
 Fix: search-replace across README, workflow YAML, CONTRIBUTING, copier.yml.
 
+### GAP-7 (P1 / HIGH): rendered scaffold ships unformatted / un-linted code
+**Bead:** `verify-kit-ooj` — surfaced by 06-11 Task 6 cold-start gate after GAP-5 was closed.
+After the quickstart now installs `--extra dev`, `ruff` actually runs and finds 85 lint issues + 60 files needing reformat across the rendered scaffold (`alembic/versions/0001_initial.py`, `app/api.py`, `app/cli.py`, `app/main.py`, `app/models.py`, `app/settings.py`, etc.). Root cause: `template/*.jinja2` source files were never normalised through `ruff format` / `ruff check --fix` before being committed.
+Fix shape: render scratch project, run `uv run ruff format . && uv run ruff check . --fix`, diff back into `template/`, commit. Backend slice (the focus of GAP-1+2) passes cleanly with token both SET and UNSET; this is a separate v0.1 polish gap.
+
 ## Verdict
 
 **7/8 tests pass — Test 1 cold-start fails on 2 P0 regressions that the plan-text convergence loop couldn't see.** Phase 6 is functionally close to complete but has real consumer-facing breakage on the auth-token-set path. The 2 P0 gaps are mechanical fixes (~30-45 min combined). The 1 P2 (Pattern 6 leak) is a quick rewrite. The 2 P3s are UX polish. GAP-6 is dependency upgrade + 3-line search-replace.
