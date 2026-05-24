@@ -1,0 +1,37 @@
+name: codeql
+# CodeQL semantic SAST. Catches injection bugs, unsafe deserialization,
+# path-traversal, and other vulnerability classes that ruff and pyright
+# cannot detect because they require flow-sensitive analysis.
+# Free for public repos. Results appear under Security → Code scanning.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Weekly re-scan picks up new CodeQL queries published by GitHub.
+    - cron: "30 13 * * 1"
+permissions:
+  actions: read
+  contents: read
+  security-events: write
+jobs:
+  analyze:
+    name: analyze (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [python]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+          # security-and-quality includes additional quality queries beyond
+          # the default security-extended set. Worth the few extra seconds
+          # given this only runs on push + weekly.
+          queries: security-and-quality
+      - uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:${{ matrix.language }}"
