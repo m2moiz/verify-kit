@@ -1,0 +1,59 @@
+"""harness.proc — subprocess wrappers with sane timeout defaults.
+
+Centralizes the timeout policy for subprocess calls inside check modules.
+A hung subprocess inside a check is almost always a defect (can't reach a
+peer, deadlock, infinite loop in tests). 60s is enough for any reasonable
+check command; longer means "something is wrong — fail fast so the user
+sees it within minutes, not after a coffee break."
+
+Why this exists: verify-kit-8q7 L6 (fastapi-mcp SSE hang in template-
+selftest) burned 600s waiting for a streaming `/mcp` response to close.
+The harness backend check called `subprocess.run` with `timeout=600`,
+which is the wrong default — it let a real defect hide for 10 minutes
+before surfacing as `check.crashed`. With a 60s default, the same defect
+surfaces in 1 minute and the dev iterates faster.
+
+Callers override per-call when they have legitimate long-running needs
+(`run([...], timeout=300)` for schemathesis fuzz, e.g.).
+"""
+
+from __future__ import annotations
+
+import subprocess
+from pathlib import Path
+from typing import Any
+
+# Default timeout for harness check subprocess calls.
+# A hung process is a defect, not normal operation. 60s catches real hangs
+# quickly while still allowing slower-but-legitimate commands like uv-sync
+# in a cold cache to complete.
+DEFAULT_TIMEOUT_S: float = 60.0
+
+
+def run(
+    args: list[str],
+    *,
+    cwd: Path | str | None = None,
+    capture_output: bool = True,
+    text: bool = True,
+    timeout: float | None = None,
+    check: bool = False,
+    env: dict[str, str] | None = None,
+) -> subprocess.CompletedProcess:
+    """subprocess.run with default timeout=DEFAULT_TIMEOUT_S.
+
+    Identical semantics to subprocess.run except `timeout` defaults to
+    60s when not explicitly specified. If you genuinely need longer,
+    pass `timeout=N` — but consider whether the long timeout is hiding
+    a bug first.
+    """
+    effective_timeout = DEFAULT_TIMEOUT_S if timeout is None else timeout
+    return subprocess.run(
+        args,
+        cwd=cwd,
+        capture_output=capture_output,
+        text=text,
+        timeout=effective_timeout,
+        check=check,
+        env=env,
+    )

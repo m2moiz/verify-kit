@@ -13,6 +13,7 @@ import time
 from pathlib import Path
 
 from harness.models import CheckResult, ErrorEnvelope
+from harness.proc import run as proc_run
 from harness.registry import register
 
 
@@ -75,12 +76,14 @@ def run(cwd: Path) -> CheckResult:
         )
 
     # Step 1: pytest unit + integration (Testcontainers handles its own DB).
-    r = subprocess.run(
+    # 180s timeout: enough for cold Testcontainers Postgres startup + 24 tests,
+    # short enough to surface real hangs in 3 minutes instead of 10. The
+    # prior 600s default hid the verify-kit-8q7 L6 fastapi-mcp SSE hang for
+    # 10 minutes per CI cycle.
+    r = proc_run(
         ["uv", "run", "pytest", "tests/backend/", "-q", "--tb=short"],
         cwd=cwd,
-        capture_output=True,
-        text=True,
-        timeout=600,
+        timeout=180,
     )
     if r.returncode != 0:
         return CheckResult(
@@ -114,7 +117,9 @@ def run(cwd: Path) -> CheckResult:
 
     if app_running:
         # Over-network path: schemathesis against the LIVE running app.
-        r2 = subprocess.run(
+        # 300s is a legitimate override — schemathesis with max-examples=20
+        # across the full route surface can genuinely take 2-4 minutes.
+        r2 = proc_run(
             [
                 "uv",
                 "run",
@@ -128,8 +133,6 @@ def run(cwd: Path) -> CheckResult:
                 "--hypothesis-deadline=2000",
             ],
             cwd=cwd,
-            capture_output=True,
-            text=True,
             timeout=300,
         )
         if r2.returncode != 0:
@@ -155,7 +158,7 @@ def run(cwd: Path) -> CheckResult:
         # Calls harness.checks.backend_inprocess_fuzz (the sibling file
         # written by the in-process fuzz module). Using subprocess keeps the heavy
         # hypothesis engine isolated from the harness runner process.
-        r2 = subprocess.run(
+        r2 = proc_run(
             [
                 "uv",
                 "run",
@@ -168,8 +171,6 @@ def run(cwd: Path) -> CheckResult:
                 str(cwd),
             ],
             cwd=cwd,
-            capture_output=True,
-            text=True,
             timeout=300,
         )
         if r2.returncode != 0:
