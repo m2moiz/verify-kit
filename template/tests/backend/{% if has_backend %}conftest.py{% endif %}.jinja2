@@ -3,6 +3,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 from app.main import create_app
+from app.auth import require_auth
 
 
 @pytest.fixture
@@ -27,15 +28,24 @@ def client_dev(app_dev):
     # so `app.state.settings` (set inside lifespan) is unbound and every
     # route that reads `request.app.state.settings` raises AttributeError.
     # See https://fastapi.tiangolo.com/advanced/testing-events/.
+    #
+    # Override require_auth for route tests; auth itself is covered by
+    # test_phase06_auth_polarity.py at repo root.
+    app_dev.dependency_overrides[require_auth] = lambda: None
     with TestClient(app_dev) as client:
         yield client
+    app_dev.dependency_overrides.clear()
 
 
 @pytest.fixture
 def client_prod(app_prod):
     # Same lifespan-context requirement — see client_dev docstring.
+    # Override require_auth for route tests; auth itself is covered by
+    # test_phase06_auth_polarity.py at repo root.
+    app_prod.dependency_overrides[require_auth] = lambda: None
     with TestClient(app_prod) as client:
         yield client
+    app_prod.dependency_overrides.clear()
 
 {% if has_db %}
 # ── DB fixtures — merged inline to avoid pytest_plugins fragility ──
