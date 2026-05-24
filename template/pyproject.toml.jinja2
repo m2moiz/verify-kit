@@ -47,8 +47,9 @@ dependencies = [
     "alembic>=1.13",
 {% endif %}
 {% if has_backend and has_logfire %}
-    # Logfire opt-in — auto-traces FastAPI + httpx + LLM SDKs
-    "logfire>=0.50",
+    # Logfire opt-in — auto-traces FastAPI + httpx + LLM SDKs.
+    # [fastapi] extra pulls opentelemetry-instrumentation-fastapi which logfire.instrument_fastapi() requires.
+    "logfire[fastapi]>=0.50",
 {% endif %}
 {% if has_backend and has_fastapi_mcp %}
     # FastAPI-MCP opt-in — mounts all routes as MCP tools
