@@ -7,8 +7,6 @@ get it automatically.
 
 from __future__ import annotations
 
-import asyncio
-import json
 import uuid
 
 import typer
@@ -39,6 +37,9 @@ def echo_cmd(message: str = typer.Option(..., "--message", "-m")) -> None:
 @app.command("db-ping")
 def db_ping_cmd(database_url: str = typer.Option(..., envvar="DATABASE_URL")) -> None:
     """Check DB connection. Reads DATABASE_URL from env or --database-url."""
+    import asyncio
+    import json
+
     from sqlalchemy import text
 
     from app.db import make_engine

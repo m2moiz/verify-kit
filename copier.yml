@@ -60,11 +60,22 @@ _message_after_copy: |
   - has_logfire={{ has_logfire }}: Logfire auto-tracing
   - has_fastapi_mcp={{ has_fastapi_mcp }}: FastAPI-MCP mount
 
-# Post-render: ensure shipped shell scripts are executable. The 2>/dev/null
-# || true swallows the case where has_claude_code=false makes the hook paths
-# absent. The scripts/ralph.sh wrapper is shipped unconditionally.
+# Post-render tasks. Run in order; failures abort the scaffold.
+#
+# 1. Make shipped shell scripts executable. `2>/dev/null || true` swallows the
+#    case where has_claude_code=false makes the hook paths absent. The
+#    scripts/ralph.sh wrapper is shipped unconditionally.
+# 2. Auto-format the rendered output. Jinja `{% if %}` blocks that render to
+#    nothing can leave stacked blank lines that `ruff format` rejects; running
+#    the formatter once on the output normalizes them without requiring
+#    per-block whitespace control in every template file. Uses `uvx ruff` so
+#    no scaffold venv or dev-group sync is needed at copy time. The
+#    `|| true` keeps scaffolding resilient if ruff/uv is unavailable —
+#    `just verify` will surface any real format issues at the consumer's
+#    first run.
 _tasks:
   - "chmod +x .claude/hooks/post-tool-use.sh .claude/hooks/stop.sh scripts/ralph.sh 2>/dev/null || true"
+  - "uvx --quiet ruff format . 2>/dev/null || true"
 
 # ── Group: Identity ──────────────────────────────────────────────────────────
 

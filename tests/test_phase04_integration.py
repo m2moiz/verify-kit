@@ -66,13 +66,13 @@ def _render_scratch(
         ],
         cwd=tmp_path, check=True, timeout=180, env=_CLEAN_ENV,
     )
-    # Use `uv sync --extra dev` to install dependencies + the [dev] extra in the
-    # scratch project's own venv. uv sync respects requires-python and creates
-    # .venv in scratch/. The template uses [project.optional-dependencies].dev
-    # (extras, not groups), so `--extra dev` is required — `--dev` only installs
-    # dependency-groups which the template does not define.
+    # Use `uv sync --group dev` to install dependencies + the PEP 735 dev group
+    # in the scratch project's own venv. uv sync respects requires-python and
+    # creates .venv in scratch/. The template uses [dependency-groups].dev
+    # (PEP 735, the new canonical location — replaced the deprecated
+    # [project.optional-dependencies].dev + [tool.uv].dev-dependencies pair).
     subprocess.run(
-        ["uv", "sync", "--extra", "dev"],
+        ["uv", "sync", "--group", "dev"],
         cwd=scratch, check=True, timeout=600, env=_CLEAN_ENV,
     )
     return scratch
@@ -85,7 +85,7 @@ def _scratch_env(scratch: Path) -> dict:
     (which would cause it to use the wrong Python/packages). With VIRTUAL_ENV
     absent, `uv run` will auto-discover the project environment from the
     pyproject.toml in `scratch/` and use `scratch/.venv` (already populated by
-    `uv sync --extra dev`). UV_FROZEN=1 prevents re-locking (uv.lock already
+    `uv sync --group dev`). UV_FROZEN=1 prevents re-locking (uv.lock already
     written by uv sync).
     """
     return {
