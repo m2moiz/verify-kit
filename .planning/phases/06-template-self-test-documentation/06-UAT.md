@@ -3,20 +3,39 @@ status: gaps_identified
 phase: 06-template-self-test-documentation
 source:
   - 06-01-SUMMARY.md through 06-10-SUMMARY.md
+  - 06-11-SUMMARY.md  # gap-closure sweep closing GAP-1..6
 started: 2026-05-24T00:00:00Z
-updated: 2026-05-24T03:00:00Z
-verifier: claude (ran from repo root via /gsd:verify-work)
-scratch_dir: /tmp/scratch-phase6-uat-1779580449
+updated: 2026-05-24T05:00:00Z
+re_verified_after: 06-11 (commits c12edef → d0f87b9, b172b17)
+verifier: claude (re-ran from repo root after 06-11 gap closure)
+scratch_dir: /tmp/scratch-reverify-1779615312
 ---
 
-## Summary
+## Summary (post 06-11 re-verification)
 
 total: 8
 passed: 7
 failed: 1
-issues: 6 (2 CRITICAL/P0, 2 MEDIUM/P2, 2 LOW/P3)
+issues: 1 (GAP-7 P1 — pre-existing lint/format scaffold defect, unmasked by GAP-5 closure)
+gaps_closed_this_round: 6 (verify-kit-7uu, -52u, -idp, -sjx, -ksd, -9fh)
 pending: 0
 skipped: 0
+
+## Per-check verdict on post-06-11 cold-start (verify-kit verify report)
+
+| Check | Pre-06-11 | Post-06-11 |
+|---|---|---|
+| mise.toml.valid | pass | pass |
+| copier.answers.valid | pass | pass |
+| just-list.renders | pass | pass |
+| lint.ruff | (masked — ruff missing) | **fail (GAP-7)** |
+| lint.biome | skip | skip |
+| format.ruff | fail (was: cascading from missing dev extras) | **fail (GAP-7)** |
+| format.biome | skip | skip |
+| backend | **fail (8 of 22 tests 401)** | **pass (22/22)** ✅ |
+| schemathesis in-process fuzz | fail (AttributeError) | pass ✅ |
+
+Backend slice green on BOTH auth paths (token SET and UNSET). The 2 P0 gaps that drove the v0.1-not-OSS-ready verdict are CLOSED.
 
 ## Tests
 
@@ -112,18 +131,19 @@ Fix: search-replace across README, workflow YAML, CONTRIBUTING, copier.yml.
 After the quickstart now installs `--extra dev`, `ruff` actually runs and finds 85 lint issues + 60 files needing reformat across the rendered scaffold (`alembic/versions/0001_initial.py`, `app/api.py`, `app/cli.py`, `app/main.py`, `app/models.py`, `app/settings.py`, etc.). Root cause: `template/*.jinja2` source files were never normalised through `ruff format` / `ruff check --fix` before being committed.
 Fix shape: render scratch project, run `uv run ruff format . && uv run ruff check . --fix`, diff back into `template/`, commit. Backend slice (the focus of GAP-1+2) passes cleanly with token both SET and UNSET; this is a separate v0.1 polish gap.
 
-## Verdict
+## Verdict (post 06-11 re-verification)
 
-**7/8 tests pass — Test 1 cold-start fails on 2 P0 regressions that the plan-text convergence loop couldn't see.** Phase 6 is functionally close to complete but has real consumer-facing breakage on the auth-token-set path. The 2 P0 gaps are mechanical fixes (~30-45 min combined). The 1 P2 (Pattern 6 leak) is a quick rewrite. The 2 P3s are UX polish. GAP-6 is dependency upgrade + 3-line search-replace.
+**7/8 tests still pass; Test 1 still fails but on a DIFFERENT bug class than before.** The 2 P0 gaps (auth-broken backend tests + schemathesis lifespan crash) and the 4 P2/P3 gaps from the original verify-work run are CLOSED. The new fail (lint.ruff + format.ruff on 85+60 issues) is a pre-existing scaffold defect that was previously masked because `ruff` wasn't installed in the venv — GAP-5's `--extra dev` fix unmasked it.
 
-**Status:** Phase 6 is `gaps_identified`. v0.1 is NOT OSS-ready until at minimum GAP-1, GAP-2, GAP-3 are closed.
+**Status:** Phase 6 is **`gaps_identified` (1 remaining: GAP-7 P1)**.
+
+**OSS-ready assessment shift:**
+- The 2 ORIGINAL P0 blockers (auth contract broken for consumers) are gone — consumer code-paths through `/summarize`, `/echo`, `/__debug/*`, and the backend test suite all work correctly.
+- The remaining GAP-7 is a code-quality issue (un-formatted scaffold output) — a stranger landing on the repo would `copier copy → just verify` and see "85 lint issues" rather than 22 broken test assertions. Embarrassing but not BROKEN.
+- v0.1 could ship with GAP-7 documented as "first release of the scaffold needs a one-time formatting pass" — OR closed in a 5-min `ruff format + ruff check --fix` round before tagging.
 
 ## Next steps
 
-Per `/gsd:verify-work` standard exit:
-```
-/gsd:plan-phase 6 --gaps
-```
-This reads 06-UAT.md and generates a focused gap-closure plan for the 6 beads.
-
-Alternatively, fix the 2 P0 gaps inline (no need for a full replan — they're mechanical), then re-run /gsd:verify-work to confirm green.
+Per /gsd:verify-work standard exit with 1 P1 gap remaining:
+1. **Recommended:** close GAP-7 inline (5-min `ruff format` pass against rendered scratch, diff back to `template/`), then re-run `/gsd:verify-work 6` for the 8/8 PASS verdict that tags v0.1 OSS-ready.
+2. **Alternate:** declare v0.1 with GAP-7 documented in CHANGELOG as "known issue — formatting pass in v0.1.1", route to v0.1.1 hardening cycle.
