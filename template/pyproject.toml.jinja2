@@ -109,3 +109,25 @@ target-version = "py313"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
+# FastAPI Depends/Query and Typer Option/Argument require call-in-default by design.
+extend-ignore = ["B008"]
+
+[tool.ruff.lint.per-file-ignores]
+# Test files: blind-exception asserts, intentional name-bindings, and long
+# parametrize lines are idiomatic.
+"tests/*" = ["B017", "F841", "E501", "E402"]
+# Alembic auto-generated migrations and the env.py bootstrap have their own
+# conventions (sys.path manipulation before imports; long revision strings).
+"alembic/env.py" = ["E402"]
+"alembic/versions/*" = ["E501"]
+# CLI help strings, embedded SQL, and MCP tool docstrings are intentionally
+# long for readability at the call site.
+"harness/cli.py" = ["E501"]
+"harness/cache.py" = ["E501"]
+"harness/mcp/tools.py" = ["E501"]
+# Files that compose imports across conditional template blocks: the rendered
+# output can present multiple separate import blocks that ruff would otherwise
+# want to merge. Re-sorting across the conditional boundary would change file
+# semantics in the opposite polarity from the one currently rendered.
+"app/api.py" = ["I001"]
+"harness/checks/__init__.py" = ["I001"]
