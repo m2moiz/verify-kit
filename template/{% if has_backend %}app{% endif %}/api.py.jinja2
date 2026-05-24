@@ -109,7 +109,16 @@ async def _summarize(text: str) -> dict:
     return await call_llm(prompt, model="anthropic/claude-haiku-4-5")
 
 
-@router.post("/summarize", response_model=SummarizeResponse)
+@router.post(
+    "/summarize",
+    response_model=SummarizeResponse,
+    responses={
+        # FastAPI returns 400 when the request body fails JSON parsing (before
+        # Pydantic runs); declare it so schema-fuzz does not flag it as an
+        # undocumented status code. Mirrors /echo's responses declaration.
+        400: {"description": "Malformed request body (JSON parse failure)"},
+    },
+)
 async def summarize_route(req: SummarizeRequest) -> SummarizeResponse:
     started = monotonic()
     out = await _summarize(req.text)
