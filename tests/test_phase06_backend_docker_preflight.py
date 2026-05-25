@@ -23,22 +23,28 @@ from tests._helpers import _CLEAN_ENV, render_scratch_project
 
 
 def _path_without_docker() -> dict[str, str]:
-    """Build env with uv reachable but `docker` deliberately hidden.
+    """Build env with uv + python reachable but `docker` deliberately hidden.
 
-    Creates a tmp directory containing a symlink to `uv` only, then sets PATH
-    to that dir + /usr/bin:/bin. Docker (which lives in /usr/local/bin or
-    /opt/homebrew/bin) is not on this PATH, so `shutil.which('docker')` in
-    the harness preflight returns None.
+    Creates a tmp directory containing symlinks to the binaries the subprocess
+    actually needs and sets PATH to ONLY that directory.
+
+    The previous incarnation appended /usr/bin:/bin to PATH "to keep python
+    reachable" — but on Linux CI hosts `docker` lives in /usr/bin, so the
+    isolation leaked and `shutil.which('docker')` inside the harness still
+    found it. By symlinking exactly the binaries we need and excluding the
+    system bin dirs, docker is provably absent from PATH on every host.
     """
     uv_src = shutil.which("uv")
     assert uv_src is not None, "uv must be installed to run this test"
     bin_dir = tempfile.mkdtemp(prefix="vk-test-bin-")
     os.symlink(uv_src, os.path.join(bin_dir, "uv"))
-    # Python interpreter the test subprocess will use must also be reachable.
-    py_src = shutil.which("python3") or shutil.which("python")
-    if py_src is not None and not os.path.exists(os.path.join(bin_dir, "python3")):
-        os.symlink(py_src, os.path.join(bin_dir, "python3"))
-    return {**_CLEAN_ENV, "PATH": f"{bin_dir}:/usr/bin:/bin"}
+    # Symlink only the binaries the subprocess legitimately needs. `docker`
+    # is conspicuously absent — that's the whole point of the test.
+    for name in ("python3", "python", "sh", "bash", "env"):
+        src = shutil.which(name)
+        if src is not None and not os.path.exists(os.path.join(bin_dir, name)):
+            os.symlink(src, os.path.join(bin_dir, name))
+    return {**_CLEAN_ENV, "PATH": bin_dir}
 
 
 def test_backend_check_skips_when_docker_unreachable(tmp_path: Path) -> None:
