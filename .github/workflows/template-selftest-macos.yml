@@ -1,12 +1,11 @@
 # Copyright (c) 2026 Moiz
 # SPDX-License-Identifier: MIT
 
-# Weekly macOS sibling of template-selftest.yml.
+# macOS sibling of template-selftest.yml.
 #
-# Matrix entries must stay in sync with template-selftest.yml (Linux).
-# Per D-04 macOS is weekly-only and non-blocking — surfaces macOS-only
-# regressions without blocking PR merges and without spending per-PR
-# macOS-runner minutes.
+# Matrix entries stay in sync with the Linux workflow. Runs blocking on
+# every PR + push to main per T3-01 (supersedes earlier D-04 weekly-only
+# policy).
 #
 # Note: Testcontainers paths may skip when Docker is unavailable on
 # macos-latest; Phase 4's existing skip-on-no-docker pattern applies. A
@@ -15,8 +14,10 @@
 name: template-selftest-macos
 
 on:
-  schedule:
-    - cron: '0 4 * * 0'
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
   workflow_dispatch: {}
 
 jobs:
