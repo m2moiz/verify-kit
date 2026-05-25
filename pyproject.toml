@@ -74,3 +74,24 @@ ignore-setters = true
 ignore-nested-functions = true
 ignore-nested-classes = false
 ignore-module = false
+
+[tool.pyright]
+# Type-check the cleanly-typed surfaces. Tests are deliberately out of
+# scope on first introduction (sys.path-insert against template/ files
+# produces 59 spurious errors); they'll be folded in by a follow-up bead
+# after the test surface gets a proper package layout.
+include = ["src", "template_extensions"]
+exclude = [
+    "**/__pycache__",
+    ".venv",
+    ".planning",
+    "template",
+    "tests",
+]
+pythonVersion = "3.13"
+# Start in 'basic' mode per bead verify-kit-hby mitigation: introduce
+# warnings-only first, ratchet to strict over follow-up phases. Current
+# baseline on the in-scope surfaces: 0 errors.
+typeCheckingMode = "basic"
+reportMissingImports = "error"
+reportMissingTypeStubs = "warning"

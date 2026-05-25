@@ -1,0 +1,56 @@
+name: typecheck
+# Pyright over the cleanly-typed surfaces of the repo. Runs on PRs that
+# touch Python sources and on push to main.
+#
+# Scope (deliberately conservative on first introduction):
+#   - src/             — the shipped verify-kit Python package
+#   - template_extensions/ — Copier Jinja extensions invoked at scaffold time
+#
+# Out of scope for this workflow (tracked in follow-up bead):
+#   - tests/           — uses sys.path-insert against rendered template
+#                        files that aren't installed as a package; 59
+#                        errors first-pass, mostly TypeVar-in-type-expr
+#                        and missing imports against the synthetic path
+#   - template/        — Jinja-rendered (`{% %}` breaks pyright parser)
+#
+# Configuration lives in pyproject.toml under [tool.pyright]; CLI args
+# stay minimal so local + CI runs are byte-identical.
+#
+# Reference: https://microsoft.github.io/pyright/
+on:
+  pull_request:
+    paths:
+      - "src/**"
+      - "template_extensions/**"
+      - "pyproject.toml"
+      - "uv.lock"
+      - ".github/workflows/typecheck.yml"
+  push:
+    branches: [main]
+    paths:
+      - "src/**"
+      - "template_extensions/**"
+      - "pyproject.toml"
+      - "uv.lock"
+
+permissions:
+  contents: read
+
+jobs:
+  pyright:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+
+      - name: Sync dependencies
+        # pyright needs the project venv to resolve transitive deps like
+        # jinja2 (brought in via copier). Without the venv it would emit
+        # spurious reportMissingImports errors.
+        run: uv sync --dev
+
+      - name: Run pyright
+        run: uv run --with pyright pyright src/ template_extensions/
