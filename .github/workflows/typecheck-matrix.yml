@@ -1,0 +1,52 @@
+# Copyright (c) 2026 Moiz
+# SPDX-License-Identifier: MIT
+name: typecheck-matrix
+# Multi-Python sibling of typecheck.yml. The existing typecheck.yml remains
+# the single-row blocking gate; this workflow makes 3.14 compatibility visible
+# while the 3.14 row soft-launches.
+on:
+  pull_request:
+    paths:
+      - "src/**"
+      - "template_extensions/**"
+      - "pyproject.toml"
+      - "uv.lock"
+      - ".github/workflows/typecheck-matrix.yml"
+  push:
+    branches: [main]
+    paths:
+      - "src/**"
+      - "template_extensions/**"
+      - "pyproject.toml"
+      - "uv.lock"
+      - ".github/workflows/typecheck-matrix.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  pyright:
+    runs-on: ubuntu-latest
+    continue-on-error: ${{ matrix.continue-on-error }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - python-version: "3.13"
+            continue-on-error: false
+          # Decision 2: REMOVE continue-on-error on the 3.14 row once 3 consecutive PRs pass clean -- see DECISIONS.md decision 2.
+          - python-version: "3.14"
+            continue-on-error: true
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+          python-version: ${{ matrix.python-version }}
+
+      - name: Sync dependencies
+        run: uv sync --dev
+
+      - name: Run pyright
+        run: uv run --with pyright pyright src/ template_extensions/
