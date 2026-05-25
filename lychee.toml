@@ -1,0 +1,40 @@
+# lychee config — link-rot checker for docs.
+# See https://lychee.cli.rs/usage/config/ for full reference.
+
+# Be polite to external sites: cap concurrency and accept redirects.
+max_concurrency = 8
+max_redirects = 10
+
+# Network behavior. Some doc hosts (Langfuse, dependabot security advisories)
+# rate-limit; retry once with backoff before reporting.
+max_retries = 1
+retry_wait_time = 5
+timeout = 20
+
+# Treat ambiguous status as success — many docs sites return 403/429 to
+# headless clients but the URLs are still valid for human readers.
+accept = ["200..=299", "403", "429"]
+
+# Don't fail on every redirect; just follow them.
+no_progress = true
+
+# Skip mailto:, tel:, and similar non-HTTP schemes.
+include_mail = false
+
+# Exclude link patterns that lychee struggles with or that are known noise.
+# Patterns are regex, matched against the resolved URL (including file:// URIs
+# for relative paths). Use anchored patterns to avoid accidental matches.
+exclude = [
+    # localhost / 127.0.0.1 / 0.0.0.0 — common in example snippets.
+    "^https?://(localhost|127\\.0\\.0\\.1|0\\.0\\.0\\.0)",
+    # example.com / example.org — documentation placeholders.
+    "^https?://(www\\.)?example\\.(com|org|net)",
+    # GitHub anchors with templated paths — Jinja syntax breaks the parser.
+    "^https?://github\\.com/.*\\{\\{",
+    # Bead-tracked assets that are not yet captured. Remove these entries
+    # once the corresponding bead lands the file:
+    #   - docs/casts/just-verify.gif  -> verify-kit-pdc (asciinema cast)
+    #   - docs/img/vscode-problems.png -> verify-kit-87i (VS Code screenshot)
+    "^file://.*/docs/casts/",
+    "^file://.*/docs/img/vscode-problems\\.png$",
+]

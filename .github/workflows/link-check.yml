@@ -1,0 +1,61 @@
+name: link-check
+# Weekly broken-link scan of all top-level docs. Uses lychee with config
+# at ./lychee.toml — see that file for excludes / retry / timeout policy.
+#
+# On failure (any rotted external link or missing internal asset), opens
+# a GitHub issue with the lychee output so the maintainer triages it
+# without needing to dig through CI logs.
+#
+# Reference: https://github.com/lycheeverse/lychee-action
+on:
+  schedule:
+    # Mondays 14:30 UTC — clustered with the other weekly maintenance jobs.
+    - cron: "30 14 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  link-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Run lychee
+        id: lychee
+        uses: lycheeverse/lychee-action@v2
+        with:
+          # The configuration file is the source of truth — keep CLI args
+          # minimal so local + CI runs are byte-identical (per repo convention).
+          args: >-
+            --config lychee.toml
+            --no-progress
+            README.md
+            CONTRIBUTING.md
+            SECURITY.md
+            CODE_OF_CONDUCT.md
+            AGENTS.md
+            CLAUDE.md
+            CHANGELOG.md
+          fail: false
+          format: markdown
+          output: ./lychee-report.md
+
+      - name: Upload lychee report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lychee-report
+          path: ./lychee-report.md
+          if-no-files-found: ignore
+          retention-days: 30
+
+      - name: Open issue on rotted links
+        if: steps.lychee.outputs.exit_code != 0
+        uses: peter-evans/create-issue-from-file@v5
+        with:
+          title: "Link check: rotted links detected (weekly run)"
+          content-filepath: ./lychee-report.md
+          labels: bug,docs,link-rot

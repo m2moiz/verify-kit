@@ -1,0 +1,55 @@
+name: stale
+# Keeps the issue + PR tracker honest without manual triage. Conservative
+# defaults — 60 days inactive -> warning label + comment, +14 days -> close.
+# Solo-maintainer setting: assume good faith, give plenty of grace.
+#
+# Reference: https://github.com/actions/stale
+on:
+  schedule:
+    # Daily at 14:15 UTC — quiet window matches the other weekly security
+    # workflows but runs every day so warnings land within ~24h of the
+    # threshold being crossed.
+    - cron: "15 14 * * *"
+  workflow_dispatch:
+
+permissions:
+  issues: write
+  pull-requests: write
+
+jobs:
+  stale:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/stale@v9
+        with:
+          days-before-stale: 60
+          days-before-close: 14
+
+          stale-issue-label: stale
+          stale-pr-label: stale
+
+          stale-issue-message: >
+            This issue has been inactive for 60 days. Adding the `stale`
+            label — if the issue is still relevant, drop a comment or remove
+            the label to keep it open. Otherwise it will auto-close in 14
+            days. (Solo-maintained repo — this is housekeeping, not a
+            judgment on the issue itself.)
+          stale-pr-message: >
+            This PR has been inactive for 60 days. Adding the `stale` label
+            — push a commit, drop a comment, or remove the label to keep it
+            open. Otherwise it will auto-close in 14 days.
+
+          close-issue-message: >
+            Closing as stale after 74 days of inactivity. Reopen any time
+            with new context if this becomes relevant again.
+          close-pr-message: >
+            Closing as stale after 74 days of inactivity. Reopen with a
+            rebase against `main` if you want to pick this back up.
+
+          # Don't touch issues a human has labeled as durable.
+          exempt-issue-labels: "pinned,security,roadmap,good-first-issue"
+          exempt-pr-labels:    "pinned,security,blocked"
+
+          # Be gentle on first run — process at most 30 items per day so a
+          # sudden flood of stale labels doesn't surprise anyone watching.
+          operations-per-run: 30
