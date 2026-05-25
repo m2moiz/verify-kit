@@ -53,6 +53,7 @@ testpaths = ["tests"]
 markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"'); requires RUN_SLOW_TESTS=1",
     "requires_network: test requires network access (e.g. PyPI fetch on first install)",
+    "requires_cli: test shells out to an external coding-agent CLI not present on CI runners (e.g. ralph)",
 ]
 
 [tool.interrogate]

@@ -177,15 +177,33 @@ def test_pyproject_has_no_tokenx(tmp_path: Path, has_backend: bool,
 
 
 @pytest.mark.parametrize("has_backend,llm_backend", _CELLS_LLM_TRUE)
-def test_pyproject_uses_optional_dependencies_not_dependency_groups(
+def test_pyproject_uses_dependency_groups_not_optional_dependencies(
     tmp_path: Path, has_backend: bool, llm_backend: str
 ) -> None:
-    """HIGH #3: dev deps live under [project.optional-dependencies], NOT [dependency-groups]."""
+    """Dev deps live in PEP 735 [dependency-groups], NOT [project.optional-dependencies].
+
+    Verify-kit migrated to PEP 735 single-source-of-truth: `uv run`, `uv sync`,
+    and `uv run --group dev` all sync dev deps from [dependency-groups]
+    automatically. The deprecated [project.optional-dependencies].dev path was
+    GAP-10 layer 5's root cause (uv run did not sync it by default).
+    """
+    import tomllib
     scratch = _render(tmp_path, has_backend=has_backend, has_llm=True,
                       llm_backend=llm_backend)
-    text = (scratch / "pyproject.toml").read_text()
-    assert "[project.optional-dependencies]" in text
-    assert "[dependency-groups]" not in text
+    data = tomllib.loads((scratch / "pyproject.toml").read_text())
+    # Parse TOML so we ignore the explanatory comment in the template that
+    # mentions [project.optional-dependencies] for documentation purposes.
+    assert "dependency-groups" in data, (
+        "pyproject.toml missing PEP 735 [dependency-groups] table"
+    )
+    assert "dev" in data["dependency-groups"], (
+        "[dependency-groups].dev missing — PEP 735 dev group is verify-kit's "
+        "single source of truth for dev deps"
+    )
+    assert "optional-dependencies" not in data.get("project", {}), (
+        "[project.optional-dependencies] leaked back in — verify-kit uses "
+        "PEP 735 [dependency-groups] exclusively"
+    )
 
 
 @pytest.mark.parametrize("has_backend,llm_backend", _CELLS_LLM_TRUE)

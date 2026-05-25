@@ -87,6 +87,10 @@ _UNIVERSAL_ROOT_NAMES: frozenset[str] = frozenset(
         ".zed",
         # Agent-specific files at root
         "CLAUDE.md",
+        # Ruff cache directory — created by the post-render `ruff format` step
+        # that runs as part of render_scratch_project / copier's _tasks. Not a
+        # leak; it's the formatter's working scratch space.
+        ".ruff_cache",
     }
 )
 

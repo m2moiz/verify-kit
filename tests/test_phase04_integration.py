@@ -99,6 +99,7 @@ def _scratch_env(scratch: Path) -> dict:
 
 # ── FULL path (Docker required) ───────────────────────────────────────────────
 
+@pytest.mark.slow
 @pytest.mark.skipif(shutil.which("copier") is None, reason="copier not installed")
 @pytest.mark.skipif(shutil.which("uv") is None, reason="uv not installed")
 @pytest.mark.skipif(shutil.which("just") is None, reason="just not installed")

@@ -182,6 +182,8 @@ def test_pyproject_has_expected_dependencies(tmp_path: Path):
         assert entry in deps, f"missing dep {entry!r} in {deps!r}"
     scripts = data["project"]["scripts"]
     assert scripts["verify-kit"] == "harness.cli:app_entry"
-    dev = data["project"]["optional-dependencies"]["dev"]
+    # Dev deps live in PEP 735 [dependency-groups], not [project.optional-dependencies].
+    # Verify-kit migrated to PEP 735 — see template/pyproject.toml.jinja2 [dependency-groups].
+    dev = data["dependency-groups"]["dev"]
     assert any(d.startswith("hypothesis") for d in dev)
     assert any(d.startswith("jsonschema") for d in dev)
