@@ -1,3 +1,5 @@
+# Copyright (c) 2026 Moiz
+# SPDX-License-Identifier: MIT
 name: markdownlint
 # Lints repo Markdown on every PR and push-to-main that changes any .md
 # file. Configuration lives in ./.markdownlint.json and the ignore set in
