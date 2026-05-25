@@ -56,7 +56,7 @@ jobs:
           # the score without forking.
           publish_results: true
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: scorecard-results
           path: results.sarif
