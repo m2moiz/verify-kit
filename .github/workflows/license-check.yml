@@ -1,0 +1,52 @@
+# Copyright (c) 2026 Moiz
+# SPDX-License-Identifier: MIT
+
+name: license-check
+# Verifies that every in-scope source file carries the MIT license header.
+# Scope and exclusions are encoded in .licenserc.yaml at repo root.
+#
+# Why this exists (verify-kit-72e): we're an OSS template. Files copied out of
+# this repo should retain attribution, and CI is the only place that
+# guarantees it for every PR.
+#
+# Tool: apache/skywalking-eyes — canonical wrapper around google/addlicense
+# semantics with a YAML config that GitHub Actions consumes natively.
+on:
+  pull_request:
+    paths:
+      - "src/**"
+      - "template_extensions/**"
+      - "tests/**"
+      - ".github/workflows/**"
+      - ".claude/hooks/**"
+      - "docs/casts/**"
+      - ".licenserc.yaml"
+      - ".github/workflows/license-check.yml"
+  push:
+    branches: [main]
+    paths:
+      - "src/**"
+      - "template_extensions/**"
+      - "tests/**"
+      - ".github/workflows/**"
+      - ".claude/hooks/**"
+      - "docs/casts/**"
+      - ".licenserc.yaml"
+
+permissions:
+  contents: read
+  # Required for `comment: on-failure` in .licenserc.yaml to leave a PR
+  # comment listing offending files when the check fails.
+  pull-requests: write
+
+jobs:
+  license-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Check license headers
+        uses: apache/skywalking-eyes/header@v0.6.0
+        with:
+          mode: check
+          config: .licenserc.yaml

@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# Copyright (c) 2026 Moiz
+# SPDX-License-Identifier: MIT
+
 # Retro reminder — fires at SessionStart. Scans .planning/phases/ for phases
 # that have a SUMMARY.md (executed) but no matching RETRO file under
 # .planning/learnings/. Emits a context block Claude Code reads at session

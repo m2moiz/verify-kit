@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Moiz
+# SPDX-License-Identifier: MIT
+
 """MCP↔CLI byte-identical contract matrix (Plan 03-01 T08).
 
 This file owns the 13-tool MCP-02 contract matrix because Plan 03-01 is

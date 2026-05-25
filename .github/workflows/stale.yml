@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Moiz
+# SPDX-License-Identifier: MIT
+
 name: stale
 # Keeps the issue + PR tracker honest without manual triage. Conservative
 # defaults — 60 days inactive -> warning label + comment, +14 days -> close.

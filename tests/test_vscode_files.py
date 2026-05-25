@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Moiz
+# SPDX-License-Identifier: MIT
+
 """
 Smoke tests for the verify-kit `.vscode/` files (plan 03-04).
 

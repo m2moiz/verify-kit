@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Moiz
+# SPDX-License-Identifier: MIT
+
 """Test that the scaffolded docker-compose.yml is valid in all has_backend/has_db polarities.
 
 Three parametrized cells:

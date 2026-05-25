@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Moiz
+# SPDX-License-Identifier: MIT
+
 name: actionlint
 # Lints all GitHub Actions workflow YAML on every PR and push to main.
 # Catches YAML typos, undefined action inputs, shellcheck issues inside

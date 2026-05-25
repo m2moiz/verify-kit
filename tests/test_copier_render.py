@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Moiz
+# SPDX-License-Identifier: MIT
+
 """
 End-to-end smoke tests for the verify-kit Copier template.
 

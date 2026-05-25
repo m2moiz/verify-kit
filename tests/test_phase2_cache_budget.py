@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Moiz
+# SPDX-License-Identifier: MIT
+
 """TOOL-05 verification gate: second-run verify completes in <500ms.
 
 Two-tier gate (per Plan 02-07 contract, review HIGH-4):

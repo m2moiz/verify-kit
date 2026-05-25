@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Moiz
+# SPDX-License-Identifier: MIT
+
 """Phase 4 Plan 04-06 — opt-in flag polarity matrix (outer test).
 
 Exercises all four (has_logfire x has_fastapi_mcp) combinations from

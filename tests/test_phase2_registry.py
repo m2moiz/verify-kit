@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Moiz
+# SPDX-License-Identifier: MIT
+
 """Tests for harness.registry (Plan 02-01, Task 2)."""
 from __future__ import annotations
 

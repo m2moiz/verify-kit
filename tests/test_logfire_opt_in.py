@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Moiz
+# SPDX-License-Identifier: MIT
+
 """Logfire opt-in contract tests at the verify-kit repo level.
 
 These tests render scratch projects and assert source-level properties of

@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Moiz
+# SPDX-License-Identifier: MIT
+
 """Tests for verify-kit DX convention templates and Copier env-detection extension."""
 from __future__ import annotations
 

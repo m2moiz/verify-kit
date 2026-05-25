@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Moiz
+# SPDX-License-Identifier: MIT
+
 """
 Pytest fixtures for verify-kit template smoke tests.
 """
