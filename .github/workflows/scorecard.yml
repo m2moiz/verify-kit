@@ -59,6 +59,16 @@ jobs:
           path: results.sarif
           retention-days: 30
 
+      # Soft-fail on the Security-tab upload. Scorecard sometimes emits
+      # SARIF location URIs containing characters that GitHub's parser
+      # rejects (e.g. Jinja-templated paths like
+      # `template/{% if has_backend %}Dockerfile{% endif %}.jinja2` whose
+      # `%` chars break URL escape parsing). The analysis itself has
+      # already completed and `publish_results: true` posts the grade to
+      # the public OSSF ledger (which is what the README badge resolves
+      # against), so a failed SARIF upload does not lose signal — it
+      # only suppresses the duplicate Security-tab view.
       - uses: github/codeql-action/upload-sarif@v4
+        continue-on-error: true
         with:
           sarif_file: results.sarif
