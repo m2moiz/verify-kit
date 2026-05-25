@@ -1,4 +1,4 @@
-# Copyright (c) 2026 Moiz Hussain
+# Copyright (c) 2026 Moiz
 # SPDX-License-Identifier: MIT
 
 # template_extensions — Copier Jinja extensions for verify-kit template rendering.

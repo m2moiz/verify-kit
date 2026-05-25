@@ -1,4 +1,4 @@
-# Copyright (c) 2026 Moiz Hussain
+# Copyright (c) 2026 Moiz
 # SPDX-License-Identifier: MIT
 
 """REVIEW-CHECKLIST-driven static scans (Plan 03-05 T03).

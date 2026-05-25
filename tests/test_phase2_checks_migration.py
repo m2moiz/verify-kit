@@ -1,4 +1,4 @@
-# Copyright (c) 2026 Moiz Hussain
+# Copyright (c) 2026 Moiz
 # SPDX-License-Identifier: MIT
 
 """Tests for harness.checks/{mise,copier,just_list} migration (Plan 02-04, Task 1).

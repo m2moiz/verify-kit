@@ -1,4 +1,4 @@
-# Copyright (c) 2026 Moiz Hussain
+# Copyright (c) 2026 Moiz
 # SPDX-License-Identifier: MIT
 
 """TOOL-05 verification gate: second-run verify completes in <500ms.

@@ -1,4 +1,4 @@
-# Copyright (c) 2026 Moiz Hussain
+# Copyright (c) 2026 Moiz
 # SPDX-License-Identifier: MIT
 
 """Three SKILL.md files ship under .claude/skills/ when has_claude_code=true.

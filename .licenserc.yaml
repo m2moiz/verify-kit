@@ -1,13 +1,13 @@
 header:
   license:
     spdx-id: MIT
-    copyright-owner: Moiz Hussain
+    copyright-owner: Moiz
     software-name: verify-kit
     # Short-form MIT header. Full text lives in LICENSE at repo root; this is
     # the SPDX-style attribution line that real OSS projects use to keep
     # per-file noise minimal while preserving copyright on every source file.
     content: |
-      Copyright (c) 2026 Moiz Hussain
+      Copyright (c) 2026 Moiz
       SPDX-License-Identifier: MIT
 
   paths:

@@ -1,4 +1,4 @@
-# Copyright (c) 2026 Moiz Hussain
+# Copyright (c) 2026 Moiz
 # SPDX-License-Identifier: MIT
 
 """Tests for Plan 02-06 Task 3 — Jaeger client + justfile recipes + pyproject deps."""

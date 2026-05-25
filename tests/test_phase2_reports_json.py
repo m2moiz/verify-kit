@@ -1,4 +1,4 @@
-# Copyright (c) 2026 Moiz Hussain
+# Copyright (c) 2026 Moiz
 # SPDX-License-Identifier: MIT
 
 """Tests for harness.reports.json_emit and harness.reports.jsonl (Plan 02-05, Task 2).

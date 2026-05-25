@@ -1,4 +1,4 @@
-# Copyright (c) 2026 Moiz Hussain
+# Copyright (c) 2026 Moiz
 # SPDX-License-Identifier: MIT
 
 """Smoke tests for the Phase 2 shared test helpers (Plan 02-01, Task 0)."""

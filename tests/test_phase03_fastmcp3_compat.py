@@ -1,4 +1,4 @@
-# Copyright (c) 2026 Moiz Hussain
+# Copyright (c) 2026 Moiz
 # SPDX-License-Identifier: MIT
 
 """Phase 3 + Phase 5 contract: harness.mcp must work under fastmcp 3.x.
