@@ -4,6 +4,7 @@
 
 [![CI](https://github.com/m2moiz/verify-kit/actions/workflows/template-selftest.yml/badge.svg)](https://github.com/m2moiz/verify-kit/actions/workflows/template-selftest.yml)
 [![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/m2moiz/verify-kit/badge)](https://securityscorecards.dev/viewer/?uri=github.com/m2moiz/verify-kit)
+[![codecov](https://codecov.io/gh/m2moiz/verify-kit/branch/main/graph/badge.svg)](https://codecov.io/gh/m2moiz/verify-kit)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 ![just verify demo](docs/casts/just-verify.gif)
