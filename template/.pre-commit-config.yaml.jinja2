@@ -21,6 +21,33 @@ repos:
         args: [--fix]
       - id: ruff-format
 
+  {% if has_backend or has_llm %}
+  # Pyright type-checks staged Python files only (fast path).
+  # Full-repo type-check runs in .github/workflows/ci.yml via `just verify`.
+  # Skip for a single commit: SKIP=pyright git commit
+  - repo: https://github.com/RobertCraigie/pyright-python
+    rev: v1.1.385
+    hooks:
+      - id: pyright
+        # Default behavior already targets staged files. We pin the
+        # working dir so pyright resolves the project's pyrightconfig.json
+        # / pyproject.toml correctly.
+        pass_filenames: true
+        types_or: [python, pyi]
+  {% endif %}
+
+  # markdownlint catches dead links, broken tables, and inconsistent
+  # heading hierarchy in .md files at commit time. Fast (<1s on typical
+  # diffs). Full-repo scan is part of CI.
+  - repo: https://github.com/igorshubovych/markdownlint-cli
+    rev: v0.42.0
+    hooks:
+      - id: markdownlint
+        # Keep the rule set permissive by default — the template's own
+        # docs use line-length variations and inline HTML deliberately.
+        # Consumers can tighten by adding a .markdownlint.json at repo root.
+        args: [--disable, MD013, MD033, MD041, "--"]
+
   {% if has_llm %}
   # Biome pre-commit lands when LLM add-on brings JSON/eval config files.
   # When backend add-on lands in Phase 4, it injects its own block here.

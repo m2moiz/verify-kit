@@ -1,0 +1,64 @@
+name: ossf-scorecard
+# OSSF Scorecard runs ~18 supply-chain / security-posture checks on this
+# repo (branch protection, code review, signed releases, CI tests, token
+# permissions, etc.) and emits a 0-10 grade. Results post to the Security
+# tab as SARIF and to the public Scorecard ledger.
+#
+# The grade itself is a community signal that reviewers and consumers
+# trust. The README badge links here.
+#
+# Triggers:
+#   - Pushes to main (refreshes the public grade)
+#   - Weekly schedule (catches drift from external sources, e.g. an
+#     action a workflow depends on losing signed-releases status)
+#   - Manual workflow_dispatch
+#
+# Reference: https://github.com/ossf/scorecard-action
+on:
+  branch_protection_rule:
+  push:
+    branches: [main]
+  schedule:
+    # Mondays 14:00 UTC — one-hour cluster with the other weekly security
+    # workflows is intentional (single quiet window for runner pickup).
+    - cron: "0 14 * * 1"
+  workflow_dispatch:
+
+permissions: read-all
+
+jobs:
+  analysis:
+    name: scorecard analysis
+    runs-on: ubuntu-latest
+    permissions:
+      # required for security tab upload
+      security-events: write
+      # required to read OIDC token for results publishing to ossf
+      id-token: write
+      # required to read the repo
+      contents: read
+      # to list deployments
+      actions: read
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - uses: ossf/scorecard-action@v2.4.0
+        with:
+          results_file: results.sarif
+          results_format: sarif
+          # publish_results=true uploads to the public OSSF Scorecard
+          # ledger so the README badge resolves and reviewers can audit
+          # the score without forking.
+          publish_results: true
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: scorecard-results
+          path: results.sarif
+          retention-days: 30
+
+      - uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: results.sarif

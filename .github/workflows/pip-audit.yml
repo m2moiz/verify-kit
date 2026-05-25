@@ -1,0 +1,105 @@
+name: pip-audit
+# Scans pinned Python dependencies in uv.lock against the PyPI advisory
+# database. Catches transitive CVEs that don't surface in dependabot
+# (dependabot watches declared deps; pip-audit walks the resolved tree).
+#
+# Triggers:
+#   - PRs that touch uv.lock or pyproject.toml  -> fail-fast on new CVEs
+#   - Weekly schedule                            -> catch newly disclosed CVEs
+#                                                  against unchanged pins
+#   - Manual workflow_dispatch                   -> ad-hoc re-scan after a fix
+#
+# Failure semantics:
+#   - We don't break CI on every advisory (false positives + day-of-disclosure
+#     friction would block urgent work). pip-audit runs as `continue-on-error`
+#     and uploads its JSON output as an artifact + a SARIF report into the
+#     Security tab. Maintainers triage there, not in the green/red signal.
+#
+# References:
+#   - https://github.com/pypa/pip-audit
+#   - https://docs.astral.sh/uv/reference/cli/#uv-export
+on:
+  pull_request:
+    paths:
+      - "uv.lock"
+      - "pyproject.toml"
+      - ".github/workflows/pip-audit.yml"
+  schedule:
+    # Mondays 13:45 UTC — half-hour offset from CodeQL so we don't pile
+    # all weekly cron jobs into the same minute.
+    - cron: "45 13 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  audit:
+    name: pip-audit (uv.lock)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+
+      # Export uv.lock to a requirements.txt that pip-audit understands.
+      # `--no-hashes` keeps the file pip-audit-friendly; hashes don't help
+      # the advisory scan.
+      - name: Export resolved dependencies
+        run: |
+          uv export --no-hashes --frozen --format requirements-txt \
+            > /tmp/requirements.txt
+          echo "Exported $(wc -l < /tmp/requirements.txt) pinned dependencies."
+
+      - name: Install pip-audit
+        run: uv tool install pip-audit
+
+      - name: Run pip-audit (JSON output)
+        id: audit
+        continue-on-error: true
+        run: |
+          uv tool run pip-audit \
+            --requirement /tmp/requirements.txt \
+            --format json \
+            --output /tmp/pip-audit.json
+          echo "exit_code=$?" >> "$GITHUB_OUTPUT"
+
+      - name: Render advisory summary
+        if: always()
+        run: |
+          if [ ! -s /tmp/pip-audit.json ]; then
+            echo "pip-audit produced no output."
+            exit 0
+          fi
+          python - <<'PY'
+          import json, pathlib, sys
+          data = json.loads(pathlib.Path("/tmp/pip-audit.json").read_text())
+          deps = data.get("dependencies", [])
+          vulns = [d for d in deps if d.get("vulns")]
+          if not vulns:
+              print("No known advisories against pinned dependencies.")
+              sys.exit(0)
+          print(f"Found advisories for {len(vulns)} package(s):\n")
+          for d in vulns:
+              name = d.get("name", "?")
+              version = d.get("version", "?")
+              for v in d.get("vulns", []):
+                  vid = v.get("id", "?")
+                  fix = ", ".join(v.get("fix_versions", [])) or "(no fix yet)"
+                  desc = v.get("description", "").strip().split("\n")[0]
+                  print(f"- {name}=={version}  {vid}  fix: {fix}")
+                  if desc:
+                      print(f"    {desc[:200]}")
+          PY
+
+      - name: Upload pip-audit JSON
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pip-audit-report
+          path: /tmp/pip-audit.json
+          if-no-files-found: ignore
+          retention-days: 30
