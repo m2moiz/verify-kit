@@ -17,6 +17,7 @@ dev = [
     "copier>=9.4",
     "copier-templates-extensions>=0.3.2",
     "pytest>=8",
+    "pytest-benchmark>=4",
     "pyyaml",
     # structlog is a runtime dep of rendered scratch harness modules; tests
     # sys.path-insert those modules into the dev venv, so the dep must be
@@ -52,6 +53,7 @@ include = [
 testpaths = ["tests"]
 markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"'); requires RUN_SLOW_TESTS=1",
+    "benchmark: performance benchmarks (slow, not run in default test suite)",
     "requires_network: test requires network access (e.g. PyPI fetch on first install)",
     "requires_cli: test shells out to an external coding-agent CLI not present on CI runners (e.g. ralph)",
 ]

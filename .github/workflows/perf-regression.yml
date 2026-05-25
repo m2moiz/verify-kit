@@ -1,0 +1,206 @@
+# Copyright (c) 2026 Moiz
+# SPDX-License-Identifier: MIT
+
+name: perf-regression
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: write
+  actions: read
+
+jobs:
+  baseline:
+    name: record main benchmark baseline
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    env:
+      VERIFYKIT_AUTH_TOKEN: dev-token-for-tests
+      ENV: dev
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --dev
+
+      - name: Run benchmarks
+        run: |
+          mkdir -p .benchmarks
+          uv run pytest tests/perf -m benchmark \
+            --benchmark-json=.benchmarks/baseline.json
+
+      - name: Upload benchmark baseline
+        uses: actions/upload-artifact@v7
+        with:
+          name: perf-baseline
+          path: .benchmarks/baseline.json
+          if-no-files-found: error
+          retention-days: 90
+
+  compare:
+    name: compare PR benchmarks
+    if: github.event_name == 'pull_request'
+    continue-on-error: true
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      VERIFYKIT_AUTH_TOKEN: dev-token-for-tests
+      ENV: dev
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --dev
+
+      - name: Download latest main baseline
+        id: baseline
+        continue-on-error: true
+        run: |
+          mkdir -p .benchmarks/baseline
+          run_id="$(
+            gh run list \
+              --workflow=perf-regression.yml \
+              --branch=main \
+              --event=push \
+              --status=success \
+              --limit=1 \
+              --json databaseId \
+              --jq '.[0].databaseId // ""'
+          )"
+          if [ -z "$run_id" ]; then
+            echo "found=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          gh run download "$run_id" \
+            --name perf-baseline \
+            --repo "${{ github.repository }}" \
+            --dir .benchmarks/baseline
+          test -s .benchmarks/baseline/baseline.json
+          echo "found=true" >> "$GITHUB_OUTPUT"
+
+      - name: Run benchmarks
+        if: steps.baseline.outputs.found != 'true'
+        continue-on-error: true
+        run: |
+          mkdir -p .benchmarks
+          uv run pytest tests/perf -m benchmark \
+            --benchmark-json=.benchmarks/pr.json
+
+      - name: Run and compare benchmarks
+        id: compare
+        if: steps.baseline.outputs.found == 'true'
+        continue-on-error: true
+        run: |
+          set +e
+          uv run pytest tests/perf -m benchmark \
+            --benchmark-json=.benchmarks/pr.json \
+            --benchmark-compare=.benchmarks/baseline/baseline.json \
+            --benchmark-group-by=group \
+            > .benchmarks/compare.txt
+          compare_status="$?"
+          set -e
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          baseline = json.loads(Path(".benchmarks/baseline/baseline.json").read_text())
+          current = json.loads(Path(".benchmarks/pr.json").read_text())
+
+          def rows(data):
+              result = {}
+              for item in data.get("benchmarks", []):
+                  key = item.get("group") or item.get("name") or item.get("fullname")
+                  result[key] = item.get("stats", {}).get("mean")
+              return result
+
+          base = rows(baseline)
+          pr = rows(current)
+          lines = [
+              "| Benchmark | Main mean (s) | PR mean (s) | Change | Signal |",
+              "|---|---:|---:|---:|---|",
+          ]
+          warning = False
+          for key in sorted(pr):
+              base_mean = base.get(key)
+              pr_mean = pr[key]
+              if base_mean in (None, 0) or pr_mean is None:
+                  lines.append(f"| `{key}` | n/a | n/a | n/a | no baseline |")
+                  continue
+              change = ((pr_mean - base_mean) / base_mean) * 100
+              flagged = change > 25
+              warning = warning or flagged
+              signal = "investigate" if flagged else "ok"
+              lines.append(
+                  f"| `{key}` | {base_mean:.6f} | {pr_mean:.6f} | {change:+.1f}% | {signal} |"
+              )
+          Path(".benchmarks/summary.md").write_text("\n".join(lines) + "\n")
+          Path(".benchmarks/warning.txt").write_text("true" if warning else "false")
+          PY
+          {
+            echo "warning=$(cat .benchmarks/warning.txt)"
+            echo "status=$compare_status"
+          } >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Render PR comment
+        if: always()
+        run: |
+          {
+            echo "<!-- verify-kit-perf-regression -->"
+            echo "## Performance regression check"
+            echo
+            echo "Comment-only signal. A slowdown above 25% vs the latest main baseline is flagged for investigation."
+            echo
+            if [ "${{ steps.baseline.outputs.found }}" != "true" ]; then
+              echo "No successful main baseline artifact was found yet. Merge or run this workflow on main to seed \`baseline.json\`."
+            elif [ -s .benchmarks/summary.md ]; then
+              cat .benchmarks/summary.md
+              if [ "${{ steps.compare.outputs.warning }}" = "true" ]; then
+                echo
+                echo "**Warning:** one or more benchmarks slowed down by more than 25%; investigate before merging."
+              fi
+              if [ -s .benchmarks/compare.txt ]; then
+                echo
+                echo "<details><summary>pytest-benchmark compare output</summary>"
+                echo
+                echo '```text'
+                cat .benchmarks/compare.txt
+                echo '```'
+                echo
+                echo "</details>"
+              fi
+            else
+              echo "Benchmark comparison did not produce a summary. Check the workflow logs for details."
+            fi
+          } > .benchmarks/comment.md
+
+      - name: Find existing PR comment
+        id: find-comment
+        if: always()
+        uses: peter-evans/find-comment@v3
+        with:
+          issue-number: ${{ github.event.pull_request.number }}
+          comment-author: github-actions[bot]
+          body-includes: "<!-- verify-kit-perf-regression -->"
+
+      - name: Post PR comment
+        if: always()
+        uses: peter-evans/create-or-update-comment@v4
+        with:
+          comment-id: ${{ steps.find-comment.outputs.comment-id }}
+          issue-number: ${{ github.event.pull_request.number }}
+          body-path: .benchmarks/comment.md
+          edit-mode: replace
