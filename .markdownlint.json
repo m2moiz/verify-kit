@@ -1,0 +1,9 @@
+{
+  "#comment-disabled": "MD013 line-length and MD033 inline-HTML mirror template/.pre-commit-config.yaml.jinja2 (README/CONTRIBUTING use <details>/<sub> and long links). MD041 first-line-h1 off because README starts with badges. MD034 bare-urls off because SECURITY/CODE_OF_CONDUCT use bare contact emails and Contributor Covenant attribution URLs by convention. MD036 emphasis-as-heading off because the GSD project-start block writes `**verify-kit**` as a generated label.",
+  "default": true,
+  "MD013": false,
+  "MD033": false,
+  "MD041": false,
+  "MD034": false,
+  "MD036": false
+}
