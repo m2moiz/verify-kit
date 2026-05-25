@@ -1,0 +1,13 @@
+# Jinja-rendered template files; markdownlint cannot parse {% %} syntax.
+template/
+# Internal planning artifacts, not shipped.
+.planning/
+# Research notes — high-volume working docs, intentionally lint-exempt.
+research/
+# Build / vendor.
+node_modules/
+.venv/
+dist/
+.git/
+# GSD worktrees.
+.claude/worktrees/

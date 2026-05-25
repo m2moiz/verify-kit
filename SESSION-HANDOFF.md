@@ -44,7 +44,7 @@ Don't trust the table above to be current — confirm against `STATE.md`.
 
 ## Key files / pointers
 
-```
+```text
 .planning/STATE.md                    # live position
 .planning/ROADMAP.md                  # the 6 phases
 .planning/REQUIREMENTS.md             # v0.1 requirements
