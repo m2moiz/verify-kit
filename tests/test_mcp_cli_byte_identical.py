@@ -189,6 +189,7 @@ def test_cat_a_describe_byte_identical(mcp_installed_scratch: Path) -> None:
     assert _normalize(cli) == _normalize(mcp)
 
 
+@pytest.mark.requires_cli
 def test_cat_a_ralph_status_byte_identical(mcp_installed_scratch: Path) -> None:
     # Pre-seed: one Ralph run that's guaranteed to be "stuck" (cost-cap).
     # 03-02 T05 documented cap-precedence: cost_cap wins ties.
@@ -219,6 +220,7 @@ def test_cat_a_ralph_status_byte_identical(mcp_installed_scratch: Path) -> None:
 # ── Category B: 2 shape-only tests ───────────────────────────────────────────
 
 
+@pytest.mark.requires_cli
 def test_cat_b_ralph_run_shape(mcp_installed_scratch: Path) -> None:
     """ralph_run canonical shape: {status, iters, cost_usd, output_path}
     plus `reason` IFF status == "stuck". cost_cap wins ties (03-02 T05).

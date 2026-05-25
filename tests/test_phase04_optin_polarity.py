@@ -81,14 +81,14 @@ def test_optin_polarity_matrix(
         assert "logfire.configure()" in main_py, (
             "logfire.configure() missing from main.py when has_logfire=true"
         )
-        assert "logfire>=" in pyproject, (
+        assert "logfire[" in pyproject, (
             "logfire>= dep missing from pyproject.toml when has_logfire=true"
         )
     else:
         assert "import logfire" not in main_py, (
             "import logfire leaked into main.py when has_logfire=false"
         )
-        assert "logfire>=" not in pyproject, (
+        assert "logfire[" not in pyproject, (
             "logfire>= dep leaked into pyproject.toml when has_logfire=false"
         )
 
