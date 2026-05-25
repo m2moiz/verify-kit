@@ -1,0 +1,89 @@
+name: coverage
+# Runs the test suite with coverage measurement and uploads the report
+# to Codecov for badge + PR-delta comments.
+#
+# Codecov account + CODECOV_TOKEN are required. If the token is absent
+# the upload step soft-fails (continue-on-error) so the workflow still
+# goes green — the maintainer just doesn't get the badge until the token
+# lands. To enable:
+#   1. Visit https://codecov.io and sign in with the GitHub account that
+#      owns this repo.
+#   2. Enable the verify-kit repo from your Codecov dashboard.
+#   3. Copy the repo token from Codecov settings.
+#   4. Add it to GitHub: Settings -> Secrets and variables -> Actions ->
+#      New repository secret -> Name: CODECOV_TOKEN, Value: <paste>.
+# After that, the next push to main will populate the badge.
+#
+# Per bead verify-kit-a9u: directional signal only — no coverage
+# threshold gate, no merge-blocking on coverage drop. Treat as "look
+# here, not stop here".
+#
+# Reference: https://github.com/codecov/codecov-action
+on:
+  pull_request:
+    paths:
+      - "src/**"
+      - "template_extensions/**"
+      - "tests/**"
+      - "pyproject.toml"
+      - "uv.lock"
+      - ".github/workflows/coverage.yml"
+  push:
+    branches: [main]
+    paths:
+      - "src/**"
+      - "template_extensions/**"
+      - "tests/**"
+      - "pyproject.toml"
+      - "uv.lock"
+
+permissions:
+  contents: read
+
+jobs:
+  coverage:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: jdx/mise-action@v4
+
+      - name: Sync dependencies
+        run: uv sync --dev
+
+      - name: Run tests with coverage
+        # Config (source, branch, exclude_lines) lives in [tool.coverage.*]
+        # in pyproject.toml. CLI flags here only select report formats.
+        # `-m 'not slow and not requires_network'` mirrors the default CI
+        # selection — slow tests are explicit-opt-in (RUN_SLOW_TESTS=1).
+        run: |
+          uv run pytest \
+            --cov \
+            --cov-report=xml \
+            --cov-report=term \
+            -m "not slow and not requires_network" \
+            -q
+
+      - name: Upload coverage to Codecov
+        # Soft-fail until the maintainer adds CODECOV_TOKEN. Once present,
+        # this populates the badge + PR-delta comments.
+        uses: codecov/codecov-action@v4
+        continue-on-error: true
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: coverage.xml
+          fail_ci_if_error: false
+          # OSS public-repo flag — keeps the upload deterministic and
+          # lets Codecov treat absent token gracefully.
+          flags: unittests
+
+      - name: Upload coverage artifact
+        # Always-on fallback: even without Codecov, the XML is downloadable
+        # from the workflow run for manual inspection.
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-xml
+          path: coverage.xml
+          if-no-files-found: ignore
+          retention-days: 30
