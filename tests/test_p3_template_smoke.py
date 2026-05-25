@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Moiz
+# SPDX-License-Identifier: MIT
+
 """Phase 3 cross-cutting template smoke (Plan 03-05 T01).
 
 Renders the verify-kit template across an agent-flag matrix and asserts

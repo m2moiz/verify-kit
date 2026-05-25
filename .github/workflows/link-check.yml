@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Moiz
+# SPDX-License-Identifier: MIT
+
 name: link-check
 # Weekly broken-link scan of all top-level docs. Uses lychee with config
 # at ./lychee.toml — see that file for excludes / retry / timeout policy.

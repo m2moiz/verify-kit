@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Moiz
+# SPDX-License-Identifier: MIT
+
 name: ossf-scorecard
 # OSSF Scorecard runs ~18 supply-chain / security-posture checks on this
 # repo (branch protection, code review, signed releases, CI tests, token

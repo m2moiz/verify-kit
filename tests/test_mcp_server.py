@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Moiz
+# SPDX-License-Identifier: MIT
+
 """End-to-end tests for the verify-kit MCP server (Plan 03-01 T07).
 
 Every test launches ``verify-kit mcp serve`` as a SUBPROCESS via

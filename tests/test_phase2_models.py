@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Moiz
+# SPDX-License-Identifier: MIT
+
 """Tests for harness.models (Plan 02-01, Task 1).
 
 These tests import from the rendered scratch project, not from the template

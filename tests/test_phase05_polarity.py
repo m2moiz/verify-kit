@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Moiz
+# SPDX-License-Identifier: MIT
+
 """Phase 5 LLM-add-on polarity tests.
 
 Locks the entire Phase 5 contract under a parametrized matrix over the

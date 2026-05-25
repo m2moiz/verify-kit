@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Moiz
+# SPDX-License-Identifier: MIT
+
 """SC#1 gate: `verify-kit verify --quick --no-cache` reports
 ``summary.duration_ms < 2000`` on first run in a scratch project.
 

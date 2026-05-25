@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Moiz
+# SPDX-License-Identifier: MIT
+
 """Tests for harness.checks/{mise,copier,just_list} migration (Plan 02-04, Task 1).
 
 Covers the Phase-1 → Phase-2 migration of the three existing checks into the

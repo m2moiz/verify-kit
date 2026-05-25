@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Moiz
+# SPDX-License-Identifier: MIT
+
 """
 Validate that the custom VS Code problem-matcher regexes in
 `template/.vscode/tasks.json.jinja2` actually parse real Ruff / Pyright /

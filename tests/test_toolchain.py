@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Moiz
+# SPDX-License-Identifier: MIT
+
 """
 Toolchain tests for verify-kit Plan 01-02.
 

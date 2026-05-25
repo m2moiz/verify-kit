@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Moiz
+# SPDX-License-Identifier: MIT
+
 """Tests for harness.core thin facade (Plan 02-06, Task 1).
 
 Covers Plan 02-06 behavior requirements:
