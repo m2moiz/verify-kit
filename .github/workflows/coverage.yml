@@ -56,26 +56,18 @@ jobs:
       - name: Run tests with coverage
         # Config (source, branch, exclude_lines) lives in [tool.coverage.*]
         # in pyproject.toml. CLI flags here only select report formats.
-        # `-m 'not slow and not requires_network'` mirrors the default CI
-        # selection — slow tests are explicit-opt-in (RUN_SLOW_TESTS=1).
-        #
-        # SOFT-FAIL on test failures. Rationale: this workflow measures
-        # how much of the shipped code (src/, template_extensions/) is
-        # exercised. The canonical correctness gate is template-selftest
-        # which renders a scratch project and runs `just verify` inside
-        # it. Several tests in verify-kit's own tests/ directory have
-        # pre-existing stale assumptions (e.g. expecting no docker on
-        # the host, looking for [project.optional-dependencies] when the
-        # project uses PEP 735 [dependency-groups]) that fail when
-        # pytest is invoked directly. Those failures are tracked
-        # separately and shouldn't block the coverage signal.
-        continue-on-error: true
+        # `-m` excludes the standard opt-in tiers:
+        #   - slow: explicit-opt-in (RUN_SLOW_TESTS=1); includes the FULL
+        #     verify-backend docker-up integration test.
+        #   - requires_network: PyPI fetches etc.
+        #   - requires_cli: tests that shell out to the `claude` CLI
+        #     (ralph status / ralph run) which is not present on CI runners.
         run: |
           uv run pytest \
             --cov \
             --cov-report=xml \
             --cov-report=term \
-            -m "not slow and not requires_network" \
+            -m "not slow and not requires_network and not requires_cli" \
             -q
 
       - name: Upload coverage to Codecov
