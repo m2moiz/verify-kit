@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Moiz Hussain
+# SPDX-License-Identifier: MIT
+
 """Tests for harness.runner (Plan 02-04, Task 3).
 
 Covers:

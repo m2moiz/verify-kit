@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Moiz Hussain
+# SPDX-License-Identifier: MIT
+
 """Phase 6 follow-up (verify-kit-d1o): assert the harness `backend` check
 skips with a clear hint when the Docker daemon is unreachable, instead of
 hanging Testcontainers and timing out the umbrella `just verify` at 600s.

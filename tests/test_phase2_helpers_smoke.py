@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Moiz Hussain
+# SPDX-License-Identifier: MIT
+
 """Smoke tests for the Phase 2 shared test helpers (Plan 02-01, Task 0)."""
 from __future__ import annotations
 

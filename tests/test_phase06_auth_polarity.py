@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Moiz Hussain
+# SPDX-License-Identifier: MIT
+
 """Phase 6 auth-scaffold polarity tests (Plan 06-02).
 
 Forcing-function tests that lock the auth contract:

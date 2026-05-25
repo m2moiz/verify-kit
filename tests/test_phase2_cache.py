@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Moiz Hussain
+# SPDX-License-Identifier: MIT
+
 """Tests for harness.cache (Plan 02-03, Task 1).
 
 Covers SQLite WAL-mode cache, key composition, eviction, and the

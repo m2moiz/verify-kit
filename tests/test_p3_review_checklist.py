@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Moiz Hussain
+# SPDX-License-Identifier: MIT
+
 """REVIEW-CHECKLIST-driven static scans (Plan 03-05 T03).
 
 Three scans, all against the *rendered* harness sources (not the raw

@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# Copyright (c) 2026 Moiz Hussain
+# SPDX-License-Identifier: MIT
+
 # Re-record docs/casts/just-verify.cast and re-render docs/casts/just-verify.gif.
 # Required tools: asciinema, agg (install: `brew install asciinema agg`).
 set -euo pipefail

@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Moiz Hussain
+# SPDX-License-Identifier: MIT
+
 """Tests for harness.cli — Plan 02-06, Task 2.
 
 Coverage map (from plan <verify><automated>):

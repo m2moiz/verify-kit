@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Moiz Hussain
+# SPDX-License-Identifier: MIT
+
 """Conditional-rendering matrix for per-agent rules + MCP snippets.
 
 Plan 03-03 ships per-agent thin-pointer files (Cursor `.mdc` + `mcp.json`,

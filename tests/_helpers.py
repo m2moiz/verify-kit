@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Moiz Hussain
+# SPDX-License-Identifier: MIT
+
 """
 Shared test helpers for Phase 2+ verify-kit tests.
 

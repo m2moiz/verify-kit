@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Moiz Hussain
+# SPDX-License-Identifier: MIT
+
 """OBS-01 verification gate: ``harness.observability`` imports zero OTel modules
 when ``OTEL_EXPORTER_OTLP_ENDPOINT`` is unset.
 

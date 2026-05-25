@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Moiz Hussain
+# SPDX-License-Identifier: MIT
+
 """Tests for CI workflow templates and agent integration files (Plan 01-04).
 
 Covers:

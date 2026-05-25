@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Moiz Hussain
+# SPDX-License-Identifier: MIT
+
 """
 Tests for `template/harness/observability.py.jinja2` (Plan 02-02 Task 1).
 

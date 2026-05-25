@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Moiz Hussain
+# SPDX-License-Identifier: MIT
+
 """Phase 3 + Phase 5 contract: harness.mcp must work under fastmcp 3.x.
 
 Phase 5's dep bump changed fastmcp from 2.x to ``>=3.3,<4``. The Phase 3

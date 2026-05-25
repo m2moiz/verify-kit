@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Moiz Hussain
+# SPDX-License-Identifier: MIT
+
 """Tests for harness.didyoumean (Plan 02-01, Task 3)."""
 from __future__ import annotations
 

@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Moiz Hussain
+# SPDX-License-Identifier: MIT
+
 """Phase 4 Plan 04-01 — scaffold polarity tests.
 
 Enforces the two-guard contract for add-on path gating:

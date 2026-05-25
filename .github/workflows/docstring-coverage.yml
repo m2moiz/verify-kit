@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Moiz Hussain
+# SPDX-License-Identifier: MIT
+
 name: docstring-coverage
 # Runs interrogate against src/verify_kit on every PR + push to main.
 # Threshold and scope live in pyproject.toml under [tool.interrogate].

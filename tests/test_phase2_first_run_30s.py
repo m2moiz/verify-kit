@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Moiz Hussain
+# SPDX-License-Identifier: MIT
+
 """UX-08 verification gate: end-to-end first run completes in <30 seconds.
 
 Reflects UX-08: "from copier copy to I see my project verified" on a

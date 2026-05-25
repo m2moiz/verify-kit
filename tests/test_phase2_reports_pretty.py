@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Moiz Hussain
+# SPDX-License-Identifier: MIT
+
 """Tests for harness.reports.pretty (Plan 02-05, Task 1).
 
 Covers:

@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Moiz Hussain
+# SPDX-License-Identifier: MIT
+
 """Tests for harness.trace_id (Plan 02-01, Task 3).
 
 contextvars-based; ASGI middleware lives in Phase 4 (FastAPI addon).

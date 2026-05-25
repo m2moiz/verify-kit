@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# Copyright (c) 2026 Moiz Hussain
+# SPDX-License-Identifier: MIT
+
 # Convergence stall detector — fires on PostToolUse of Edit/Write tools that
 # touched a REVIEWS.md or PLAN.md file. Extracts the latest CYCLE_SUMMARY HIGH
 # count from REVIEWS.md, compares to a per-phase checkpoint, and warns to

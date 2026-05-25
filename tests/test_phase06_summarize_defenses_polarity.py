@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Moiz Hussain
+# SPDX-License-Identifier: MIT
+
 """Phase 6 /summarize input-defense polarity tests (Plan 06-03).
 
 Forcing-function tests that lock the four layered input defenses on /summarize:

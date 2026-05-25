@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Moiz Hussain
+# SPDX-License-Identifier: MIT
+
 """Three SKILL.md files ship under .claude/skills/ when has_claude_code=true.
 
 Plan 03-03 §T07: each SKILL.md has YAML frontmatter (`name`, `description`)

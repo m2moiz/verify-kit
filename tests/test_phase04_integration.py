@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Moiz Hussain
+# SPDX-License-Identifier: MIT
+
 """Phase 4 integration test: prove a fresh has_backend=true scaffold runs
 `just verify-backend` clean end-to-end.
 

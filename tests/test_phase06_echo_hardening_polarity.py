@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Moiz Hussain
+# SPDX-License-Identifier: MIT
+
 """Phase 6 /echo input-hardening polarity tests (Plan 06-04).
 
 Forcing-function tests that lock the three layered input defenses on /echo:

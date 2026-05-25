@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Moiz Hussain
+# SPDX-License-Identifier: MIT
+
 name: pip-audit
 # Scans pinned Python dependencies in uv.lock against the PyPI advisory
 # database. Catches transitive CVEs that don't surface in dependabot

@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Moiz Hussain
+# SPDX-License-Identifier: MIT
+
 """Thin MCP↔CLI end-to-end smoke (Plan 03-05 T02).
 
 This is a *cross-cutting smoke test*, NOT a per-tool contract matrix.

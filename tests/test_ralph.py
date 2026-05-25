@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Moiz Hussain
+# SPDX-License-Identifier: MIT
+
 """Tests for harness.ralph (plan 03-02 T07).
 
 These tests load template/harness/ralph.py.jinja2 directly via importlib —

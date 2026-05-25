@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Moiz Hussain
+# SPDX-License-Identifier: MIT
+
 """Tests for Claude Code hook scripts (plan 03-02 T07).
 
 The .jinja2 hook files contain no Jinja syntax (pure bash), so we copy

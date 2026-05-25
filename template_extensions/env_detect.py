@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Moiz Hussain
+# SPDX-License-Identifier: MIT
+
 """Copier Jinja extension that exposes an `env_detect` filter.
 
 Detects presence of agent-tool config directories in the user's home so
