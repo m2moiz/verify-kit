@@ -52,3 +52,25 @@ markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"'); requires RUN_SLOW_TESTS=1",
     "requires_network: test requires network access (e.g. PyPI fetch on first install)",
 ]
+
+[tool.interrogate]
+# Docstring coverage gate. Directional signal, not a perfection target.
+# Per bead verify-kit-3dm: start at a threshold that current code already
+# clears, ratchet up as the package grows. src/verify_kit is at 100% with
+# its single module docstring; 80% gives one missing docstring of grace
+# room before failing — enough to catch regressions but not so tight that
+# adding a new module forces an immediate doc-writing detour.
+fail-under = 80
+verbose = 1
+# Scope: only the shipped package. The template/ tree is Jinja-rendered
+# and tests/ is verification code — neither needs docstring coverage.
+ignore-init-method = true
+ignore-init-module = false
+ignore-magic = true
+ignore-private = false
+ignore-property-decorators = false
+ignore-semiprivate = false
+ignore-setters = true
+ignore-nested-functions = true
+ignore-nested-classes = false
+ignore-module = false
