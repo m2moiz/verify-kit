@@ -25,13 +25,13 @@ jobs:
         language: [python]
     steps:
       - uses: actions/checkout@v6
-      - uses: github/codeql-action/init@v3
+      - uses: github/codeql-action/init@v4
         with:
           languages: ${{ matrix.language }}
           # security-and-quality includes additional quality queries beyond
           # the default security-extended set. Worth the few extra seconds
           # given this only runs on push + weekly.
           queries: security-and-quality
-      - uses: github/codeql-action/analyze@v3
+      - uses: github/codeql-action/analyze@v4
         with:
           category: "/language:${{ matrix.language }}"
