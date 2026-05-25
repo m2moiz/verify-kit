@@ -1,0 +1,38 @@
+name: markdownlint
+# Lints repo Markdown on every PR and push-to-main that changes any .md
+# file. Configuration lives in ./.markdownlint.json and the ignore set in
+# ./.markdownlintignore — template/, .planning/, and research/ are
+# excluded (Jinja-rendered, planning artifacts, and high-volume notes
+# respectively). Same tool + version as the consumer pre-commit hook in
+# template/.pre-commit-config.yaml.jinja2 so behavior stays consistent.
+on:
+  pull_request:
+    paths:
+      - "**/*.md"
+      - ".markdownlint.json"
+      - ".markdownlintignore"
+      - ".github/workflows/markdownlint.yml"
+  push:
+    branches: [main]
+    paths:
+      - "**/*.md"
+      - ".markdownlint.json"
+      - ".markdownlintignore"
+      - ".github/workflows/markdownlint.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  markdownlint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Run markdownlint-cli
+        # Pinned to v0.42.0 to match template/.pre-commit-config.yaml.jinja2.
+        run: npx --yes markdownlint-cli@0.42.0 -c .markdownlint.json -p .markdownlintignore '**/*.md'
