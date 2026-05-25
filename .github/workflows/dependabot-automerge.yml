@@ -1,0 +1,74 @@
+# Copyright (c) 2026 Moiz
+# SPDX-License-Identifier: MIT
+name: dependabot-automerge
+# Standard-tier Dependabot auto-merge policy.
+#
+# Triggers on every Dependabot PR. Uses dependabot/fetch-metadata to
+# read the update-type (semver-major / semver-minor / semver-patch) and
+# the ecosystem (github_actions / pip / npm / etc.), then decides:
+#
+#   AUTO-MERGE  IF:
+#     - patch or minor bump on any dependency  (low risk; CI is the gate)
+#     - any GitHub Actions bump (major included; CI catches breakage)
+#   LEAVE OPEN  IF:
+#     - major bump on a non-Actions ecosystem (Python/etc.) — needs human review
+#
+# The actual merge happens via `gh pr merge --auto --squash`. GitHub
+# holds the merge until every required status check goes green, so a
+# failing CI run never auto-lands. If the user wants to override, they
+# can comment `@dependabot recreate` or merge manually before CI greens.
+#
+# Repo-level auto-merge must be enabled (Settings -> General -> Pull
+# requests -> Allow auto-merge). Already enabled as of 2026-05-25.
+#
+# References:
+#   - https://github.com/dependabot/fetch-metadata
+#   - https://docs.github.com/en/code-security/dependabot/working-with-dependabot/automating-dependabot-with-github-actions
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  automerge:
+    # Only run on actual Dependabot PRs. The cheaper alternative
+    # (`if: github.actor == 'dependabot[bot]'`) misses re-opens; this
+    # form also covers the recreate flow.
+    if: github.event.pull_request.user.login == 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Read Dependabot metadata
+        id: meta
+        uses: dependabot/fetch-metadata@v2
+
+      - name: Enable auto-merge — patch + minor bumps, any ecosystem
+        if: |
+          steps.meta.outputs.update-type == 'version-update:semver-patch' ||
+          steps.meta.outputs.update-type == 'version-update:semver-minor'
+        run: gh pr merge --auto --squash "$PR_URL"
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Enable auto-merge — GitHub Actions bumps (incl. major)
+        if: |
+          steps.meta.outputs.update-type == 'version-update:semver-major' &&
+          steps.meta.outputs.package-ecosystem == 'github_actions'
+        run: gh pr merge --auto --squash "$PR_URL"
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Log decision (when nothing auto-merged)
+        if: |
+          steps.meta.outputs.update-type == 'version-update:semver-major' &&
+          steps.meta.outputs.package-ecosystem != 'github_actions'
+        run: |
+          echo "Major bump on non-Actions ecosystem: leaving open for human review."
+          echo "  package: ${{ steps.meta.outputs.dependency-names }}"
+          echo "  ecosystem: ${{ steps.meta.outputs.package-ecosystem }}"
+          echo "  update-type: ${{ steps.meta.outputs.update-type }}"
