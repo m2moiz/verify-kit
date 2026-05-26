@@ -8,8 +8,15 @@ __pycache__/
 
 # CC machine-specific overrides
 .claude/settings.local.json
+.claude/settings.json
 .claude/state/
+.claude/hooks/
 # GSD worktrees: each is a full git worktree with its own .git file.
 # Without this entry, git/copier detect worktree dirs as unregistered
 # submodules and abort with "No url found for submodule path".
 .claude/worktrees/
+
+# Internal / Claude-reasoning artifacts (scrubbed from history 2026-05-26).
+# Not for the public-facing branch. Local copies stay on disk for ongoing work.
+research/
+SESSION-HANDOFF.md
