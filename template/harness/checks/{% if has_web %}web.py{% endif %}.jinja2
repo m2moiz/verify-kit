@@ -27,6 +27,7 @@ Subprocess discipline (every web check):
 from __future__ import annotations
 
 import shutil
+import subprocess
 import time
 from pathlib import Path
 
@@ -424,17 +425,83 @@ def check_web_lost_pixel(cwd: Path) -> CheckResult:
         )
     else:
         # Outside Docker — use Lost Pixel's built-in docker mode (COMPARISON).
-        # `lost-pixel docker` owns container orchestration: pulls its own image,
-        # serves the built gallery, and runs comparison inside the container.
-        # No host node_modules mount — avoids arm64 vs linux esbuild crash
-        # (verify-kit-c7k). cwd must be the web/ directory so Lost Pixel finds
-        # lostpixel.config.cjs and dist/.
-        result = proc_run(
-            ["pnpm", "exec", "lost-pixel", "docker"],
-            cwd=cwd / "web",
-            env=clean_env(),
-            timeout=300.0,
+        # `lost-pixel docker` owns container orchestration (pulls lostpixel/lost-pixel
+        # image, mounts web/ into the container). No host dep directory mount —
+        # avoids arm64 vs linux esbuild crash (verify-kit-c7k).
+        #
+        # Lost Pixel pageShots mode does NOT serve static files — it connects to
+        # the baseUrl (host.docker.internal:3000) from inside the container.
+        # We must serve web/dist/ on the host first so the container can reach it.
+        dist_dir = cwd / "web" / "dist"
+        if not dist_dir.exists():
+            duration_ms = int((time.monotonic() - t0) * 1000)
+            return CheckResult(
+                check_id="web.lost_pixel",
+                status="fail",
+                duration_ms=duration_ms,
+                error=ErrorEnvelope(
+                    code="web.lost_pixel.dist_missing",
+                    message=(
+                        "web/dist/ not found — run `pnpm --dir web build` first "
+                        "so Lost Pixel can screenshot the production build."
+                    ),
+                    hint="Run `cd web && pnpm build` then re-run this check",
+                    fix_command="pnpm --dir web build",
+                    docs_url="https://lost-pixel.com/docs",
+                ),
+            )
+
+        # Start vite preview to serve dist/ at port 3000 (host.docker.internal:3000
+        # reaches this from inside the lostpixel container on macOS/Linux Docker).
+        preview_proc = subprocess.Popen(
+            # --host 0.0.0.0 binds all interfaces so host.docker.internal:3000
+            # inside the lostpixel container can reach this preview server.
+            # Without 0.0.0.0, vite only listens on 127.0.0.1 (loopback) which
+            # is unreachable from Docker containers via host.docker.internal.
+            ["pnpm", "--dir", "web", "exec", "vite", "preview",
+             "--port", "3000", "--host", "0.0.0.0"],
+            cwd=str(cwd),
+            env={**clean_env(), "FORCE_COLOR": "0"},
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
         )
+        try:
+            # Give vite preview a moment to bind the port
+            time.sleep(2)
+            # Use `docker run` directly (not `lost-pixel docker`) so the
+            # container's exit code is propagated correctly. `lost-pixel docker`
+            # is a convenience wrapper that catches the container exit code and
+            # always exits 0 — making it useless as a CI gate.
+            # The lostpixel/lost-pixel image already has pnpm + lost-pixel
+            # installed; no host dep directory mount needed (verify-kit-c7k fix).
+            web_dir = cwd / "web"
+            version_result = proc_run(
+                ["pnpm", "exec", "lost-pixel", "--version"],
+                cwd=web_dir,
+                capture_output=True,
+                text=True,
+                timeout=10.0,
+            )
+            lp_version = version_result.stdout.strip().split("\n")[-1].strip() if version_result.returncode == 0 else "3.22.0"
+            result = proc_run(
+                [
+                    "docker", "run", "--rm",
+                    "-v", f"{web_dir}:{web_dir}",
+                    "-e", f"WORKSPACE={web_dir}",
+                    "-e", "DOCKER=1",
+                    "-e", "LOST_PIXEL_DISABLE_TELEMETRY=1",
+                    f"lostpixel/lost-pixel:v{lp_version}",
+                ],
+                cwd=web_dir,
+                env=clean_env(),
+                timeout=300.0,
+            )
+        finally:
+            preview_proc.terminate()
+            try:
+                preview_proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                preview_proc.kill()
 
     duration_ms = int((time.monotonic() - t0) * 1000)
 

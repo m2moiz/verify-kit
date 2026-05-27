@@ -14,4 +14,10 @@ export default defineConfig({
     },
 {% endif %}
   },
+  preview: {
+    // Allow host.docker.internal so `lost-pixel docker` (running inside the
+    // lostpixel container) can reach `vite preview` on the host machine.
+    // Required on Vite 7+ which blocks unrecognised hostnames by default.
+    allowedHosts: ["host.docker.internal"],
+  },
 });
