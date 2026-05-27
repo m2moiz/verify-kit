@@ -10,7 +10,6 @@ See `CONTRIBUTING.md` for the commit-message contract that drives this file.
 
 ## 0.1.0 (2026-05-26)
 
-
 ### Added
 
 * **01-02:** toolchain spine — .mise.toml, justfile, Makefile templates ([9a5a92d](https://github.com/m2moiz/verify-kit/commit/9a5a92da9ad6e72412cb3dc3645e5fe009db8f97))
@@ -67,7 +66,7 @@ See `CONTRIBUTING.md` for the commit-message contract that drives this file.
 * **harness-tests:** non-functional gates (OBS-01, TOOL-05, UX-08) ([4f0aab5](https://github.com/m2moiz/verify-kit/commit/4f0aab5e88bdc1cc9e57dd400757fe1dfc7b688a))
 * **harness:** add harness/llm.py with call_llm routing + decorators ([db88bd5](https://github.com/m2moiz/verify-kit/commit/db88bd5b4c12f18e84cd584f11a2016ecd82c746))
 * **harness:** implement didyoumean.suggest and trace_id contextvar (GREEN) ([188e9cc](https://github.com/m2moiz/verify-kit/commit/188e9cce4ce60540e83eaffe7cef46e0acdc7865))
-* **harness:** scaffold harness/ package — core.py, cli.py, __init__.py, pyproject.toml ([88eaf6e](https://github.com/m2moiz/verify-kit/commit/88eaf6e6c4f5e8a6e245699e47df48c5722d8104))
+* **harness:** scaffold harness/ package — core.py, cli.py, **init**.py, pyproject.toml ([88eaf6e](https://github.com/m2moiz/verify-kit/commit/88eaf6e6c4f5e8a6e245699e47df48c5722d8104))
 * **harness:** wire Traceloop.init() into _otel_enabled block under has_llm ([f308cbf](https://github.com/m2moiz/verify-kit/commit/f308cbf5e55dd582beba2ffea72867dacf52424c))
 * **hooks:** add post-tool-use lint+typecheck hook ([475522f](https://github.com/m2moiz/verify-kit/commit/475522fa626b690dc5cd135fde67c62038742e1a))
 * **hooks:** add settings.json.example with permissions + hooks wiring ([79b1303](https://github.com/m2moiz/verify-kit/commit/79b13034abbe9c3b7f473c52e61fa8326066e689))
@@ -108,7 +107,6 @@ See `CONTRIBUTING.md` for the commit-message contract that drives this file.
 * **windsurf:** expand rule with verify-kit conventions ([ca0638c](https://github.com/m2moiz/verify-kit/commit/ca0638ccea70c55f52645fe93cb3dba64836e5ac))
 * **zed:** add settings.json with verify-kit context server ([54c80b5](https://github.com/m2moiz/verify-kit/commit/54c80b579acef5db7c65b354e81a257edcd23757))
 
-
 ### Fixed
 
 * **agents:** trim per-agent rule files under 200-word budget ([1c0d9d6](https://github.com/m2moiz/verify-kit/commit/1c0d9d6239427d084d6675cdb070ce901d6bc789))
@@ -140,7 +138,6 @@ See `CONTRIBUTING.md` for the commit-message contract that drives this file.
 * **tests:** override require_auth in rendered backend conftest ([5662b2c](https://github.com/m2moiz/verify-kit/commit/5662b2c7f25b78b258b28ef4a065e3691c970704))
 * **tests:** triage 14 stale assertions, restore coverage gate ([#18](https://github.com/m2moiz/verify-kit/issues/18)) ([748a8eb](https://github.com/m2moiz/verify-kit/commit/748a8eb499b573809e55c486251c9581cf246d73))
 * **verify-backend-quick:** move umbrella test + fix uv sync for scratch env ([5136acb](https://github.com/m2moiz/verify-kit/commit/5136acbbb06bc30e09502cb1ba35220b04bd5f0c))
-
 
 ### Changed
 
@@ -202,7 +199,6 @@ See `CONTRIBUTING.md` for the commit-message contract that drives this file.
 * sync lockfile with phase 2 runtime deps ([9344503](https://github.com/m2moiz/verify-kit/commit/934450369a67a35a711cb69619d3d4d70008fbe0))
 * **template:** scrub leaked planning IDs from template/**/*.jinja2 (Pattern 6) ([de86001](https://github.com/m2moiz/verify-kit/commit/de8600196fd8ca0ed16384f969f2a5752f7b8c10))
 * **template:** scrub Plan 05-01 from app/.env.example ([44ab817](https://github.com/m2moiz/verify-kit/commit/44ab817ba40670d853917a040171928d86d94955))
-
 
 ### Documentation
 
@@ -301,4 +297,4 @@ _None — `copier update` is safe and silent._
 
 ### Added
 
-- _Pending — first release PR will populate this section automatically._
+* _Pending — first release PR will populate this section automatically._
