@@ -1,7 +1,7 @@
 # Copyright (c) 2026 Moiz
 # SPDX-License-Identifier: MIT
 
-"""Bidirectional web add-on polarity tests (Plans 07-01 and 07-02).
+"""Bidirectional web add-on polarity tests (Plans 07-01, 07-02, and 07-03).
 
 Plan 07-01: Renders the template in two polarities (has_web=True / has_web=False)
 and asserts that path-gating works correctly in both directions.
@@ -9,6 +9,13 @@ and asserts that path-gating works correctly in both directions.
 Plan 07-02: Adds a build-smoke test (test_web_baseline_builds) that renders a
 scratch scaffold with has_web=True, runs pnpm install + tsc + pnpm build, and
 asserts the built dist/index.html artifact is present.
+
+Plan 07-03: Extends the build-smoke with Tailwind v4 + shadcn coupling guards:
+  - Tailwind CSS output contains OKLCH tokens (CSS-first pipeline ran).
+  - No tailwind.config.{js,ts,mjs,cjs} file exists (Tailwind v4 CSS-first).
+  - components.json declares the Tailwind v4 contract.
+  - Exactly 7 vendored components exist.
+  - App.tsx is the gallery with data-lost-pixel-id markers.
 
 Design notes:
   - Uses the ``render_scratch_project`` Python-API helper (not raw subprocess)
@@ -26,6 +33,7 @@ tests/web/ is a harness pytest-invocation target and we must not recurse.
 """
 from __future__ import annotations
 
+import json
 import shutil
 import subprocess
 from pathlib import Path
@@ -274,4 +282,136 @@ def test_web_baseline_builds(tmp_path: Path) -> None:
     assert dist_index.is_file(), (
         f"pnpm build succeeded but dist/index.html is missing at {dist_index}; "
         "check vite.config.ts build.outDir setting"
+    )
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="Node required")
+def test_web_tailwind_shadcn_baseline(tmp_path: Path) -> None:
+    """Plan 07-03 coupling guards: Tailwind v4 + shadcn vendoring assertions.
+
+    Renders has_web=True, runs pnpm install + pnpm build, then asserts:
+
+    1. Tailwind v4 pipeline ran: built CSS contains "oklch" tokens and
+       "--background" CSS variable (from the @theme block) and is > 5KB
+       (a no-op CSS would be tiny).
+
+    2. Coupling guard: no tailwind.config.{js,ts,mjs,cjs} file in the scaffold
+       (Tailwind v4 CSS-first; UI-SPEC Registry Safety).
+
+    3. shadcn vendoring guard: components.json is present and declares
+       tailwind.config="" + cssVariables=true; exactly 7 .tsx files exist under
+       web/src/components/ui/ matching {button,card,input,label,dialog,sheet,sonner}.
+
+    4. Gallery contract guard: App.tsx contains >= 7 data-lost-pixel-id= markers
+       and imports PROJECT_NAME from the config shim (Pitfall §1 check).
+
+    Reuses _CLEAN_ENV + the same pnpm install/build subprocess calls as
+    test_web_baseline_builds (no extra network calls beyond the existing install).
+    """
+    scratch = _render(tmp_path, has_web=True)
+    assert scratch.is_dir(), f"scaffold root missing: {scratch}"
+
+    web_dir = scratch / "web"
+    assert web_dir.is_dir(), "web/ dir must exist for has_web=True"
+
+    # --- Install and build (same flow as test_web_baseline_builds) -----------
+    subprocess.run(
+        ["corepack", "enable", "pnpm"],
+        cwd=str(web_dir),
+        env=_CLEAN_ENV,
+        check=False,
+    )
+
+    subprocess.run(
+        ["pnpm", "install", "--frozen-lockfile"],
+        cwd=str(web_dir),
+        env=_CLEAN_ENV,
+        check=True,
+        timeout=180,
+    )
+
+    subprocess.run(
+        ["pnpm", "build"],
+        cwd=str(web_dir),
+        env=_CLEAN_ENV,
+        check=True,
+        timeout=120,
+    )
+
+    # --- Guard 1: Tailwind v4 pipeline ran (OKLCH tokens in CSS output) ------
+    dist_dir = web_dir / "dist" / "assets"
+    css_files = list(dist_dir.glob("*.css"))
+    assert css_files, (
+        f"No CSS file found under {dist_dir}; "
+        "check that @tailwindcss/vite plugin is in vite.config.ts.jinja2"
+    )
+    css_text = css_files[0].read_text(encoding="utf-8")
+    assert "oklch" in css_text, (
+        "Built CSS does not contain 'oklch' — Tailwind v4 CSS-first pipeline "
+        "did not run (missing @import 'tailwindcss' in src/index.css or missing "
+        "@tailwindcss/vite in vite.config.ts)"
+    )
+    assert "--background" in css_text, (
+        "Built CSS does not contain '--background' — @theme block was not compiled "
+        "(check src/index.css for @theme inline { --color-background: ... })"
+    )
+    assert len(css_text) > 5_000, (
+        f"Built CSS is only {len(css_text)} bytes — suspiciously small. "
+        "Tailwind v4 with shadcn should produce > 5KB of output."
+    )
+
+    # --- Guard 2: no tailwind.config.* file (Tailwind v4 CSS-first) ----------
+    for ext in ("js", "ts", "mjs", "cjs"):
+        config_file = web_dir / f"tailwind.config.{ext}"
+        assert not config_file.exists(), (
+            f"Unexpected {config_file.name} found in scaffold. "
+            "Tailwind v4 CSS-first mode must NOT have a tailwind.config file. "
+            "Check components.json: tailwind.config must be empty string."
+        )
+
+    # --- Guard 3: shadcn vendoring contract ----------------------------------
+    components_json = web_dir / "components.json"
+    assert components_json.is_file(), (
+        "components.json missing from rendered scaffold. "
+        "It must be committed at template/web/components.json (no .jinja2 suffix)."
+    )
+    data = json.loads(components_json.read_text(encoding="utf-8"))
+    assert data.get("tailwind", {}).get("config") == "", (
+        f"components.json tailwind.config is not empty: "
+        f"{data.get('tailwind', {}).get('config')!r}. "
+        "Must be empty string to signal Tailwind v4 CSS-first mode."
+    )
+    assert data.get("tailwind", {}).get("cssVariables") is True, (
+        "components.json tailwind.cssVariables is not true. "
+        "shadcn v4 requires cssVariables: true for Tailwind v4 OKLCH integration."
+    )
+
+    ui_dir = web_dir / "src" / "components" / "ui"
+    assert ui_dir.is_dir(), f"src/components/ui/ dir missing from scaffold at {ui_dir}"
+    ui_files = {f.stem for f in ui_dir.iterdir() if f.suffix == ".tsx"}
+    expected_components = {"button", "card", "input", "label", "dialog", "sheet", "sonner"}
+    assert ui_files == expected_components, (
+        f"Vendored component mismatch.\n"
+        f"  Expected: {sorted(expected_components)}\n"
+        f"  Found:    {sorted(ui_files)}\n"
+        "Check that exactly 7 shadcn components are committed under "
+        "template/web/src/components/ui/ (no .jinja2 suffix)."
+    )
+
+    # --- Guard 4: App.tsx gallery contract ------------------------------------
+    app_tsx = web_dir / "src" / "App.tsx"
+    assert app_tsx.is_file(), f"src/App.tsx missing from scaffold at {app_tsx}"
+    app_text = app_tsx.read_text(encoding="utf-8")
+
+    pixel_id_count = app_text.count("data-lost-pixel-id=")
+    assert pixel_id_count >= 7, (
+        f"App.tsx contains only {pixel_id_count} data-lost-pixel-id= attributes; "
+        "expected >= 7 (one per vendored component section). "
+        "Lost Pixel plan 07-06 uses these as snapshot targets."
+    )
+
+    assert 'from "./config"' in app_text or 'from "@/config"' in app_text, (
+        "App.tsx does not import from './config' or '@/config'. "
+        "PROJECT_NAME / PROJECT_DESCRIPTION must flow through config.ts.jinja2 "
+        "so the Pitfall §1 single-Jinja-file firewall is not broken."
     )
