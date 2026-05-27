@@ -88,6 +88,7 @@ _message_after_copy: |
 _tasks:
   - "chmod +x .claude/hooks/post-tool-use.sh .claude/hooks/stop.sh scripts/ralph.sh 2>/dev/null || true"
   - "uvx --quiet ruff format . 2>/dev/null || true"
+  - "{% if has_web %}corepack enable pnpm 2>/dev/null || true{% endif %}"
 
 # ── Group: Identity ──────────────────────────────────────────────────────────
 
