@@ -1,0 +1,49 @@
+"""Subprocess env scrubbing for web checks (REVIEW-CHECKLIST §8 + Node-specific).
+
+# Verified signatures (2026-05-27):
+# proc.run signature (template/harness/proc.py.jinja2:32):
+#   def run(args, *, cwd, capture_output=True, text=True, timeout=None, check=False, env=None)
+#   DEFAULT_TIMEOUT_S = 60.0
+# subprocess discipline: always pass env=clean_env(), cwd=cwd / "web"
+# Strips: VIRTUAL_ENV, UV_PROJECT_ENVIRONMENT, PYTHONPATH, NODE_*, npm_config_*,
+#         PNPM_HOME, NVM_DIR, NVM_BIN, NVM_INC, PYTHON* (except PYTHONIOENCODING)
+"""
+from __future__ import annotations
+
+import os
+
+_PYTHON_STRIP = ("VIRTUAL_ENV", "UV_PROJECT_ENVIRONMENT", "PYTHONPATH")
+_NODE_STRIP = ("PNPM_HOME", "NVM_DIR", "NVM_BIN", "NVM_INC")
+# Any key whose name STARTS WITH one of these prefixes is stripped
+_PREFIX_STRIP = ("NODE_", "NPM_CONFIG_", "npm_config_", "PYTHON")
+
+
+def clean_env() -> dict[str, str]:
+    """Return os.environ copy with Python-venv and Node-specific vars removed.
+
+    Purpose: prevent outer Python venv (VIRTUAL_ENV, PYTHONPATH, etc.) and
+    Node version manager vars (NVM_*, PNPM_HOME, NODE_*) from leaking into
+    web-check subprocess invocations and causing pnpm/node to resolve against
+    the wrong environment.
+
+    Per 07-RESEARCH.md §proc.run discipline and threat T-07-24.
+    REVIEW-CHECKLIST §8: this function is imported by all web checks.
+    """
+    env = os.environ.copy()
+
+    # Remove exact-match keys
+    for k in _PYTHON_STRIP + _NODE_STRIP:
+        env.pop(k, None)
+
+    # Remove any key that starts with a listed prefix
+    for prefix in _PREFIX_STRIP:
+        for k in [k for k in env if k.startswith(prefix)]:
+            # Preserve PYTHONIOENCODING for Windows safety (UTF-8 stdout)
+            if k == "PYTHONIOENCODING":
+                continue
+            env.pop(k, None)
+
+    return env
+
+
+__all__ = ["clean_env"]
