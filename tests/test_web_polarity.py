@@ -907,6 +907,85 @@ def test_web_preset_schema_coverage() -> None:
     )
 
 
+def test_web_otel_bundle_budget(tmp_path: pytest.TempPathFactory) -> None:
+    """TRACE-04: OTel-on bundle delta is <= 100 KB gzipped.
+
+    Performs two pnpm builds of a scratch scaffold web/:
+
+    Build A: VITE_OTEL_EXPORTER_OTLP_ENDPOINT unset (inert default).
+    Build B: VITE_OTEL_EXPORTER_OTLP_ENDPOINT="http://localhost:4318/v1/traces"
+             (active OTel path — tree-shaking cannot drop the exporter code).
+
+    For each build, gzips every dist/assets/*.js chunk and sums the gzipped
+    bytes.  Asserts (sum_B − sum_A) ≤ 100 KB (102400 bytes) — TRACE-04.
+
+    Skip guard:
+      Set VERIFY_KIT_SKIP_BUNDLE_BUDGET=1 to skip the double-build cost for fast
+      local runs.  CI always runs this (no skip flag set).  The skip flag is
+      analogous to VERIFY_KIT_SKIP_PLAYWRIGHT.
+    """
+    import gzip
+
+    if os.environ.get("VERIFY_KIT_SKIP_BUNDLE_BUDGET") == "1":
+        pytest.skip("VERIFY_KIT_SKIP_BUNDLE_BUDGET=1 — skipping double-build OTel budget guard")
+
+    scratch = _render(tmp_path, has_web=True)
+    web_dir = scratch / "web"
+    assert web_dir.is_dir(), f"web/ dir must exist: {web_dir}"
+
+    # Install once; reuse node_modules across both builds.
+    subprocess.run(
+        ["corepack", "enable", "pnpm"],
+        cwd=str(web_dir),
+        env=_CLEAN_ENV,
+        check=False,
+    )
+    subprocess.run(
+        ["pnpm", "install", "--frozen-lockfile"],
+        cwd=str(web_dir),
+        env=_CLEAN_ENV,
+        check=True,
+        timeout=180,
+    )
+
+    def _gzip_js_size(dist_dir: Path) -> int:
+        """Sum gzipped sizes of all dist/assets/*.js chunks."""
+        total = 0
+        for js_file in dist_dir.glob("assets/*.js"):
+            data = js_file.read_bytes()
+            total += len(gzip.compress(data, compresslevel=9))
+        return total
+
+    # ── Build A: inert (no OTel exporter activated) ───────────────────────────
+    subprocess.run(
+        ["pnpm", "build"],
+        cwd=str(web_dir),
+        env=_CLEAN_ENV,
+        check=True,
+        timeout=180,
+    )
+    size_a = _gzip_js_size(web_dir / "dist")
+
+    # ── Build B: OTel active (exporter endpoint set) ──────────────────────────
+    otel_env = {**_CLEAN_ENV, "VITE_OTEL_EXPORTER_OTLP_ENDPOINT": "http://localhost:4318/v1/traces"}
+    subprocess.run(
+        ["pnpm", "build"],
+        cwd=str(web_dir),
+        env=otel_env,
+        check=True,
+        timeout=180,
+    )
+    size_b = _gzip_js_size(web_dir / "dist")
+
+    # ── TRACE-04 assertion ────────────────────────────────────────────────────
+    delta = size_b - size_a
+    assert delta <= 102400, (  # 100 * 1024 bytes
+        f"OTel-on build is {delta / 1024:.1f} KB gzipped larger than inert build; "
+        f"expected <= 100 KB (TRACE-04).  "
+        f"Inert size: {size_a / 1024:.1f} KB, OTel-on size: {size_b / 1024:.1f} KB."
+    )
+
+
 @pytest.mark.skipif(
     os.environ.get("VERIFY_KIT_SKIP_E2E") == "1",
     reason="opt-out for fast local runs (set VERIFY_KIT_SKIP_E2E=1)",
