@@ -19,22 +19,19 @@ tech_stack:
 key_files:
   modified:
     - .github/workflows/template-selftest.yml
-  created:
     - tests/test_web_polarity.py
-    - presets/oss-minimalist.yml
-    - presets/personal.yml
-    - presets/README.md
 
 decisions:
   - "Preset-render runs as a parallel job (not a matrix combo of selftest) for clear attribution"
   - "Both presets are has_web=false so no Node/pnpm setup needed; comment notes future requirement"
   - "Cold-install achieved via github.event_name != 'schedule' on cache steps, not separate job"
   - "_schema_version key silently ignored by copier (extra data keys allowed); no preprocessing"
+  - "workflow_dispatch added alongside schedule so cold path can be triggered manually"
 
 metrics:
-  duration: "~8 minutes"
+  duration: "~10 minutes"
   tasks_completed: 2
-  files_changed: 4
+  files_changed: 2
 ---
 
 # Phase 7 Plan 12: CI Preset-Render + Weekly Cold-Install Summary
@@ -66,19 +63,17 @@ Appended `test_web_preset_render_and_schedule` to `tests/test_web_polarity.py`. 
 1. Parses `template-selftest.yml` from a cwd-safe path (`Path(__file__).parent.parent / ".github/workflows/..."`)
 2. Asserts `preset-render` job exists with matrix containing both `oss-minimalist` and `personal`
 3. Asserts at least one step run block contains `--data-file presets/`
-4. Asserts `on.schedule` is present with a cron entry
-5. Asserts at least one step `if` condition contains `github.event_name != 'schedule'`
+4. Asserts `on.schedule` is present with a cron entry; handles PyYAML's `on` -> `True` key parsing
+5. Asserts at least one selftest cache step carries `github.event_name != 'schedule'` condition
 
 All assertions pass: `uv run pytest tests/test_web_polarity.py -k "ci_matrix or preset_render or schedule"` exits 0.
-
-Also committed the preset files (oss-minimalist.yml, personal.yml, README.md) which are required by the CI job.
 
 ## Commits
 
 | Hash | Description |
 |------|-------------|
-| 127c521 | feat(ci): preset-render job + weekly cold-install schedule |
-| a668108 | feat(ci): polarity guards for preset-render job and schedule trigger |
+| 783a269 | feat(ci): add preset-render job + weekly cold-install schedule |
+| e9b3777 | test(ci): add polarity guards for preset-render job and schedule trigger |
 
 ## Deviations from Plan
 
@@ -94,17 +89,15 @@ None. Both presets are placeholder-only (verified by existing `check-preset-pii`
 
 ## Self-Check
 
-Files committed:
-- `.github/workflows/template-selftest.yml` — modified, committed at 127c521
-- `tests/test_web_polarity.py` — created, committed at a668108
-- `presets/oss-minimalist.yml` — committed at a668108
-- `presets/personal.yml` — committed at a668108
+Files modified and committed:
+- `.github/workflows/template-selftest.yml` — modified, committed at 783a269
+- `tests/test_web_polarity.py` — modified (appended), committed at e9b3777
 
-Acceptance criteria:
+Acceptance criteria observed:
 - [x] `grep -q -- '--data-file presets/' .github/workflows/template-selftest.yml` — passes
 - [x] `grep -q 'schedule:' .github/workflows/template-selftest.yml` — passes
 - [x] `grep -q "github.event_name != 'schedule'" .github/workflows/template-selftest.yml` — passes
 - [x] `python3 -c "import yaml; yaml.safe_load(...)"` — YAML valid
 - [x] `uv run pytest tests/test_web_polarity.py -k "ci_matrix or preset_render or schedule"` — 2 passed
 
-CI run status: expected to pass on next PR/push — not yet observed (first scheduled cold-install run validates WCI-02; PR run validates preset-render job).
+CI run status: not yet observed. Expected to pass on next PR/push — first scheduled cold-install run (Monday 02:00 UTC) validates WCI-02; PR run validates preset-render job.
