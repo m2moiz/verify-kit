@@ -1,7 +1,7 @@
 # Copyright (c) 2026 Moiz
 # SPDX-License-Identifier: MIT
 
-"""Bidirectional web add-on polarity tests (Plans 07-01, 07-02, and 07-03).
+"""Bidirectional web add-on polarity tests (Plans 07-01 through 07-04).
 
 Plan 07-01: Renders the template in two polarities (has_web=True / has_web=False)
 and asserts that path-gating works correctly in both directions.
@@ -16,6 +16,12 @@ Plan 07-03: Extends the build-smoke with Tailwind v4 + shadcn coupling guards:
   - components.json declares the Tailwind v4 contract.
   - Exactly 7 vendored components exist.
   - App.tsx is the gallery with data-lost-pixel-id markers.
+
+Plan 07-04: Adds a 4-combo (has_web x has_backend) polarity test:
+  - Vite proxy block is present iff has_web=True and has_backend=True.
+  - events.ts exists iff has_web=True and has_backend=True.
+  - justfile `dev:` recipe is present in the right polarity.
+  - expose_headers in app/main.py iff has_web=True (when has_backend=True).
 
 Design notes:
   - Uses the ``render_scratch_project`` Python-API helper (not raw subprocess)
@@ -68,8 +74,8 @@ _BASE: dict[str, object] = {
 }
 
 
-def _render(tmp_path: Path, *, has_web: bool) -> Path:
-    """Render the template with a single polarity axis: has_web.
+def _render(tmp_path: Path, *, has_web: bool, has_backend: bool = False) -> Path:
+    """Render the template with polarity axes: has_web and has_backend.
 
     Passes ``_vcs_ref="HEAD"`` so Copier uses the current worktree HEAD rather
     than the latest released tag (v0.1.0). The has_web prompt was added in
@@ -80,7 +86,7 @@ def _render(tmp_path: Path, *, has_web: bool) -> Path:
     return render_scratch_project(
         tmp_path,
         _vcs_ref="HEAD",
-        **{**_BASE, "has_web": has_web},  # type: ignore[arg-type]
+        **{**_BASE, "has_web": has_web, "has_backend": has_backend},  # type: ignore[arg-type]
     )
 
 
@@ -414,4 +420,168 @@ def test_web_tailwind_shadcn_baseline(tmp_path: Path) -> None:
         "App.tsx does not import from './config' or '@/config'. "
         "PROJECT_NAME / PROJECT_DESCRIPTION must flow through config.ts.jinja2 "
         "so the Pitfall §1 single-Jinja-file firewall is not broken."
+    )
+
+
+@pytest.mark.parametrize(
+    "has_web,has_backend",
+    [
+        (False, False),
+        (False, True),
+        (True, False),
+        (True, True),
+    ],
+)
+def test_web_backend_four_combos(tmp_path: Path, has_web: bool, has_backend: bool) -> None:
+    """Plan 07-04: All 4 (has_web x has_backend) polarity combos render correctly.
+
+    Asserts the following matrix of structural properties:
+
+    | has_web | has_backend | proxy in vite.config? | events.ts? | dev: in justfile? | expose_headers in main.py? | web/ exists? |
+    |---------|-------------|----------------------|------------|-------------------|----------------------------|--------------|
+    | False   | False       | n/a                  | n/a        | No                | n/a                        | No           |
+    | False   | True        | n/a                  | n/a        | Yes (uvicorn)     | No                         | No           |
+    | True    | False       | No                   | No         | Yes (vite-only)   | n/a                        | Yes          |
+    | True    | True        | Yes                  | Yes        | Yes (mprocs)      | Yes                        | Yes          |
+
+    The build-smoke (pnpm install + tsc + build) runs only on the True/False and
+    True/True combos where has_web=True (the two has_web=False combos are cheap
+    absence-checks that return early without Node invocation).
+
+    Design: for has_web=False combos the test asserts web/ dir is absent and
+    returns early — no pnpm steps needed. This keeps total wall-clock roughly
+    equal to the 07-02/07-03 baseline (still one full build; three new combos
+    add < 5s aggregate for the absence checks).
+    """
+    scratch = _render(tmp_path, has_web=has_web, has_backend=has_backend)
+    assert scratch.is_dir(), f"scaffold root missing: {scratch}"
+
+    web_dir = scratch / "web"
+    justfile_path = scratch / "justfile"
+
+    # ── Combo-invariant: web/ directory presence ──────────────────────────────
+    if has_web:
+        assert web_dir.is_dir(), (
+            f"web/ must exist when has_web=True (combo has_web={has_web}, "
+            f"has_backend={has_backend})"
+        )
+    else:
+        assert not web_dir.exists(), (
+            f"web/ must NOT exist when has_web=False (combo has_web={has_web}, "
+            f"has_backend={has_backend})"
+        )
+        # Cheap absence combo: assert justfile dev: + early return (no pnpm needed)
+        assert justfile_path.is_file(), "justfile must always be present"
+        justfile_text = justfile_path.read_text(encoding="utf-8")
+        if has_backend:
+            # (False, True): backend-only dev recipe (uvicorn), no mprocs
+            assert "\ndev:\n" in justfile_text, (
+                "justfile must have a 'dev:' recipe when has_backend=True (uvicorn-only path)"
+            )
+            assert "mprocs" not in justfile_text, (
+                "justfile must NOT have mprocs when has_web=False (only web+backend needs it)"
+            )
+            # TRACE-04: expose_headers NOT present when has_web=False
+            main_py = scratch / "app" / "main.py"
+            assert main_py.is_file(), "app/main.py must exist when has_backend=True"
+            assert "expose_headers" not in main_py.read_text(encoding="utf-8"), (
+                "expose_headers must NOT appear in main.py when has_web=False "
+                "(TRACE-04: only added under has_web=True conditional)"
+            )
+        else:
+            # (False, False): no dev recipe at all
+            assert "\ndev:\n" not in justfile_text, (
+                "justfile must NOT have a 'dev:' recipe when has_web=False and has_backend=False"
+            )
+        return  # no Node steps needed for has_web=False combos
+
+    # ── has_web=True combos: check rendered files ─────────────────────────────
+    vite_config = web_dir / "vite.config.ts"
+    assert vite_config.is_file(), f"vite.config.ts missing at {vite_config}"
+    vite_text = vite_config.read_text(encoding="utf-8")
+
+    events_ts = web_dir / "src" / "lib" / "events.ts"
+    justfile_text = justfile_path.read_text(encoding="utf-8")
+
+    if has_backend:
+        # (True, True): proxy + events.ts + mprocs dev recipe + expose_headers
+        assert "proxy" in vite_text, (
+            "vite.config.ts must contain a proxy block when has_backend=True "
+            "(Vite dev → FastAPI :8000)"
+        )
+        assert events_ts.is_file(), (
+            "src/lib/events.ts must exist when has_web=True and has_backend=True "
+            "(SSE bypass-proxy subscriber; Pitfall §5)"
+        )
+        assert "http://localhost:8000/__debug/events" in events_ts.read_text(encoding="utf-8"), (
+            "events.ts must use absolute URL to bypass Vite proxy buffering (Pitfall §5)"
+        )
+        assert "\ndev:\n" in justfile_text, (
+            "justfile must have a 'dev:' recipe for the web+backend combo"
+        )
+        assert "mprocs" in justfile_text, (
+            "justfile dev: recipe must use mprocs for web+backend combo (D-W06)"
+        )
+        # TRACE-04: expose_headers present when has_web=True
+        main_py = scratch / "app" / "main.py"
+        assert main_py.is_file(), "app/main.py must exist when has_backend=True"
+        assert "expose_headers" in main_py.read_text(encoding="utf-8"), (
+            "expose_headers must appear in main.py when has_web=True (TRACE-04)"
+        )
+    else:
+        # (True, False): no proxy, no events.ts, vite-only dev recipe, no mprocs
+        assert "proxy" not in vite_text, (
+            "vite.config.ts must NOT contain a proxy block when has_backend=False "
+            "(frontend-only mode D-W04)"
+        )
+        assert not events_ts.exists(), (
+            "src/lib/events.ts must NOT exist when has_backend=False "
+            "(file-level Guard-1 exclude in copier.yml)"
+        )
+        assert "\ndev:\n" in justfile_text, (
+            "justfile must have a 'dev:' recipe for web-only combo (pnpm --dir web dev)"
+        )
+        assert "mprocs" not in justfile_text, (
+            "justfile must NOT have mprocs when has_web=True but has_backend=False "
+            "(mprocs only needed for parallel dev)"
+        )
+
+    # ── Build smoke: runs only for has_web=True combos ────────────────────────
+    if shutil.which("node") is None:
+        pytest.skip("Node required for build smoke")
+
+    subprocess.run(
+        ["corepack", "enable", "pnpm"],
+        cwd=str(web_dir),
+        env=_CLEAN_ENV,
+        check=False,
+    )
+
+    subprocess.run(
+        ["pnpm", "install", "--frozen-lockfile"],
+        cwd=str(web_dir),
+        env=_CLEAN_ENV,
+        check=True,
+        timeout=180,
+    )
+
+    subprocess.run(
+        ["pnpm", "exec", "tsc", "--noEmit"],
+        cwd=str(web_dir),
+        env=_CLEAN_ENV,
+        check=True,
+        timeout=60,
+    )
+
+    subprocess.run(
+        ["pnpm", "build"],
+        cwd=str(web_dir),
+        env=_CLEAN_ENV,
+        check=True,
+        timeout=120,
+    )
+
+    dist_index = web_dir / "dist" / "index.html"
+    assert dist_index.is_file(), (
+        f"pnpm build succeeded but dist/index.html is missing at {dist_index}"
     )
