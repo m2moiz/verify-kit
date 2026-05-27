@@ -1,0 +1,238 @@
+"""Unit tests for harness.web.axe_adapter.
+
+CONTRACT CONFORMANCE TEST — REVIEW-CHECKLIST §4 API-surface drift guard.
+
+Verified signatures checked here:
+  ErrorEnvelope (harness/models.py): NO "fixable" field.
+  Per-finding fixability encoded in code suffix: web.axe.<rule>.<severity>.<fixable|manual>
+  write_sarif uses hand-rolled SARIF 2.1.0 with tool.driver.name="axe-core"
+
+If this test suite fails, check:
+  1. harness/models.py ErrorEnvelope definition (must NOT add fixable field)
+  2. harness/web/axe_adapter.py FIXABLE_RULES set
+  3. The code-suffix encoding in _to_envelope()
+"""
+from __future__ import annotations
+
+import inspect
+import json
+from pathlib import Path
+
+import pytest
+
+from harness.models import ErrorEnvelope
+from harness.web.axe_adapter import FIXABLE_RULES, parse_axe_output, write_sarif
+
+# ── Fixtures ──────────────────────────────────────────────────────────────────
+
+_AXE_FIXTURE = {
+    "violations": [
+        {
+            "id": "image-alt",
+            "impact": "critical",
+            "description": "Images must have alternate text",
+            "help": "Image elements must have an alt attribute",
+            "helpUrl": "https://dequeuniversity.com/rules/axe/4.10/image-alt",
+            "nodes": [
+                {
+                    "html": '<img src="logo.png">',
+                    "target": ["img.logo"],
+                    "failureSummary": "Fix any of the following: Element does not have an alt attribute",
+                }
+            ],
+        },
+        {
+            "id": "color-contrast",
+            "impact": "moderate",
+            "description": "Elements must have sufficient color contrast",
+            "help": "Elements must have sufficient color contrast",
+            "helpUrl": "https://dequeuniversity.com/rules/axe/4.10/color-contrast",
+            "nodes": [
+                {
+                    "html": '<p class="muted">Some text</p>',
+                    "target": ["p.muted"],
+                    "failureSummary": "Fix any of the following: Element has insufficient color contrast",
+                }
+            ],
+        },
+    ]
+}
+
+_CLEAN_AXE = {"violations": []}
+
+
+# ── Regression guard: ErrorEnvelope must NOT have a "fixable" field ──────────
+
+
+def test_error_envelope_has_no_fixable_field() -> None:
+    """REVIEW-CHECKLIST §4 regression guard.
+
+    ErrorEnvelope.fixable must NEVER exist. Per-check fixability lives on
+    @register(fixable=True/False). Per-finding fixability is encoded in the
+    code suffix (web.axe.<rule>.<severity>.<fixable|manual>).
+
+    If this test fails, a future plan added `fixable: bool` to ErrorEnvelope.
+    Before adding it, re-read 07-RESEARCH.md §Producer API Surface (Frozen)
+    to understand why it was split into two mechanisms.
+    """
+    params = inspect.signature(ErrorEnvelope).parameters
+    assert "fixable" not in params, (
+        "ErrorEnvelope gained a 'fixable' field — this breaks the code-suffix "
+        "encoding contract in axe_adapter. Read 07-RESEARCH.md §Producer API "
+        "Surface (Frozen) before changing the model."
+    )
+
+
+# ── parse_axe_output tests ────────────────────────────────────────────────────
+
+
+def test_parse_axe_output_returns_two_envelopes(tmp_path: Path) -> None:
+    """Fixture with 2 violations → 2 envelopes with correct code suffixes."""
+    axe_json = tmp_path / "axe.json"
+    axe_json.write_text(json.dumps(_AXE_FIXTURE), encoding="utf-8")
+
+    envelopes = parse_axe_output(axe_json)
+
+    assert len(envelopes) == 2
+
+
+def test_parse_axe_output_fixable_rule_has_fixable_suffix(tmp_path: Path) -> None:
+    """image-alt is in FIXABLE_RULES → code suffix = .critical.fixable"""
+    axe_json = tmp_path / "axe.json"
+    axe_json.write_text(json.dumps(_AXE_FIXTURE), encoding="utf-8")
+
+    envelopes = parse_axe_output(axe_json)
+
+    image_alt_envs = [e for e in envelopes if "image-alt" in e.code]
+    assert image_alt_envs, "Expected an envelope for image-alt violation"
+    env = image_alt_envs[0]
+    assert env.code == "web.axe.image-alt.critical.fixable", (
+        f"Expected code 'web.axe.image-alt.critical.fixable', got '{env.code}'"
+    )
+
+
+def test_parse_axe_output_non_fixable_rule_has_manual_suffix(tmp_path: Path) -> None:
+    """color-contrast is NOT in FIXABLE_RULES → code suffix = .moderate.manual"""
+    axe_json = tmp_path / "axe.json"
+    axe_json.write_text(json.dumps(_AXE_FIXTURE), encoding="utf-8")
+
+    envelopes = parse_axe_output(axe_json)
+
+    contrast_envs = [e for e in envelopes if "color-contrast" in e.code]
+    assert contrast_envs, "Expected an envelope for color-contrast violation"
+    env = contrast_envs[0]
+    assert env.code == "web.axe.color-contrast.moderate.manual", (
+        f"Expected code 'web.axe.color-contrast.moderate.manual', got '{env.code}'"
+    )
+
+
+def test_parse_axe_output_docs_url(tmp_path: Path) -> None:
+    """docs_url is populated from violation helpUrl."""
+    axe_json = tmp_path / "axe.json"
+    axe_json.write_text(json.dumps(_AXE_FIXTURE), encoding="utf-8")
+
+    envelopes = parse_axe_output(axe_json)
+
+    for env in envelopes:
+        assert env.docs_url is not None and "dequeuniversity.com" in env.docs_url
+
+
+def test_parse_axe_output_empty_violations(tmp_path: Path) -> None:
+    """Empty violations list → empty envelope list (clean run)."""
+    axe_json = tmp_path / "axe.json"
+    axe_json.write_text(json.dumps(_CLEAN_AXE), encoding="utf-8")
+
+    envelopes = parse_axe_output(axe_json)
+    assert envelopes == []
+
+
+def test_parse_axe_output_missing_file(tmp_path: Path) -> None:
+    """Missing file → FileNotFoundError."""
+    axe_json = tmp_path / "nonexistent.json"
+    with pytest.raises(FileNotFoundError):
+        parse_axe_output(axe_json)
+
+
+def test_parse_axe_output_malformed_json(tmp_path: Path) -> None:
+    """Malformed JSON → json.JSONDecodeError."""
+    import json as _json
+    axe_json = tmp_path / "axe.json"
+    axe_json.write_text("{not valid json", encoding="utf-8")
+    with pytest.raises(_json.JSONDecodeError):
+        parse_axe_output(axe_json)
+
+
+def test_parse_axe_output_no_fixable_kwarg_in_envelopes(tmp_path: Path) -> None:
+    """REVIEW-CHECKLIST §4: no ErrorEnvelope(..., fixable=...) calls in adapter."""
+    axe_json = tmp_path / "axe.json"
+    axe_json.write_text(json.dumps(_AXE_FIXTURE), encoding="utf-8")
+    envelopes = parse_axe_output(axe_json)
+
+    # Verify the resulting envelopes do not have a fixable attribute
+    for env in envelopes:
+        assert not hasattr(env, "fixable"), (
+            "ErrorEnvelope instance has a 'fixable' attribute — "
+            "the model was changed. Read REVIEW-CHECKLIST §4."
+        )
+
+
+# ── write_sarif tests ─────────────────────────────────────────────────────────
+
+
+def test_write_sarif_roundtrip(tmp_path: Path) -> None:
+    """write_sarif produces valid SARIF 2.1.0 with axe-core tool name."""
+    axe_json = tmp_path / "axe.json"
+    axe_json.write_text(json.dumps(_AXE_FIXTURE), encoding="utf-8")
+    envelopes = parse_axe_output(axe_json)
+
+    sarif_path = tmp_path / "axe.sarif"
+    write_sarif(envelopes, sarif_path)
+
+    assert sarif_path.is_file(), "SARIF file not created"
+    sarif = json.loads(sarif_path.read_text(encoding="utf-8"))
+
+    assert sarif["version"] == "2.1.0", "SARIF version must be 2.1.0"
+    assert sarif["runs"][0]["tool"]["driver"]["name"] == "axe-core", (
+        "SARIF tool name must be 'axe-core' (not 'verify-kit')"
+    )
+    results = sarif["runs"][0]["results"]
+    assert len(results) == 2, f"Expected 2 SARIF results, got {len(results)}"
+
+
+def test_write_sarif_empty_envelopes(tmp_path: Path) -> None:
+    """Empty envelope list → SARIF with zero results (no error)."""
+    sarif_path = tmp_path / "axe.sarif"
+    write_sarif([], sarif_path)
+
+    assert sarif_path.is_file()
+    sarif = json.loads(sarif_path.read_text(encoding="utf-8"))
+    assert sarif["version"] == "2.1.0"
+    assert sarif["runs"][0]["results"] == []
+
+
+def test_write_sarif_creates_parent_dirs(tmp_path: Path) -> None:
+    """write_sarif creates intermediate directories if missing."""
+    sarif_path = tmp_path / "deep" / "nested" / "axe.sarif"
+    write_sarif([], sarif_path)
+    assert sarif_path.is_file()
+
+
+# ── FIXABLE_RULES membership tests ───────────────────────────────────────────
+
+
+def test_fixable_rules_known_members() -> None:
+    """Required rules from A11Y-03 are in FIXABLE_RULES."""
+    required = {
+        "image-alt",
+        "label",
+        "link-name",
+        "button-name",
+        "html-has-lang",
+    }
+    for rule in required:
+        assert rule in FIXABLE_RULES, f"Expected {rule!r} in FIXABLE_RULES (A11Y-03)"
+
+
+def test_color_contrast_not_fixable() -> None:
+    """color-contrast is manually fixable (design decision) — NOT in FIXABLE_RULES."""
+    assert "color-contrast" not in FIXABLE_RULES

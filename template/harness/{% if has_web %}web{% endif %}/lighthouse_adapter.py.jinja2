@@ -1,0 +1,195 @@
+"""harness.web.lighthouse_adapter — Parse LHCI output into ErrorEnvelope list.
+
+# Verified signatures (2026-05-27):
+#
+# ErrorEnvelope (template/harness/models.py.jinja2:40):
+#   code: str, message: str, hint: str | None, fix_command: str | None,
+#   docs_url: str | None, file: str | None, line: int | None,
+#   column: int | None, snippet: str | None
+#   NOTE: NO "fixable" field on ErrorEnvelope (REVIEW-CHECKLIST §4).
+#   Per-check fixability is declared via @register(fixable=False) in web.py.
+#
+# LHCI output structure:
+#   <lighthouse_dir>/manifest.json — array of run records.
+#   Each record has: url, isRepresentativeRun (bool), jsonPath (relative path
+#   to the lhr-*.json file for that run).
+#   The median run has isRepresentativeRun=true.
+#
+# lhr.json budget assertions: audits["performance-budget"].details.items[]
+#   Each item: {label, requestCount, size, countOverBudget, sizeOverBudget}
+#   OR the newer format from Lighthouse 12+:
+#   categories["performance"].score, audits["largest-contentful-paint"].numericValue etc.
+#   We support the budget-table format (LHCI autorun with assert.assertions).
+"""
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+from harness.models import ErrorEnvelope
+
+# Metric → web.dev URL fragment mapping
+_METRIC_DOCS: dict[str, str] = {
+    "largest-contentful-paint": "https://web.dev/lcp/",
+    "cumulative-layout-shift": "https://web.dev/cls/",
+    "interactive": "https://web.dev/tti/",
+    "total-byte-weight": "https://web.dev/total-byte-weight/",
+    "first-contentful-paint": "https://web.dev/fcp/",
+    "max-potential-fid": "https://web.dev/fid/",
+    "speed-index": "https://web.dev/speed-index/",
+    "lcp": "https://web.dev/lcp/",
+    "cls": "https://web.dev/cls/",
+    "inp": "https://web.dev/inp/",
+    "fcp": "https://web.dev/fcp/",
+    "ttfb": "https://web.dev/ttfb/",
+}
+
+_BUDGET_HINT = (
+    "Run pnpm build && pnpm exec vite-bundle-visualizer to identify largest chunks. "
+    "Consider code-splitting large dependencies."
+)
+
+
+def _short_metric(key: str) -> str:
+    """Return a terse metric abbreviation for the envelope code."""
+    # Normalize: "largest-contentful-paint" → "lcp", "total-byte-weight" → "total-byte-weight"
+    _MAP = {
+        "largest-contentful-paint": "lcp",
+        "cumulative-layout-shift": "cls",
+        "interactive": "tti",
+        "max-potential-fid": "fid",
+        "first-contentful-paint": "fcp",
+        "speed-index": "speed-index",
+        "total-byte-weight": "total-byte-weight",
+    }
+    return _MAP.get(key, key)
+
+
+def _parse_lhr_budget_failures(lhr: dict) -> list[ErrorEnvelope]:
+    """Parse Lighthouse report JSON for budget assertion failures.
+
+    Supports the LHCI performance-budget audit format where failed budgets
+    appear in audits["performance-budget"].details.items.
+
+    Also parses direct audit numeric values for the metrics in lighthouserc.json
+    (LCP, CLS, INP, total-byte-weight) by comparing against known thresholds
+    embedded in the audit displayValue.
+    """
+    envelopes: list[ErrorEnvelope] = []
+    audits: dict = lhr.get("audits", {})
+
+    # Path 1: performance-budget audit (LHCI assert.assertions table format)
+    perf_budget = audits.get("performance-budget", {})
+    details = perf_budget.get("details", {})
+    items: list[dict] = details.get("items", [])
+
+    for item in items:
+        label: str = item.get("label", "unknown")
+        size_over = item.get("sizeOverBudget")
+        count_over = item.get("countOverBudget")
+
+        if size_over is not None and size_over > 0:
+            metric_key = _short_metric(label)
+            envelopes.append(ErrorEnvelope(
+                code=f"web.lighthouse.budget.{metric_key}",
+                message=(
+                    f"{label} exceeds size budget by "
+                    f"{size_over / 1024:.1f}KB"
+                ),
+                hint=_BUDGET_HINT,
+                fix_command=None,
+                docs_url=_METRIC_DOCS.get(label, f"https://web.dev/{metric_key}/"),
+            ))
+        elif count_over is not None and count_over > 0:
+            metric_key = _short_metric(label)
+            envelopes.append(ErrorEnvelope(
+                code=f"web.lighthouse.budget.{metric_key}.count",
+                message=f"{label} exceeds request count budget by {count_over}",
+                hint=_BUDGET_HINT,
+                fix_command=None,
+                docs_url=_METRIC_DOCS.get(label, f"https://web.dev/{metric_key}/"),
+            ))
+
+    # Path 2: direct numeric metric audits (for LCP, CLS, TTI budget assertions)
+    # These appear in audits when LHCI assert.assertions is used with maxNumericValue.
+    # We parse any audit that has score < 1.0 and a numericValue (performance category).
+    category_perf = lhr.get("categories", {}).get("performance", {})
+    audit_refs: list[dict] = category_perf.get("auditRefs", [])
+
+    # Only inspect audits that are relevant to our lighthouserc.json budget
+    _BUDGET_AUDITS = {
+        "largest-contentful-paint",
+        "cumulative-layout-shift",
+        "interactive",
+        "total-byte-weight",
+    }
+
+    for ref in audit_refs:
+        audit_id: str = ref.get("id", "")
+        if audit_id not in _BUDGET_AUDITS:
+            continue
+        audit = audits.get(audit_id, {})
+        score = audit.get("score")
+        numeric_value = audit.get("numericValue")
+        display_value = audit.get("displayValue", "")
+
+        # score < 0.5 = "fail" tier in Lighthouse scoring; skip None (informational)
+        if score is not None and score < 0.5 and numeric_value is not None:
+            metric_key = _short_metric(audit_id)
+            envelopes.append(ErrorEnvelope(
+                code=f"web.lighthouse.budget.{metric_key}",
+                message=(
+                    f"{audit_id} score {score:.2f} (value: {display_value or numeric_value})"
+                ),
+                hint=_BUDGET_HINT,
+                fix_command=None,
+                docs_url=_METRIC_DOCS.get(audit_id, f"https://web.dev/{metric_key}/"),
+            ))
+
+    return envelopes
+
+
+def parse_lighthouse_output(lighthouse_dir: Path) -> list[ErrorEnvelope]:
+    """Read LHCI manifest.json, find median run, parse budget failures.
+
+    Args:
+        lighthouse_dir: Path to the LHCI output directory containing
+            manifest.json (e.g. .verify/web/lighthouse/).
+
+    Returns:
+        List of ErrorEnvelope for each budget failure in the median run.
+        Returns empty list on a clean run or if the directory does not exist.
+
+    Raises:
+        FileNotFoundError: if manifest.json is missing.
+        json.JSONDecodeError: if manifest.json is malformed.
+    """
+    manifest_path = lighthouse_dir / "manifest.json"
+    manifest: list[dict] = json.loads(manifest_path.read_text(encoding="utf-8"))
+
+    if not manifest:
+        return []
+
+    # Find the representative (median) run — isRepresentativeRun=true
+    median_run: dict | None = None
+    for run in manifest:
+        if run.get("isRepresentativeRun"):
+            median_run = run
+            break
+
+    # Fallback: use the last run if no median is flagged (LHCI sometimes omits this
+    # when there is only one run, e.g. during testing)
+    if median_run is None:
+        median_run = manifest[-1]
+
+    # Resolve the lhr JSON path (may be absolute or relative to manifest_path.parent)
+    json_path_str: str = median_run.get("jsonPath", "")
+    lhr_path = Path(json_path_str)
+    if not lhr_path.is_absolute():
+        lhr_path = lighthouse_dir / json_path_str
+
+    lhr: dict = json.loads(lhr_path.read_text(encoding="utf-8"))
+    return _parse_lhr_budget_failures(lhr)
+
+
+__all__ = ["parse_lighthouse_output"]

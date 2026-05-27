@@ -732,3 +732,108 @@ def test_web_vitest_and_playwright(tmp_path: Path) -> None:
         check=True,
         timeout=120,
     )
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="Node required")
+def test_web_harness_registry_smoke(tmp_path: Path) -> None:
+    """Plan 07-06: registry smoke + adapter contract guards in scratch scaffold.
+
+    Assertions:
+      1. Registry smoke: python -c 'from harness.registry import list_checks;...'
+         returns all 5 web.* check IDs.
+      2. scaffold pytest tests/web/ passes (4 adapter + registry tests).
+      3. Forbidden-kwarg guard: web.py has zero severity=/tags=/readOnlyHint= etc.
+      4. ErrorEnvelope(fixable=) guard: no adapters pass fixable= to ErrorEnvelope.
+
+    Uses (has_web=True, has_backend=False) scratch scaffold — cheapest combo
+    that exercises the full harness.web subpackage.
+    """
+    scratch = _render(tmp_path, has_web=True)
+    assert scratch.is_dir(), f"scaffold root missing: {scratch}"
+
+    web_dir = scratch / "web"
+    assert web_dir.is_dir(), "web/ dir must exist for has_web=True"
+
+    # --- pnpm install for later runtime checks ---
+    subprocess.run(
+        ["corepack", "enable", "pnpm"],
+        cwd=str(web_dir),
+        env=_CLEAN_ENV,
+        check=False,
+    )
+    subprocess.run(
+        ["pnpm", "install", "--frozen-lockfile"],
+        cwd=str(web_dir),
+        env=_CLEAN_ENV,
+        check=True,
+        timeout=180,
+    )
+
+    # --- Assertion 1: Registry smoke ----------------------------------------
+    registry_check = subprocess.run(
+        [
+            "python", "-c",
+            (
+                "from harness.registry import list_checks; "
+                "ids = sorted(c.check_id for c in list_checks()); "
+                "expected = ['web.axe', 'web.lighthouse', 'web.lost_pixel', "
+                "            'web.playwright', 'web.vitest']; "
+                "missing = [x for x in expected if x not in ids]; "
+                "assert not missing, f'Missing web checks: {missing}'"
+            ),
+        ],
+        cwd=str(scratch),
+        env=_CLEAN_ENV,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert registry_check.returncode == 0, (
+        f"Registry smoke failed (exit {registry_check.returncode}).\n"
+        f"stdout: {registry_check.stdout}\nstderr: {registry_check.stderr}"
+    )
+
+    # --- Assertion 2: Scaffold pytest tests/web/ ----------------------------
+    pytest_result = subprocess.run(
+        ["uv", "run", "pytest", "tests/web/", "-q", "--tb=short"],
+        cwd=str(scratch),
+        env=_CLEAN_ENV,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert pytest_result.returncode == 0, (
+        f"scaffold pytest tests/web/ failed (exit {pytest_result.returncode}).\n"
+        f"stdout: {pytest_result.stdout[-3000:]}\nstderr: {pytest_result.stderr[-1000:]}"
+    )
+
+    # --- Assertion 3: Forbidden-kwarg guard on web.py -----------------------
+    web_py = scratch / "harness" / "checks" / "web.py"
+    assert web_py.is_file(), f"harness/checks/web.py not found in scaffold at {web_py}"
+    web_py_text = web_py.read_text(encoding="utf-8")
+
+    forbidden_kwargs = ["severity=", "tags=", "readOnlyHint=", "destructiveHint=", "destructive="]
+    for kw in forbidden_kwargs:
+        # Check only within actual @register call blocks (not docstring comments)
+        register_calls = re.findall(r"@register\((.*?)\)", web_py_text, re.DOTALL)
+        for call_body in register_calls:
+            assert kw not in call_body, (
+                f"Forbidden kwarg '{kw}' found in a @register() call in "
+                f"harness/checks/web.py. REVIEW-CHECKLIST §4 / FROZEN API surface. "
+                f"Call body: {call_body[:80]!r}"
+            )
+
+    # --- Assertion 4: ErrorEnvelope(fixable=) guard on all adapters ---------
+    adapter_dir = scratch / "harness" / "web"
+    assert adapter_dir.is_dir(), f"harness/web/ not found in scaffold at {adapter_dir}"
+
+    for adapter_file in adapter_dir.glob("*.py"):
+        if adapter_file.name.startswith("_") and adapter_file.name != "_env.py":
+            continue
+        source = adapter_file.read_text(encoding="utf-8")
+        match = re.search(r"ErrorEnvelope\([^)]*fixable", source)
+        assert match is None, (
+            f"Found ErrorEnvelope(...fixable=...) in {adapter_file.name} at "
+            f"char {match.start()} — REVIEW-CHECKLIST §4 violation. "
+            "Per-check fixability lives on @register(fixable=...) only."
+        )
