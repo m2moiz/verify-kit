@@ -106,6 +106,9 @@ verify-kit = "harness.cli:app_entry"
 {% if has_backend %}
 app-cli = "app.cli:main"
 {% endif %}
+{% if has_web %}
+lost-pixel-approve = "harness.web.lostpixel_adapter:main"
+{% endif %}
 
 [tool.hatch.build.targets.wheel]
 packages = ["harness"{% if has_backend %}, "app"{% endif %}]
