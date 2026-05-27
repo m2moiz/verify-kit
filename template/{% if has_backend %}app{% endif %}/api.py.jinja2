@@ -59,6 +59,28 @@ async def events_stream() -> EventSourceResponse:
             yield {"event": "tick", "data": str(i)}
 
     return EventSourceResponse(gen())
+
+
+@router.get("/trace-demo")
+async def trace_demo(request: Request):
+    """Demonstrate the OTel distributed trace waterfall.
+
+    Performs a real DB query when has_db=true so SQLAlchemyInstrumentor emits a
+    child DB span (producing the full browser → FastAPI → DB waterfall). Degrades
+    gracefully when has_db=false. The engine/sessionmaker live on app.state (set in
+    lifespan) — this route never constructs its own engine.
+    """
+{% if has_db %}
+    from sqlalchemy import text
+
+    sessionmaker = request.app.state.sessionmaker
+    async with sessionmaker() as session:
+        result = await session.execute(text("SELECT 1"))
+        row = result.scalar()
+    return {"db": True, "result": row}
+{% else %}
+    return {"db": False}
+{% endif %}
 {% if has_llm %}
 
 
