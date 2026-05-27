@@ -1,0 +1,26 @@
+{
+  "name": "{{ project_name | lower | replace(' ', '-') }}-web",
+  "version": "0.1.0",
+  "description": "{{ project_description }} (web frontend)",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@9.15.0",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview --port 4173",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "@vitejs/plugin-react": "^4.3.0",
+    "typescript": "~5.7.0",
+    "vite": "^7.1.0"
+  }
+}
