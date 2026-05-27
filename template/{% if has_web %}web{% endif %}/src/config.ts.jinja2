@@ -5,4 +5,4 @@
 export const PROJECT_NAME = "{{ project_name }}";
 export const PROJECT_DESCRIPTION = "{{ project_description }}";
 export const HAS_BACKEND = {{ has_backend | string | lower }};
-export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "";
+export const API_BASE_URL = {% if has_backend %}""{% else %}(import.meta.env.VITE_API_BASE_URL ?? ""){% endif %};

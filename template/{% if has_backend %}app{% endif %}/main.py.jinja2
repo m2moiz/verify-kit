@@ -6,6 +6,9 @@ from pathlib import Path
 import secure
 from asgi_correlation_id import CorrelationIdMiddleware
 from fastapi import Depends, FastAPI, Request
+{% if has_web %}
+from fastapi.middleware.cors import CORSMiddleware
+{% endif %}
 from fastapi.responses import HTMLResponse
 
 from app.api import router as api_router
@@ -129,6 +132,24 @@ def create_app(cwd: Path | None = None) -> FastAPI:
         generator=lambda: str(_uuid.uuid4()),
         validator=None,  # accept any inbound value verbatim
     )
+
+{% if has_web %}
+    # 4a. CORSMiddleware — registered only when has_web=true (TRACE-04).
+    #     Allows browser JS on :5173 to reach the FastAPI server on :8000.
+    #     Expose trace + request-id headers so browser code can read them
+    #     for client-side trace continuation (plan 07-05 fixture).
+    #     Registered AFTER CorrelationIdMiddleware (outer), BEFORE secure
+    #     (outermost), so CORS preflight responses still carry OWASP headers.
+    _cors_settings = load_settings(cwd)
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=_cors_settings.cors_allow_origins,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+        expose_headers=["traceparent", "X-Request-ID"],
+    )
+{% endif %}
 
     # 4. secure OWASP headers — registered LAST so it ends up OUTERMOST and
     #    wraps every response including error responses surfaced by inner
