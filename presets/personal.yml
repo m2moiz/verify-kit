@@ -1,0 +1,38 @@
+# Personal preset TEMPLATE — copy to `presets/personal.local.yml` (gitignored)
+# and fill in real values. Invocation:
+#   copier copy --data-file presets/personal.local.yml gh:m2moiz/verify-kit my-app
+#
+# D-W11: Two-file convention — this file (PII-free placeholder, public) vs
+# personal.local.yml (real values, gitignored). See presets/README.md.
+#
+# D-W13: _schema_version is checked by CI workflow preset-schema-check.yml.
+# Update this value whenever copier.yml gains new prompts.
+_schema_version: "0.2"
+
+# ── Identity ──────────────────────────────────────────────────────────────────
+project_name: "Your Project Name"
+project_description: "One-sentence description of what this project does."
+author_name: "Your Name Here"
+author_email: "you@example.com"
+license: "MIT"
+
+# ── Agent integrations ────────────────────────────────────────────────────────
+# Set to true for tools you use daily; copier auto-detects from ~/.cursor/ etc.
+has_claude_code: false
+has_cursor: false
+has_windsurf: false
+has_copilot: false
+has_zed: false
+has_continue: false
+
+# ── Add-ons ───────────────────────────────────────────────────────────────────
+has_backend: false
+has_llm: false
+has_logfire: false
+has_fastapi_mcp: false
+has_db: false
+has_web: false
+llm_backend: "langfuse-cloud"
+
+# ── Optional ──────────────────────────────────────────────────────────────────
+has_devcontainer: false
