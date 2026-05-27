@@ -1,8 +1,459 @@
 """harness.checks.web — web add-on verifier registrations.
 
-This module is populated by Plan 07-06 with @register entries for
-web.vitest, web.playwright, web.lighthouse, web.axe, web.lost_pixel.
-Plan 07-01 ships only this placeholder so the import in
-harness/checks/__init__.py.jinja2 succeeds when has_web=true.
+Five checks: web.vitest, web.playwright, web.lighthouse, web.axe, web.lost_pixel.
+
+FROZEN API contract: @register kwargs are `tier, category, description, inputs,
+fixable, tool, skip_if_unavailable`. NO `severity=`, NO `tags=`, NO MCP-level
+hint kwargs. ErrorEnvelope has NO `fixable` field — fixability lives on the
+@register decorator (per-check) and is encoded in the envelope `code` suffix
+(per-finding). See 07-RESEARCH.md §Producer API Surface (Frozen).
+
+Verified signatures (2026-05-27):
+  @register (template/harness/registry.py.jinja2:20):
+    def register(check_id, *, tier, category, description, inputs,
+                 fixable, tool, skip_if_unavailable) -> Callable
+  CheckStatus = Literal["pass", "fail", "skip"]  — NO "warning" variant
+  CheckResult.error: ErrorEnvelope | None  — single envelope; multi-finding
+    detail is in per-check SARIF files (e.g. .verify/web/axe.sarif)
+  proc.run (template/harness/proc.py.jinja2:32):
+    def run(args, *, cwd, capture_output, text, timeout, check, env)
+    DEFAULT_TIMEOUT_S = 60.0
+
+Subprocess discipline (every web check):
+  - cwd=cwd / "web"  (pnpm exec resolves node_modules/.bin against CWD)
+  - env=clean_env()  (strips VIRTUAL_ENV, PYTHONPATH, NODE_*, PNPM_HOME, NVM_*)
+  Per 07-RESEARCH.md §proc.run discipline + threat T-07-24.
 """
 from __future__ import annotations
+
+import shutil
+import time
+from pathlib import Path
+
+from harness.models import CheckResult, CheckStatus, ErrorEnvelope
+from harness.proc import run as proc_run
+from harness.registry import register
+from harness.web._env import clean_env
+from harness.web.axe_adapter import parse_axe_output, write_sarif
+from harness.web.lighthouse_adapter import parse_lighthouse_output
+from harness.web.lostpixel_adapter import parse_lostpixel_output
+
+# Docker image pinned for Lost Pixel (D-W02 — prevents cross-platform font drift)
+_DOCKER_IMAGE = "mcr.microsoft.com/playwright:v1.60.0-jammy"
+
+
+# ── web.vitest ────────────────────────────────────────────────────────────────
+
+
+@register(
+    "web.vitest",
+    tier="standard",
+    category="test",
+    description="Vitest unit + component tests for web/",
+    inputs=["web/**/*.ts", "web/**/*.tsx", "web/package.json"],
+    fixable=False,
+    tool="vitest",
+)
+def check_web_vitest(cwd: Path) -> CheckResult:
+    """Run vitest in the web/ directory.
+
+    Timeout: 120s — enough for cold happy-dom startup + component renders.
+    Uses proc_run with cwd=cwd/"web" and clean_env() per subprocess discipline.
+    """
+    t0 = time.monotonic()
+    result = proc_run(
+        ["pnpm", "exec", "vitest", "run", "--reporter=default"],
+        cwd=cwd / "web",
+        env=clean_env(),
+        timeout=120.0,
+    )
+    duration_ms = int((time.monotonic() - t0) * 1000)
+
+    status: CheckStatus = "pass" if result.returncode == 0 else "fail"
+    err: ErrorEnvelope | None = None
+    if status == "fail":
+        err = ErrorEnvelope(
+            code="web.vitest.failed",
+            message=f"vitest exited {result.returncode}",
+            hint="Inspect vitest output above; run `cd web && pnpm exec vitest` to iterate",
+            fix_command="cd web && pnpm exec vitest",
+            docs_url="https://vitest.dev/guide/",
+        )
+    return CheckResult(
+        check_id="web.vitest",
+        status=status,
+        duration_ms=duration_ms,
+        error=err,
+    )
+
+
+# ── web.playwright ────────────────────────────────────────────────────────────
+
+
+@register(
+    "web.playwright",
+    tier="standard",
+    category="test",
+    description="Playwright E2E smoke for web/",
+    inputs=["web/tests/e2e/**", "web/playwright.config.ts"],
+    fixable=False,
+    tool="playwright",
+    skip_if_unavailable=True,  # Chromium download may not be present locally
+)
+def check_web_playwright(cwd: Path) -> CheckResult:
+    """Run Playwright smoke suite against `vite preview`.
+
+    Timeout: 180s — Playwright starts vite preview as webServer per playwright.config.ts;
+    allow 3 minutes for cold Chromium startup + test execution.
+
+    The playwright.config.ts.jinja2 (07-05) configures webServer with vite preview
+    so the check correctly runs against a production build (not vite dev).
+    """
+    t0 = time.monotonic()
+
+    # Ensure Chromium is installed (idempotent; cached after first install)
+    install_result = proc_run(
+        ["pnpm", "exec", "playwright", "install", "--with-deps", "chromium"],
+        cwd=cwd / "web",
+        env=clean_env(),
+        timeout=300.0,
+    )
+    if install_result.returncode != 0:
+        duration_ms = int((time.monotonic() - t0) * 1000)
+        return CheckResult(
+            check_id="web.playwright",
+            status="skip",
+            message="Playwright Chromium install failed — skipping E2E (run `cd web && pnpm exec playwright install chromium`)",
+            duration_ms=duration_ms,
+        )
+
+    result = proc_run(
+        ["pnpm", "exec", "playwright", "test"],
+        cwd=cwd / "web",
+        env={**clean_env(), "CI": "1"},  # CI=1 → single worker
+        timeout=180.0,
+    )
+    duration_ms = int((time.monotonic() - t0) * 1000)
+
+    status: CheckStatus = "pass" if result.returncode == 0 else "fail"
+    err: ErrorEnvelope | None = None
+    if status == "fail":
+        err = ErrorEnvelope(
+            code="web.playwright.failed",
+            message=f"Playwright exited {result.returncode}",
+            hint="Run `cd web && pnpm exec playwright test --reporter=list` for details",
+            fix_command="cd web && pnpm exec playwright test",
+            docs_url="https://playwright.dev/docs/running-tests",
+        )
+    return CheckResult(
+        check_id="web.playwright",
+        status=status,
+        duration_ms=duration_ms,
+        error=err,
+    )
+
+
+# ── web.lighthouse ────────────────────────────────────────────────────────────
+
+
+@register(
+    "web.lighthouse",
+    tier="slow",
+    category="perf",
+    description="Lighthouse CI median-of-5 budgets (LCP/CLS/INP)",
+    inputs=["web/dist/**", "web/lighthouserc.json"],
+    fixable=False,
+    tool="lhci",
+    skip_if_unavailable=True,
+)
+def check_web_lighthouse(cwd: Path) -> CheckResult:
+    """Run LHCI autorun and parse budget failures.
+
+    PERF-04 GUARD: HEAD-request the target URL; reject with
+    code='lighthouse.target.invalid' if HMR markers are detected
+    (i.e. running against vite dev instead of vite preview).
+
+    Timeout: 300s — 5 Lighthouse runs can hit 90s total; LHCI is tagged
+    tier="slow" so it is excluded from `just verify` by default.
+    """
+    import urllib.request
+    import urllib.error
+
+    t0 = time.monotonic()
+    target_url = "http://localhost:4173/"
+
+    # PERF-04: precondition — refuse if target looks like vite dev (HMR markers)
+    try:
+        req = urllib.request.Request(target_url, method="HEAD")
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            server_hdr = resp.headers.get("Server", "")
+            etag_hdr = resp.headers.get("ETag", "")
+            if "Vite" in server_hdr or "vite" in etag_hdr.lower():
+                duration_ms = int((time.monotonic() - t0) * 1000)
+                return CheckResult(
+                    check_id="web.lighthouse",
+                    status="fail",
+                    duration_ms=duration_ms,
+                    error=ErrorEnvelope(
+                        code="lighthouse.target.invalid",
+                        message=(
+                            f"Lighthouse target {target_url} appears to be vite dev "
+                            "(HMR markers detected in response headers). "
+                            "Lighthouse MUST run against `vite preview` (PERF-04)."
+                        ),
+                        hint="Run `pnpm build && pnpm exec vite preview --port 4173` first",
+                        fix_command="cd web && pnpm build && pnpm exec vite preview --port 4173",
+                        docs_url="https://web.dev/performance/",
+                    ),
+                )
+    except urllib.error.URLError:
+        # Server not running — LHCI will start it via lighthouserc.json startServerCommand
+        pass
+
+    result = proc_run(
+        ["pnpm", "exec", "lhci", "autorun"],
+        cwd=cwd / "web",
+        env=clean_env(),
+        timeout=300.0,
+    )
+    duration_ms = int((time.monotonic() - t0) * 1000)
+
+    if result.returncode != 0:
+        return CheckResult(
+            check_id="web.lighthouse",
+            status="fail",
+            duration_ms=duration_ms,
+            error=ErrorEnvelope(
+                code="web.lighthouse.run.failed",
+                message=f"lhci autorun exited {result.returncode}",
+                hint="Check web/lighthouserc.json assertions and run `cd web && pnpm exec lhci autorun`",
+                fix_command="cd web && pnpm exec lhci autorun",
+                docs_url="https://github.com/GoogleChrome/lighthouse-ci/blob/main/docs/getting-started.md",
+            ),
+        )
+
+    # Parse budget failures from LHCI output dir
+    lighthouse_dir = cwd / ".verify" / "web" / "lighthouse"
+    try:
+        envelopes = parse_lighthouse_output(lighthouse_dir)
+    except (FileNotFoundError, Exception):
+        envelopes = []
+
+    if envelopes:
+        return CheckResult(
+            check_id="web.lighthouse",
+            status="fail",
+            duration_ms=duration_ms,
+            error=envelopes[0],  # first failure; full list in LHCI report
+        )
+
+    return CheckResult(
+        check_id="web.lighthouse",
+        status="pass",
+        duration_ms=duration_ms,
+    )
+
+
+# ── web.axe ───────────────────────────────────────────────────────────────────
+
+
+@register(
+    "web.axe",
+    tier="standard",
+    category="a11y",
+    description="axe-core WCAG 2.1 AA scan against vite preview",
+    inputs=["web/dist/**", "web/tests/e2e/axe.spec.ts"],
+    fixable=True,
+    tool="axe",
+)
+def check_web_axe(cwd: Path) -> CheckResult:
+    """Run axe.spec.ts via Playwright; parse output + emit per-check SARIF.
+
+    The spec writes raw axe JSON to .verify/web/axe.json (both light and
+    dark mode violations per A11Y-04). This function then:
+      1. Parses the JSON via parse_axe_output()
+      2. Writes .verify/web/axe.sarif via write_sarif() (per-check SARIF only)
+         NOTE: v0.2 emits per-check SARIF; cross-check SARIF merge into
+         .verify/report.sarif is deferred to bead verify-kit-7xm (v0.3).
+      3. Returns CheckResult with first envelope on .error
+
+    Timeout: 120s — Playwright + Chromium startup + axe analysis.
+    """
+    t0 = time.monotonic()
+
+    # Ensure Chromium is available
+    install_result = proc_run(
+        ["pnpm", "exec", "playwright", "install", "--with-deps", "chromium"],
+        cwd=cwd / "web",
+        env=clean_env(),
+        timeout=300.0,
+    )
+    if install_result.returncode != 0:
+        duration_ms = int((time.monotonic() - t0) * 1000)
+        return CheckResult(
+            check_id="web.axe",
+            status="skip",
+            message="Playwright Chromium not available; axe scan skipped",
+            duration_ms=duration_ms,
+        )
+
+    # Run axe.spec.ts — writes .verify/web/axe.json
+    result = proc_run(
+        ["pnpm", "exec", "playwright", "test", "axe.spec.ts"],
+        cwd=cwd / "web",
+        env={**clean_env(), "CI": "1"},
+        timeout=120.0,
+    )
+    duration_ms = int((time.monotonic() - t0) * 1000)
+
+    axe_output = cwd / ".verify" / "web" / "axe.json"
+    axe_sarif = cwd / ".verify" / "web" / "axe.sarif"
+
+    # Parse axe output (even if spec "fails" — spec failing means violations found)
+    try:
+        envelopes = parse_axe_output(axe_output)
+    except FileNotFoundError:
+        if result.returncode != 0:
+            return CheckResult(
+                check_id="web.axe",
+                status="fail",
+                duration_ms=duration_ms,
+                error=ErrorEnvelope(
+                    code="web.axe.run.failed",
+                    message=f"axe.spec.ts exited {result.returncode} and produced no output",
+                    hint="Run `cd web && pnpm exec playwright test axe.spec.ts` to debug",
+                    fix_command="cd web && pnpm exec playwright test axe.spec.ts",
+                    docs_url="https://www.deque.com/axe/",
+                ),
+            )
+        return CheckResult(check_id="web.axe", status="pass", duration_ms=duration_ms)
+
+    # Write per-check SARIF (regardless of pass/fail — enables IDE integration)
+    write_sarif(envelopes, axe_sarif)
+
+    if envelopes:
+        return CheckResult(
+            check_id="web.axe",
+            status="fail",
+            duration_ms=duration_ms,
+            error=envelopes[0],  # first finding; full detail in axe.sarif
+        )
+
+    return CheckResult(check_id="web.axe", status="pass", duration_ms=duration_ms)
+
+
+# ── web.lost_pixel ────────────────────────────────────────────────────────────
+
+
+@register(
+    "web.lost_pixel",
+    tier="slow",
+    category="visual",
+    description=(
+        "Lost Pixel visual regression "
+        "(Docker-pinned mcr.microsoft.com/playwright:v1.60.0-jammy per D-W02)"
+    ),
+    inputs=["web/.lost-pixel/baseline/**", "web/lost-pixel.config.ts"],
+    fixable=True,
+    tool="lost-pixel",
+    skip_if_unavailable=True,
+)
+def check_web_lost_pixel(cwd: Path) -> CheckResult:
+    """Run Lost Pixel visual regression inside Docker.
+
+    D-W02: runs inside mcr.microsoft.com/playwright:v1.60.0-jammy (pinned tag)
+    to prevent cross-platform font drift in baselines.
+
+    If Docker is unavailable, returns status="fail" (CheckStatus has no
+    "warning" variant — verified models.py.jinja2:23).
+
+    D-W03: the `git add` approval verb flows through ErrorEnvelope.fix_command
+    for each diff, surfaced via the existing zero-arg MCP fix_propose() tool
+    (verified tools.py.jinja2:144).
+
+    Timeout: 300s — Docker image pull + Lost Pixel comparison across snapshots.
+    """
+    import os
+
+    t0 = time.monotonic()
+
+    # Detect Docker availability
+    inside_docker = Path("/.dockerenv").exists()
+    docker_binary = shutil.which("docker")
+    docker_env_set = bool(os.environ.get("DOCKER_HOST"))
+
+    if not inside_docker and not docker_binary and not docker_env_set:
+        duration_ms = int((time.monotonic() - t0) * 1000)
+        return CheckResult(
+            check_id="web.lost_pixel",
+            status="fail",  # no "warning" in CheckStatus (models.py.jinja2:23)
+            duration_ms=duration_ms,
+            error=ErrorEnvelope(
+                code="web.lost_pixel.docker_unavailable",
+                message=(
+                    "Lost Pixel requires Docker to run consistently across platforms "
+                    "(D-W02: pinned to mcr.microsoft.com/playwright:v1.60.0-jammy). "
+                    "Docker daemon not found."
+                ),
+                hint="Start Docker Desktop and re-run, or use `just web-baseline` to run in Docker",
+                fix_command="just web-baseline",
+                docs_url="https://lost-pixel.com/docs",
+            ),
+        )
+
+    if inside_docker:
+        # Already inside the pinned image — run Lost Pixel directly
+        result = proc_run(
+            ["pnpm", "exec", "lost-pixel"],
+            cwd=cwd / "web",
+            env=clean_env(),
+            timeout=300.0,
+        )
+    else:
+        # Outside Docker — mount cwd/web into the container and run
+        result = proc_run(
+            [
+                "docker", "run", "--rm",
+                "-v", f"{cwd}/web:/work",
+                "-w", "/work",
+                _DOCKER_IMAGE,
+                "pnpm", "exec", "lost-pixel",
+            ],
+            env=clean_env(),
+            timeout=300.0,
+        )
+
+    duration_ms = int((time.monotonic() - t0) * 1000)
+
+    if result.returncode not in (0, 1):
+        # Non-0/1 exit = Lost Pixel itself crashed (not just diffs found)
+        return CheckResult(
+            check_id="web.lost_pixel",
+            status="fail",
+            duration_ms=duration_ms,
+            error=ErrorEnvelope(
+                code="web.lost_pixel.run.failed",
+                message=f"lost-pixel exited {result.returncode} (unexpected crash)",
+                hint="Run `just web-baseline` to debug inside Docker",
+                fix_command="just web-baseline",
+                docs_url="https://lost-pixel.com/docs",
+            ),
+        )
+
+    # Parse diff output
+    lostpixel_dir = cwd / "web" / ".lost-pixel"
+    envelopes = parse_lostpixel_output(lostpixel_dir)
+
+    if envelopes:
+        return CheckResult(
+            check_id="web.lost_pixel",
+            status="fail",
+            duration_ms=duration_ms,
+            error=envelopes[0],  # first diff; D-W03 git add in fix_command
+        )
+
+    return CheckResult(
+        check_id="web.lost_pixel",
+        status="pass",
+        duration_ms=duration_ms,
+    )

@@ -1,0 +1,23 @@
+{
+  "ci": {
+    "collect": {
+      "numberOfRuns": 5,
+      "startServerCommand": "pnpm exec vite preview --port 4173",
+      "startServerReadyPattern": "Local.*4173",
+      "startServerReadyTimeout": 30000,
+      "url": ["http://localhost:4173/"]
+    },
+    "upload": {
+      "target": "filesystem",
+      "outputDir": "./.verify/web/lighthouse"
+    },
+    "assert": {
+      "assertions": {
+        "largest-contentful-paint": ["error", { "maxNumericValue": 2500 }],
+        "cumulative-layout-shift": ["error", { "maxNumericValue": 0.1 }],
+        "interactive": ["warn", { "maxNumericValue": 3500 }],
+        "total-byte-weight": ["error", { "maxNumericValue": 512000 }]
+      }
+    }
+  }
+}

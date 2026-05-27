@@ -13,7 +13,11 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
-    "test:e2e:install": "playwright install --with-deps chromium"
+    "test:e2e:axe": "playwright test axe.spec.ts",
+    "test:e2e:install": "playwright install --with-deps chromium",
+    "test:a11y": "playwright test axe.spec.ts",
+    "lighthouse": "lhci autorun",
+    "visual": "lost-pixel"
   },
   "dependencies": {
     "class-variance-authority": "^0.7.1",
@@ -27,7 +31,10 @@
     "tailwind-merge": "^3.6.0"
   },
   "devDependencies": {
+    "@axe-core/playwright": "^4.11.3",
+    "@lhci/cli": "^0.15.1",
     "@playwright/test": "^1.60.0",
+    "lost-pixel": "^3.22.0",
     "@tailwindcss/vite": "^4.3.0",
     "@testing-library/jest-dom": "^6.6.0",
     "@testing-library/react": "^16.1.0",
