@@ -359,7 +359,7 @@ def check_web_axe(cwd: Path) -> CheckResult:
         "Lost Pixel visual regression "
         "(Docker-pinned mcr.microsoft.com/playwright:v1.60.0-jammy per D-W02)"
     ),
-    inputs=["web/.lost-pixel/baseline/**", "web/lost-pixel.config.ts"],
+    inputs=["web/.lost-pixel/baseline/**", "web/lostpixel.config.cjs"],
     fixable=True,
     tool="lost-pixel",
     skip_if_unavailable=True,

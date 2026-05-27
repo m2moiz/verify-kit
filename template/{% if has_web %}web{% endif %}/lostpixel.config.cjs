@@ -14,17 +14,21 @@
  * Threshold: 0.01 (1% pixel diff) — tunable per project needs.
  *
  * OSS mode: lostPixelProjectId is undefined (no SaaS account required).
+ *
+ * CJS format: avoids esbuild TS-config loader path entirely (verify-kit-c7k).
+ * Filename lostpixel.config (no hyphen): required by Lost Pixel v3.22 loader
+ * (config.js:552 hardcodes this basename — verify-kit-4as).
  */
 
-import type { CustomProjectConfig } from "lost-pixel";
-
-export const config: CustomProjectConfig = {
+module.exports = {
   // ── Snapshot targets ────────────────────────────────────────────────────────
   // Full-page snapshot of the gallery root (/) covers all 7 vendored sections.
   // Per-component snapshots via data-lost-pixel-id selectors available in v0.2.x.
   pageShots: {
     pages: [{ path: "/", name: "gallery-full" }],
-    baseUrl: "http://localhost:4173",
+    // Lost Pixel's built-in docker mode serves the dist/ directory internally
+    // at this address when running `lost-pixel docker` or `lost-pixel docker update`.
+    baseUrl: "http://localhost:3000",
     waitBeforeScreenshot: 1000,
   },
 
