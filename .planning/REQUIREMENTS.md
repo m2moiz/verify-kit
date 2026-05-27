@@ -438,11 +438,19 @@ Mapped to roadmap phases on 2026-05-18. 95/95 v0.1 requirements covered, no orph
 | WCI-02 | Phase 7 | Complete |
 | WCI-03 | Phase 7 | Complete |
 | WCI-04 | Phase 7 | Complete |
+| ADV-01 | Deferred (v0.3+) | Deferred |
+| ADV-02 | Deferred (v0.3+) | Deferred |
+| ADV-03 | Deferred (v0.3+) | Deferred |
+| ADV-04 | Deferred (v0.3+) | Deferred |
+| ADV-05 | Deferred (v0.3+) | Deferred |
 
 ### v0.2 Coverage
 
 Mapped to Phase 7 on 2026-05-25. 41/41 v0.2 requirements covered, no orphans, no duplicates. VIZ-04 carries the REQ-OPEN annotation pending `/gsd:discuss-phase 7`.
 
+The `ADV-01..05` rows are backlog items from the **Deferred (to v0.2.x / v0.3+)** section, listed here with an explicit `Deferred` status so traceability has no unmapped body IDs. They are intentionally not bound to any shipped phase. (The sibling `AUD-*` and `GAME-*` deferred items are written as ID ranges, so they do not register as individual unmapped IDs.)
+
 ---
 *Requirements defined: 2026-05-17*
 *Last updated: 2026-05-25 — Traceability extended by gsd-roadmapper for v0.2 (Phase 7, 41/41 v0.2 requirements mapped; v0.1 rows preserved verbatim).*
+*2026-05-27 — Added ADV-01..05 deferred rows so no body requirement IDs are unmapped in the traceability table (Phase 7 completion sync).*
