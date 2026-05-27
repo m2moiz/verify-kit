@@ -123,7 +123,10 @@ def check_web_playwright(cwd: Path) -> CheckResult:
         return CheckResult(
             check_id="web.playwright",
             status="skip",
-            message="Playwright Chromium install failed — skipping E2E (run `cd web && pnpm exec playwright install chromium`)",
+            message=(
+                "Playwright Chromium install failed — skipping E2E "
+                "(run `cd web && pnpm exec playwright install chromium`)"
+            ),
             duration_ms=duration_ms,
         )
 
@@ -176,8 +179,8 @@ def check_web_lighthouse(cwd: Path) -> CheckResult:
     Timeout: 300s — 5 Lighthouse runs can hit 90s total; LHCI is tagged
     tier="slow" so it is excluded from `just verify` by default.
     """
-    import urllib.request
     import urllib.error
+    import urllib.request
 
     t0 = time.monotonic()
     target_url = "http://localhost:4173/"
@@ -226,7 +229,10 @@ def check_web_lighthouse(cwd: Path) -> CheckResult:
             error=ErrorEnvelope(
                 code="web.lighthouse.run.failed",
                 message=f"lhci autorun exited {result.returncode}",
-                hint="Check web/lighthouserc.json assertions and run `cd web && pnpm exec lhci autorun`",
+                hint=(
+                    "Check web/lighthouserc.json assertions and run "
+                    "`cd web && pnpm exec lhci autorun`"
+                ),
                 fix_command="cd web && pnpm exec lhci autorun",
                 docs_url="https://github.com/GoogleChrome/lighthouse-ci/blob/main/docs/getting-started.md",
             ),
