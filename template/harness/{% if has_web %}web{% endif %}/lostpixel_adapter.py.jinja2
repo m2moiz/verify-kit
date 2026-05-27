@@ -27,10 +27,21 @@
 #     isNew: bool (no baseline exists yet)
 #     isUpdated: bool (diff exceeds threshold)
 #     isDeleted: bool (baseline exists but no current capture)
+#
+# lost-pixel-approve CLI shim (VIZ-03 — standalone CLI half):
+#   Provides an argparse main() callable as `lost-pixel-approve` console script.
+#   --dry-run (or no flag): preview mode — print baselines that would be approved.
+#   --confirm: destructive mode — stage baselines via `git add <baselinePath>`.
+#   MCP fix_propose --check=visual --approve wiring is DELIBERATELY DEFERRED to v0.3
+#   (bead verify-kit-pc8). The MCP half depends on a per-check --approve arg shape
+#   that does not exist in the current zero-arg fix_propose() signature.
 """
 from __future__ import annotations
 
+import argparse
 import json
+import subprocess
+import sys
 from pathlib import Path
 
 from harness.models import ErrorEnvelope
@@ -123,4 +134,145 @@ def parse_lostpixel_output(lostpixel_dir: Path) -> list[ErrorEnvelope]:
     return envelopes
 
 
-__all__ = ["parse_lostpixel_output"]
+def main(argv: list[str] | None = None) -> int:
+    """CLI entry point for lost-pixel-approve (VIZ-03 — standalone CLI shim).
+
+    Enumerates snapshots where isNew or isUpdated is True in
+    comparison-results.json and either previews or stages them via git add.
+
+    Default behaviour (no flags): acts as --dry-run (preview only, no mutation).
+    --dry-run: print the git add commands that would run; exit 0.
+    --confirm: run git add for each new/updated baseline; exit 0 on success.
+    --dry-run and --confirm are mutually exclusive.
+
+    MCP note: MCP fix_propose --check=visual --approve wiring is DELIBERATELY
+    DEFERRED to v0.3 (bead verify-kit-pc8). That path requires a per-check
+    --approve argument shape on fix_propose() that does not exist in the current
+    zero-arg signature (verified tools.py.jinja2:144). This shim is the
+    standalone CLI half of VIZ-03 only.
+    """
+    parser = argparse.ArgumentParser(
+        prog="lost-pixel-approve",
+        description=(
+            "Preview or approve visual baselines from Lost Pixel comparison-results.json. "
+            "Default (no flags) is dry-run — use --confirm to stage baselines via git add."
+        ),
+    )
+    parser.add_argument(
+        "--lostpixel-dir",
+        type=Path,
+        default=Path("web/.lost-pixel"),
+        metavar="DIR",
+        help="Path to the .lost-pixel/ directory (default: web/.lost-pixel)",
+    )
+    parser.add_argument(
+        "--repo-root",
+        type=Path,
+        default=None,
+        metavar="DIR",
+        help=(
+            "Repository root for git add cwd (default: resolved from --lostpixel-dir). "
+            "Used as explicit cwd for subprocess git add (REVIEW-CHECKLIST §1)."
+        ),
+    )
+
+    mode_group = parser.add_mutually_exclusive_group()
+    mode_group.add_argument(
+        "--dry-run",
+        action="store_true",
+        default=False,
+        help="Preview baselines that would be approved without staging (default when no flag given).",
+    )
+    mode_group.add_argument(
+        "--confirm",
+        action="store_true",
+        default=False,
+        help="Stage each new/updated baseline via git add (destructive — mutates the git index).",
+    )
+
+    args = parser.parse_args(argv)
+
+    # Default-safe: neither flag given → behave as --dry-run.
+    is_dry_run = args.dry_run or (not args.dry_run and not args.confirm)
+    is_confirm = args.confirm
+
+    lostpixel_dir = args.lostpixel_dir
+    results_path = lostpixel_dir / "comparison-results.json"
+
+    if not results_path.exists():
+        print(f"No comparison-results.json found at {results_path}. Nothing to approve.")
+        return 0
+
+    raw: list[dict] = json.loads(results_path.read_text(encoding="utf-8"))
+
+    # Collect baselines eligible for approval (new or updated only).
+    to_approve: list[str] = []
+    for item in raw:
+        is_new: bool = bool(item.get("isNew", False))
+        is_updated: bool = bool(item.get("isUpdated", False))
+        if not (is_new or is_updated):
+            continue
+        baseline_path: str | None = item.get("baselinePath")
+        name: str = item.get("name", "unknown")
+        if not baseline_path:
+            baseline_path = f"web/.lost-pixel/baseline/{name}.png"
+        to_approve.append(baseline_path)
+
+    if not to_approve:
+        print("All snapshots are clean — no baselines need approval.")
+        return 0
+
+    # Resolve the cwd for git add (REVIEW-CHECKLIST §1: never use bare relative Path).
+    if args.repo_root is not None:
+        repo_root = args.repo_root.resolve()
+    else:
+        # Walk up from lostpixel_dir until we find a .git directory.
+        candidate = lostpixel_dir.resolve()
+        repo_root = None
+        for parent in [candidate, *candidate.parents]:
+            if (parent / ".git").exists():
+                repo_root = parent
+                break
+        if repo_root is None:
+            # Fall back to cwd — document this rather than silently proceeding.
+            repo_root = Path.cwd()
+            print(
+                f"Warning: no .git directory found above {lostpixel_dir}; "
+                f"using cwd={repo_root} as git root.",
+                file=sys.stderr,
+            )
+
+    if is_dry_run:
+        print(f"Dry-run: {len(to_approve)} baseline(s) would be staged in {repo_root}:")
+        for path in to_approve:
+            print(f"  git add {path}")
+        return 0
+
+    # --confirm: stage each baseline via git add with an explicit cwd.
+    errors: list[str] = []
+    for path in to_approve:
+        result = subprocess.run(  # noqa: S603
+            ["git", "add", path],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0:
+            errors.append(f"git add {path} failed: {result.stderr.strip()}")
+        else:
+            print(f"Staged: {path}")
+
+    if errors:
+        for err in errors:
+            print(f"Error: {err}", file=sys.stderr)
+        return 1
+
+    print(f"Approved {len(to_approve)} baseline(s).")
+    return 0
+
+
+__all__ = ["parse_lostpixel_output", "main"]
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

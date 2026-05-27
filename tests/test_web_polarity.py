@@ -1318,3 +1318,79 @@ def test_web_vscode_no_leak(tmp_path: Path) -> None:
         "web/.vscode files leaked when has_web=False:\n"
         + "\n".join(f"  {p.relative_to(scratch)}" for p in leaked)
     )
+
+
+def test_lostpixel_approve_shim_present(tmp_path: Path) -> None:
+    """Plan 07-11: lost-pixel-approve CLI shim ships when has_web=True (VIZ-03).
+
+    Asserts that:
+    - pyproject.toml contains the lost-pixel-approve console_scripts entry
+    - harness/web/lostpixel_adapter.py contains def main and argparse
+    """
+    scratch = _render(tmp_path, has_web=True)
+    assert scratch.is_dir(), f"scaffold root missing: {scratch}"
+
+    pyproject = scratch / "pyproject.toml"
+    assert pyproject.is_file(), "pyproject.toml must exist in rendered scaffold"
+    pyproject_text = pyproject.read_text(encoding="utf-8")
+
+    assert "lost-pixel-approve" in pyproject_text, (
+        "pyproject.toml must contain 'lost-pixel-approve' console_scripts entry "
+        "when has_web=True (VIZ-03). Check template/pyproject.toml.jinja2 "
+        "[project.scripts] section."
+    )
+
+    adapter = scratch / "harness" / "web" / "lostpixel_adapter.py"
+    assert adapter.is_file(), (
+        "harness/web/lostpixel_adapter.py must exist in rendered scaffold when has_web=True"
+    )
+    adapter_text = adapter.read_text(encoding="utf-8")
+
+    assert "def main" in adapter_text, (
+        "lostpixel_adapter.py must define main() — the lost-pixel-approve entry point (VIZ-03)"
+    )
+    assert "argparse" in adapter_text, (
+        "lostpixel_adapter.py must import argparse (VIZ-03 CLI shim requirement)"
+    )
+
+
+def test_lostpixel_approve_shim_absent_when_no_web(tmp_path: Path) -> None:
+    """Plan 07-11: lost-pixel-approve does NOT appear in pyproject.toml when has_web=False.
+
+    Also verifies both polarities produce valid TOML (the {% if has_web %} block
+    must not leave broken table syntax in the no-web polarity).
+    """
+    import tomllib
+
+    scratch_false = _render(tmp_path / "no_web", has_web=False)
+    assert scratch_false.is_dir(), f"scaffold root missing: {scratch_false}"
+
+    pyproject_false = scratch_false / "pyproject.toml"
+    assert pyproject_false.is_file(), "pyproject.toml must exist in rendered scaffold"
+    pyproject_false_text = pyproject_false.read_text(encoding="utf-8")
+
+    assert "lost-pixel-approve" not in pyproject_false_text, (
+        "pyproject.toml must NOT contain 'lost-pixel-approve' when has_web=False — "
+        "the {% if has_web %} guard in [project.scripts] failed (REVIEW-CHECKLIST §1)"
+    )
+
+    # Both polarities must produce valid TOML ({% if %} block must not break the table).
+    try:
+        tomllib.loads(pyproject_false_text)
+    except tomllib.TOMLDecodeError as exc:
+        raise AssertionError(
+            f"has_web=False rendered pyproject.toml is not valid TOML: {exc}\n"
+            "Check that the {% if has_web %} block in [project.scripts] does not "
+            "leave a dangling blank line that breaks TOML."
+        ) from exc
+
+    # has_web=True polarity must also be valid TOML.
+    scratch_true = _render(tmp_path / "with_web", has_web=True)
+    pyproject_true = scratch_true / "pyproject.toml"
+    pyproject_true_text = pyproject_true.read_text(encoding="utf-8")
+    try:
+        tomllib.loads(pyproject_true_text)
+    except tomllib.TOMLDecodeError as exc:
+        raise AssertionError(
+            f"has_web=True rendered pyproject.toml is not valid TOML: {exc}"
+        ) from exc
