@@ -1224,3 +1224,82 @@ def test_web_harness_registry_smoke(tmp_path: Path) -> None:
             f"char {match.start()} — REVIEW-CHECKLIST §4 violation. "
             "Per-check fixability lives on @register(fixable=...) only."
         )
+
+
+def test_web_vscode_presence(tmp_path: Path) -> None:
+    """Plan 07-09: web/.vscode/ files ship under has_web=True (DEV-W04).
+
+    Asserts that web/.vscode/extensions.json and web/.vscode/settings.json
+    are present in the rendered scaffold when has_web=True.  The two-guard
+    _exclude entries in copier.yml (web/.vscode + web/.vscode/**) ensure they
+    are absent when has_web=False — verified in test_web_vscode_no_leak below.
+    """
+    scratch = _render(tmp_path, has_web=True)
+    assert scratch.is_dir(), f"scaffold root missing: {scratch}"
+
+    vscode_dir = scratch / "web" / ".vscode"
+    assert vscode_dir.is_dir(), (
+        "web/.vscode/ must exist in rendered scaffold when has_web=True (DEV-W04). "
+        "Check that template/web/.vscode/ exists with correct Guard-2 path shape."
+    )
+
+    extensions_json = vscode_dir / "extensions.json"
+    assert extensions_json.is_file(), (
+        "web/.vscode/extensions.json must exist when has_web=True (DEV-W04). "
+        "Check that template/{% if has_web %}web{% endif %}/.vscode/extensions.json is committed."
+    )
+
+    settings_json = vscode_dir / "settings.json"
+    assert settings_json.is_file(), (
+        "web/.vscode/settings.json must exist when has_web=True (DEV-W04). "
+        "Check that template/{% if has_web %}web{% endif %}/.vscode/settings.json is committed."
+    )
+
+    # Validate JSON and content
+    import json as _json
+    ext_data = _json.loads(extensions_json.read_text(encoding="utf-8"))
+    recs = ext_data.get("recommendations", [])
+    assert "bradlc.vscode-tailwindcss" in recs, (
+        "extensions.json must recommend 'bradlc.vscode-tailwindcss' (Tailwind v4 IntelliSense)"
+    )
+    assert "dbaeumer.vscode-eslint" in recs, (
+        "extensions.json must recommend 'dbaeumer.vscode-eslint'"
+    )
+    assert "ms-playwright.playwright" in recs, (
+        "extensions.json must recommend 'ms-playwright.playwright'"
+    )
+
+    settings_data = _json.loads(settings_json.read_text(encoding="utf-8"))
+    assert settings_data.get("eslint.useFlatConfig") is True, (
+        "settings.json must set eslint.useFlatConfig=true (ESLint v9 flat config)"
+    )
+    assert "tailwindCSS" in str(settings_data), (
+        "settings.json must contain a tailwindCSS key (Tailwind v4 IntelliSense)"
+    )
+
+
+def test_web_vscode_no_leak(tmp_path: Path) -> None:
+    """Plan 07-09: web/.vscode/ does NOT leak when has_web=False (DEV-W04 / T-07-37).
+
+    Two-guard _exclude entries in copier.yml gate web/.vscode and web/.vscode/**
+    behind {% if not has_web %}.  This test proves the guard works by asserting
+    no file under web/.vscode exists in the rendered scaffold when has_web=False.
+    """
+    scratch = _render(tmp_path, has_web=False)
+    assert scratch.is_dir(), f"scaffold root missing: {scratch}"
+
+    # Direct path check
+    vscode_dir = scratch / "web" / ".vscode"
+    assert not vscode_dir.exists(), (
+        "web/.vscode/ must NOT exist when has_web=False "
+        "(Guard-1 _exclude or Guard-2 path shape failed — REVIEW-CHECKLIST §3 / T-07-37)."
+    )
+
+    # Belt-and-suspenders: rglob for .vscode under web/ only (the top-level
+    # .vscode/ ships for all scaffold types; we only care about web/.vscode/).
+    web_dir = scratch / "web"
+    leaked = list(web_dir.rglob(".vscode")) if web_dir.exists() else []
+    assert not leaked, (
+        "web/.vscode files leaked when has_web=False:\n"
+        + "\n".join(f"  {p.relative_to(scratch)}" for p in leaked)
+    )
