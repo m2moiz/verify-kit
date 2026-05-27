@@ -17,6 +17,9 @@ pnpm = "latest"
 {% if has_web %}
 "npm:corepack" = "latest"
 {% endif %}
+{% if has_web and has_backend %}
+"npm:mprocs" = "latest"
+{% endif %}
 
 [env]
 PYTHONDONTWRITEBYTECODE = "1"

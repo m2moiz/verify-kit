@@ -51,6 +51,19 @@ mcp *ARGS:
 mcp-http port='7878' token='':
     uv run verify-kit mcp serve --http :{% raw %}{{port}}{% endraw %} --token={% raw %}{{token}}{% endraw %}
 
+{% if has_web and has_backend %}
+# Run Vite (:5173) and FastAPI (:8000) side-by-side. Ctrl-C kills both.
+dev:
+	mprocs "pnpm --dir web dev" "uv run uvicorn app.main:app --reload --port 8000"
+{% elif has_web %}
+# Frontend-only mode (D-W04): consumer brings their own backend.
+dev:
+	pnpm --dir web dev
+{% elif has_backend %}
+dev:
+	uv run uvicorn app.main:app --reload --port 8000
+{% endif %}
+
 {% if has_backend %}
 # Run the FastAPI app under uvicorn (dev mode, auto-reload)
 serve:
