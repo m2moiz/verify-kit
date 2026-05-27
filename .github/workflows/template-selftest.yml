@@ -32,6 +32,12 @@ on:
     branches: [main]
   push:
     branches: [main]
+  # WCI-02: weekly cold-install run exercises the no-cache path to catch lockfile
+  # drift and transitive resolution regressions that the warm PR cache masks.
+  schedule:
+    - cron: "0 2 * * 1"   # Monday 02:00 UTC
+  # Allow manual trigger to test the cold-install path on demand.
+  workflow_dispatch:
 
 jobs:
   selftest:
@@ -88,7 +94,9 @@ jobs:
         run: echo "store=$(pnpm store path --silent)" >> $GITHUB_OUTPUT
 
       - name: Cache pnpm store
-        if: matrix.has_web == true
+        # WCI-02: skip cache restore on scheduled runs so the cold-install path
+        # is exercised (lockfile drift + transitive resolution checks).
+        if: matrix.has_web == true && github.event_name != 'schedule'
         uses: actions/cache@v4
         with:
           path: ${{ steps.pnpm-cache.outputs.store }}
@@ -109,7 +117,9 @@ jobs:
           echo "version=${PW_VER:-latest}" >> $GITHUB_OUTPUT
 
       - name: Cache Playwright browsers
-        if: matrix.has_web == true
+        # WCI-02: same cold-install intent — skip on schedule so Playwright
+        # binary download is exercised fresh against the current package metadata.
+        if: matrix.has_web == true && github.event_name != 'schedule'
         uses: actions/cache@v4
         with:
           path: ~/.cache/ms-playwright
@@ -210,3 +220,47 @@ jobs:
       - name: Stop web preview server
         if: matrix.run_lighthouse == true && always()
         run: kill $(cat /tmp/vite-preview.pid) 2>/dev/null || true
+
+  # ── PRESET-06: end-to-end preset render + verify ─────────────────────────────
+  # Renders each committed preset file (presets/oss-minimalist.yml,
+  # presets/personal.yml) via `copier copy --data-file` and runs `just verify`
+  # in the resulting scaffold. This goes beyond schema coverage
+  # (preset-schema-check.yml) by actually exercising the full render + verify
+  # pipeline with real preset values.
+  #
+  # Both current presets have has_web=false, so no Node/pnpm setup is needed.
+  # A future has_web=true preset would require adding the Node + pnpm +
+  # Playwright setup steps from the selftest job above, gated on the preset's
+  # has_web value (e.g. via a yq-extracted matrix variable).
+  preset-render:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      VERIFYKIT_AUTH_TOKEN: dev-token-for-tests
+      ENV: dev
+    strategy:
+      fail-fast: false
+      matrix:
+        preset: [oss-minimalist, personal]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: jdx/mise-action@v4
+
+      - name: Install copier
+        run: uv tool install copier --with copier-template-extensions
+
+      # PRESET-06: render the preset file end-to-end.
+      # Note: copier allows extra top-level keys in --data-file (e.g. _schema_version),
+      # so no preprocessing is needed. If a future copier version rejects unknown keys,
+      # strip _schema_version with: python3 -c "import yaml,sys; d=yaml.safe_load(open('presets/${{ matrix.preset }}.yml')); d.pop('_schema_version',None); yaml.dump(d,sys.stdout)"
+      - name: Render preset scaffold
+        run: |
+          SCRATCH="/tmp/preset-scratch-${{ matrix.preset }}"
+          copier copy --trust --defaults \
+            --data-file presets/${{ matrix.preset }}.yml \
+            "$GITHUB_WORKSPACE" "$SCRATCH"
+
+      - name: Run just verify in preset scratch
+        working-directory: /tmp/preset-scratch-${{ matrix.preset }}
+        run: just verify
