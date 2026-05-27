@@ -1,0 +1,108 @@
+# {{ project_name }} — Web
+
+Vite + React + TypeScript + Tailwind v4 + shadcn frontend.
+
+---
+
+## Quickstart
+
+```bash
+mise install            # installs Node 24 + pnpm via .mise.toml
+pnpm install            # install deps from the shipped lockfile
+pnpm dev                # Vite dev server at http://localhost:5173
+```
+
+Or from the project root (uses the polarity-aware `just dev` recipe):
+
+```bash
+just dev
+```
+
+---
+
+## `just dev` polarity behaviour
+
+The root `justfile` has a polarity-aware `dev` recipe:
+
+| `has_web` | `has_backend` | `just dev` does |
+|-----------|---------------|-----------------|
+| true      | true          | `mprocs` starts Vite (:5173) + uvicorn (:8000) in a split-pane TUI |
+| true      | false         | `pnpm --dir web dev` (Vite only — frontend-only mode) |
+| false     | true          | `uv run uvicorn ...` (API only) |
+| false     | false         | recipe absent — `just dev` will error |
+
+Press Ctrl-C in the `mprocs` TUI to stop both processes.
+
+---
+
+## Frontend-only mode (D-W04)
+
+When `has_backend=false` (no FastAPI), the web add-on is fully decoupled.
+`API_BASE_URL` defaults to the `VITE_API_BASE_URL` environment variable:
+
+```bash
+# Point at your separately-deployed backend
+VITE_API_BASE_URL=https://api.yourservice.com pnpm dev
+```
+
+The `src/lib/api.ts` fetch wrapper reads `API_BASE_URL` from `@/config`,
+so no code change is needed — just set the env var.
+
+---
+
+## SSE bypass-proxy (Pitfall §5)
+
+`src/lib/events.ts` (present only when `has_backend=true`) subscribes to
+the FastAPI `/__debug/events` SSE stream using an **absolute URL**:
+
+```ts
+new EventSource("http://localhost:8000/__debug/events")
+```
+
+This bypasses the Vite dev proxy intentionally. Vite's Connect middleware
+buffers chunked HTTP responses; SSE events can arrive with unpredictable
+delay or never flush through the proxy layer.
+
+**Production deploy note:** behind a reverse proxy, disable response
+buffering for the SSE endpoint:
+- nginx: `proxy_buffering off;` on the `location /__debug/events` block
+- Caddy: `flush_interval -1` on the `reverse_proxy` directive
+
+---
+
+## Dark mode
+
+The gallery header contains a `DarkModeToggle` component that sets
+`document.documentElement.classList.toggle("dark")`. Tailwind v4 reads
+the `dark` class on `<html>` to activate the dark-mode color tokens
+(declared in `src/index.css` as `.dark { --color-background: ...; }`).
+
+The `ThemeProvider` from `next-themes` wraps the app in `src/main.tsx`
+so the initial system preference is applied before first paint.
+
+---
+
+## Replacing the gallery
+
+`src/App.tsx` is a dev-only component gallery. To ship your real UI:
+
+1. Delete the gallery sections inside `<main>`.
+2. Add your own components.
+3. Keep the `data-lost-pixel-id="..."` attributes on the sections you
+   want to capture in Lost Pixel visual regression snapshots (plan 07-06).
+4. If you no longer use Lost Pixel, remove the attributes entirely.
+
+---
+
+## Adding more shadcn components
+
+The 7 pre-vendored components (`button`, `card`, `input`, `label`,
+`dialog`, `sheet`, `sonner`) live under `src/components/ui/`. Add more:
+
+```bash
+pnpm dlx shadcn@latest add <component-name>
+```
+
+The `components.json` in this directory tells shadcn where to write new
+components and which style / color system to use (Tailwind v4, OKLCH,
+`cssVariables: true`).

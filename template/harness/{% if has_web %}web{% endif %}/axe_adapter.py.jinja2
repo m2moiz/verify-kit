@@ -1,0 +1,206 @@
+"""harness.web.axe_adapter — Parse axe-core JSON output + emit SARIF 2.1.0.
+
+# Verified signatures (2026-05-27):
+#
+# ErrorEnvelope (template/harness/models.py.jinja2:40):
+#   class ErrorEnvelope(BaseModel):
+#       code: str
+#       message: str
+#       hint: str | None = None
+#       fix_command: str | None = None
+#       docs_url: str | None = None
+#       file: str | None = None
+#       line: int | None = None
+#       column: int | None = None
+#       snippet: str | None = None
+#   NOTE: NO "fixable" field on ErrorEnvelope. Per-check fixability is on
+#   @register(fixable=True). Per-finding fixability is encoded in the code
+#   suffix: web.axe.<rule-id>.<severity>.<fixable|manual>.
+#   REVIEW-CHECKLIST §4: DO NOT pass fixable= to ErrorEnvelope(...).
+#
+# CheckResult (template/harness/models.py.jinja2:63):
+#   class CheckResult(BaseModel):
+#       check_id: str
+#       status: CheckStatus   # Literal["pass", "fail", "skip"] — NO "warning"
+#       message: str = ""
+#       duration_ms: int = 0
+#       error: ErrorEnvelope | None = None
+#       cached: bool = False
+#
+# SARIF emitter (template/harness/reports/sarif.py.jinja2:75):
+#   def emit(report: VerifyReport, stream: IO[str]) -> None
+#   ONLY emit() exists — NO merge(), write_sarif(), run_merge().
+#   v0.2 emits per-check SARIF at .verify/web/axe.sarif; aggregate merge
+#   deferred to v0.3 (bead verify-kit-7xm).
+#
+# axe JSON input: written by tests/e2e/axe.spec.ts using @axe-core/playwright.
+# Output JSON shape: {"violations": [{id, impact, description, help, helpUrl,
+#   nodes: [{html, target, ...}], ...}], ...}
+# colorScheme field added by the dark-mode merge step in axe.spec.ts.
+"""
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+from harness.models import ErrorEnvelope
+
+# ── Per-finding fixability set (A11Y-03) ─────────────────────────────────────
+# Rules where browser-tools / linting can auto-fix the finding.
+# Downstream: code suffix .fixable vs .manual. Extended in v0.2.x bead.
+FIXABLE_RULES: frozenset[str] = frozenset({
+    "image-alt",
+    "label",
+    "link-name",
+    "button-name",
+    "aria-required-attr",
+    "aria-roles",
+    "aria-valid-attr-value",
+    "html-has-lang",
+    "html-lang-valid",
+    "document-title",
+    "duplicate-id-aria",
+    "form-field-multiple-labels",
+})
+
+
+def _to_envelope(violation: dict, color_scheme: str | None = None) -> ErrorEnvelope:
+    """Map one axe-core violation dict to an ErrorEnvelope.
+
+    Code format: web.axe.<rule-id>.<severity>.<fixable|manual>
+    Example: web.axe.image-alt.critical.fixable
+    Example: web.axe.color-contrast.serious.manual
+
+    Per REVIEW-CHECKLIST §4 and 07-RESEARCH.md §Producer API Surface (Frozen):
+    - NO fixable= kwarg passed to ErrorEnvelope (field does not exist).
+    - Fixability encoded in the code suffix instead.
+    - fix_command is None in v0.2 (per-finding fix via fix_propose --finding
+      deferred to bead verify-kit-pc8 v0.3).
+    """
+    rule_id: str = violation.get("id", "unknown")
+    severity: str = violation.get("impact", "unknown")  # critical/serious/moderate/minor
+    fixability: str = "fixable" if rule_id in FIXABLE_RULES else "manual"
+
+    # Build a message that includes the color scheme if present (A11Y-04)
+    base_msg: str = violation.get("description") or violation.get("help", rule_id)
+    if color_scheme:
+        base_msg = f"[{color_scheme}] {base_msg}"
+
+    # First node gives context (selector + HTML snippet)
+    nodes: list[dict] = violation.get("nodes", [])
+    snippet: str | None = None
+    file_hint: str | None = None
+    if nodes:
+        first_node = nodes[0]
+        html_snippet = first_node.get("html", "")
+        if html_snippet:
+            snippet = html_snippet[:200]  # truncate long elements
+        targets = first_node.get("target", [])
+        if targets:
+            file_hint = str(targets[0])
+
+    return ErrorEnvelope(
+        code=f"web.axe.{rule_id}.{severity}.{fixability}",
+        message=base_msg,
+        hint=violation.get("help"),
+        fix_command=None,  # v0.3: per-finding fix_propose --finding (verify-kit-pc8)
+        docs_url=violation.get("helpUrl"),
+        file=file_hint,
+        snippet=snippet,
+    )
+
+
+def parse_axe_output(output_path: Path) -> list[ErrorEnvelope]:
+    """Read axe-core JSON (written by axe.spec.ts) and return ErrorEnvelope list.
+
+    Returns empty list if no violations (clean run).
+    Raises FileNotFoundError if output_path is missing.
+    Raises json.JSONDecodeError if the file is malformed.
+
+    The axe.spec.ts dark-mode merge step tags violations with colorScheme
+    ("light" or "dark"). We honour that tag in the envelope message.
+    """
+    raw_text = output_path.read_text(encoding="utf-8")  # raises FileNotFoundError if missing
+    data: dict = json.loads(raw_text)  # raises json.JSONDecodeError if malformed
+
+    envelopes: list[ErrorEnvelope] = []
+    for violation in data.get("violations", []):
+        color_scheme: str | None = violation.get("colorScheme")
+        envelopes.append(_to_envelope(violation, color_scheme))
+
+    return envelopes
+
+
+def write_sarif(envelopes: list[ErrorEnvelope], output_path: Path) -> None:
+    """Write SARIF 2.1.0 for axe findings to output_path.
+
+    Implementation path: hand-roll a minimal SARIF 2.1.0 doc rather than
+    using harness.reports.sarif.emit() because emit() calls
+    harness.registry.list_checks() and pulls ALL registered checks into
+    tool.driver.rules. The axe SARIF should be scoped to axe findings only,
+    and the tool name should be "axe-core" (not "verify-kit").
+
+    v0.2: per-check SARIF only. Cross-check SARIF merge into .verify/report.sarif
+    is deferred to bead verify-kit-7xm (v0.3). The axe SARIF stands alone for
+    IDE / CI consumers that understand SARIF (VS Code SARIF viewer, GitHub
+    Advanced Security, etc.).
+    """
+    _SARIF_SCHEMA = "https://json.schemastore.org/sarif-2.1.0.json"
+
+    results: list[dict] = []
+    rules: dict[str, dict] = {}
+
+    for env in envelopes:
+        rule_id = env.code
+        if rule_id not in rules:
+            rules[rule_id] = {
+                "id": rule_id,
+                "shortDescription": {"text": env.message},
+                **({"helpUri": env.docs_url} if env.docs_url else {}),
+            }
+
+        physical_location: dict = {
+            "artifactLocation": {
+                "uri": env.file or ".",
+                "uriBaseId": "%SRCROOT%",
+            }
+        }
+        if env.snippet:
+            physical_location["region"] = {"snippet": {"text": env.snippet}}
+
+        entry: dict = {
+            "ruleId": rule_id,
+            "level": "error",
+            "message": {
+                "text": env.message + (f"\n\nhint: {env.hint}" if env.hint else ""),
+            },
+            "locations": [{"physicalLocation": physical_location}],
+        }
+        if env.docs_url:
+            entry["hostedViewerUri"] = env.docs_url
+        results.append(entry)
+
+    sarif: dict = {
+        "$schema": _SARIF_SCHEMA,
+        "version": "2.1.0",
+        "runs": [
+            {
+                "tool": {
+                    "driver": {
+                        "name": "axe-core",
+                        "informationUri": "https://www.deque.com/axe/",
+                        "rules": list(rules.values()),
+                    }
+                },
+                "results": results,
+            }
+        ],
+    }
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with output_path.open("w", encoding="utf-8") as fh:
+        json.dump(sarif, fh, indent=2)
+        fh.write("\n")
+
+
+__all__ = ["FIXABLE_RULES", "parse_axe_output", "write_sarif"]

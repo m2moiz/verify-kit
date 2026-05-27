@@ -1,0 +1,17 @@
+/**
+ * harness/web/events — Server-Sent Events subscriber.
+ * Hits the backend directly on :8000 to bypass Vite's dev proxy buffering
+ * (Pitfall §5). Vite's Connect middleware queues chunked responses; SSE
+ * events arrive with unpredictable delay or never flush through the proxy.
+ * The absolute URL bypasses that buffering path entirely.
+ *
+ * Production deploy note: behind a reverse proxy, configure:
+ *   nginx: `proxy_buffering off;` for location /__debug/events
+ *   Caddy: `flush_interval -1` on the reverse_proxy directive
+ * Without this, SSE also buffers at the proxy layer in production.
+ */
+export function subscribeDebugEvents(onEvent: (e: MessageEvent) => void): () => void {
+  const source = new EventSource("http://localhost:8000/__debug/events");
+  source.onmessage = onEvent;
+  return () => source.close();
+}
