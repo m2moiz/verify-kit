@@ -53,6 +53,8 @@ _exclude:
   - "{% if not has_web %}web/**{% endif %}"
   - "{% if not has_web %}web/.*{% endif %}"
   - "{% if not has_web %}web/**/.*{% endif %}"
+  - "{% if not has_web %}web/.vscode{% endif %}"
+  - "{% if not has_web %}web/.vscode/**{% endif %}"
   - "{% if not has_web %}harness/web{% endif %}"
   - "{% if not has_web %}harness/web/**{% endif %}"
   - "{% if not has_web %}harness/web/.*{% endif %}"
