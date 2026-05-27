@@ -16,9 +16,13 @@ export default defineConfig({
     { name: "chromium", use: { ...devices["Desktop Chrome"] } },
   ],
   webServer: {
-    command: "pnpm exec vite preview --port 4173",
+    // Build first so `vite preview` has a dist/ to serve. This makes the
+    // web.playwright / web.axe harness checks self-sufficient under `just verify`:
+    // CI sets reuseExistingServer:false, so the preview server always starts fresh
+    // and would otherwise fail with "The directory dist does not exist".
+    command: "pnpm build && pnpm exec vite preview --port 4173",
     url: "http://localhost:4173",
     reuseExistingServer: !process.env.CI,
-    timeout: 60_000,
+    timeout: 120_000,
   },
 });
