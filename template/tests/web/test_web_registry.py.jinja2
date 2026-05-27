@@ -123,7 +123,7 @@ def test_web_py_source_has_no_forbidden_register_kwargs() -> None:
         for forbidden in ("severity=", "tags=", "readOnlyHint=", "destructiveHint=", "destructive="):
             assert forbidden not in call_body, (
                 f"Found forbidden kwarg '{forbidden}' in a @register() call in web.py. "
-                f"REVIEW-CHECKLIST §4 / 07-RESEARCH.md §Producer API Surface (Frozen). "
+                "REVIEW-CHECKLIST §4 / 07-RESEARCH.md §Producer API Surface (Frozen). "
                 f"Call body excerpt: {call_body[:80]!r}"
             )
 
@@ -135,7 +135,7 @@ def test_web_py_source_has_no_fixable_envelope_kwargs() -> None:
     src = Path(_web_mod.__file__).read_text(encoding="utf-8")
     match = re.search(r"ErrorEnvelope\([^)]*fixable", src)
     assert match is None, (
-        f"Found ErrorEnvelope(...fixable=...) in web.py — REVIEW-CHECKLIST §4 violation. "
+        "Found ErrorEnvelope(...fixable=...) in web.py — REVIEW-CHECKLIST §4 violation. "
         "Per-check fixability lives on @register(fixable=...) only."
     )
 

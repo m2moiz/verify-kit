@@ -181,7 +181,10 @@ def main(argv: list[str] | None = None) -> int:
         "--dry-run",
         action="store_true",
         default=False,
-        help="Preview baselines that would be approved without staging (default when no flag given).",
+        help=(
+            "Preview baselines that would be approved without staging "
+            "(default when no flag given)."
+        ),
     )
     mode_group.add_argument(
         "--confirm",
@@ -194,7 +197,6 @@ def main(argv: list[str] | None = None) -> int:
 
     # Default-safe: neither flag given → behave as --dry-run.
     is_dry_run = args.dry_run or (not args.dry_run and not args.confirm)
-    is_confirm = args.confirm
 
     lostpixel_dir = args.lostpixel_dir
     results_path = lostpixel_dir / "comparison-results.json"

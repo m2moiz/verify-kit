@@ -14,7 +14,6 @@ from pathlib import Path
 
 import pytest
 
-from harness.models import ErrorEnvelope
 from harness.web.lighthouse_adapter import parse_lighthouse_output
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
@@ -155,6 +154,7 @@ def test_parse_lighthouse_output_no_fixable_kwarg() -> None:
     """
     import re
     from pathlib import Path as _Path
+
     import harness.web.lighthouse_adapter as _mod
 
     src = _Path(_mod.__file__).read_text(encoding="utf-8")
