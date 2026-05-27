@@ -148,12 +148,13 @@ smoke-web:
 	cd web && pnpm exec playwright test --headed
 
 # Capture/refresh Lost Pixel baselines inside the pinned Docker image (D-W02).
+# Uses Lost Pixel's built-in `lost-pixel docker update` mode which owns the
+# container, pulls its own image, and serves dist/ internally — no host
+# dep directory mount required (verify-kit-c7k: host arm64 binaries crash linux).
 # Run this after intentional visual changes; review the new PNGs; commit with `git add`.
 web-baseline:
-	docker run --rm \
-	  -v "$(pwd)/web:/work" -w /work \
-	  mcr.microsoft.com/playwright:v1.60.0-jammy \
-	  pnpm exec lost-pixel update
+	pnpm --dir web build
+	cd web && pnpm exec lost-pixel docker update
 {% endif %}
 
 {% if has_llm %}

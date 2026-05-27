@@ -365,13 +365,21 @@ def check_web_axe(cwd: Path) -> CheckResult:
     skip_if_unavailable=True,
 )
 def check_web_lost_pixel(cwd: Path) -> CheckResult:
-    """Run Lost Pixel visual regression inside Docker.
+    """Run Lost Pixel visual regression inside Docker (comparison mode).
 
-    D-W02: runs inside mcr.microsoft.com/playwright:v1.60.0-jammy (pinned tag)
-    to prevent cross-platform font drift in baselines.
+    D-W02: uses Lost Pixel's built-in `lost-pixel docker` mode which pulls
+    mcr.microsoft.com/playwright:v1.60.0-jammy and runs comparison inside
+    the container — no host node_modules mount (verify-kit-c7k fix).
 
-    If Docker is unavailable, returns status="fail" (CheckStatus has no
-    "warning" variant — verified models.py.jinja2:23).
+    If Docker is unavailable, returns status="skip" (not fail) so that agents
+    on Docker-less machines do not see a false red (D8-A local-check
+    degradation). @register already declares skip_if_unavailable=True.
+
+    COMPARISON mode (subcommand: `lost-pixel docker`):
+    exits 1 when diffs are found vs baseline, 0 when they match. The
+    baseline-regeneration subcommand always exits 0 — using it here would
+    be a silent no-op that never catches regressions. Use `just web-baseline`
+    to intentionally regenerate baselines.
 
     D-W03: the `git add` approval verb flows through ErrorEnvelope.fix_command
     for each diff, surfaced via the existing zero-arg MCP fix_propose() tool
@@ -390,25 +398,24 @@ def check_web_lost_pixel(cwd: Path) -> CheckResult:
 
     if not inside_docker and not docker_binary and not docker_env_set:
         duration_ms = int((time.monotonic() - t0) * 1000)
+        # Skip (not fail) when Docker is absent — agents on Docker-less boxes
+        # must not see a false red (D8-A local-check degradation). The
+        # @register decorator already declares skip_if_unavailable=True;
+        # this aligns the runtime return value with that intent.
         return CheckResult(
             check_id="web.lost_pixel",
-            status="fail",  # no "warning" in CheckStatus (models.py.jinja2:23)
+            status="skip",
             duration_ms=duration_ms,
-            error=ErrorEnvelope(
-                code="web.lost_pixel.docker_unavailable",
-                message=(
-                    "Lost Pixel requires Docker to run consistently across platforms "
-                    "(D-W02: pinned to mcr.microsoft.com/playwright:v1.60.0-jammy). "
-                    "Docker daemon not found."
-                ),
-                hint="Start Docker Desktop and re-run, or use `just web-baseline` to run in Docker",
-                fix_command="just web-baseline",
-                docs_url="https://lost-pixel.com/docs",
+            message=(
+                "Lost Pixel requires Docker for cross-platform reproducibility "
+                "(D-W02: pinned to mcr.microsoft.com/playwright:v1.60.0-jammy). "
+                "Docker daemon not found — run `just web-baseline` on a machine "
+                "with Docker to generate/verify baselines."
             ),
         )
 
     if inside_docker:
-        # Already inside the pinned image — run Lost Pixel directly
+        # Already inside the pinned image — run Lost Pixel in comparison mode directly
         result = proc_run(
             ["pnpm", "exec", "lost-pixel"],
             cwd=cwd / "web",
@@ -416,15 +423,15 @@ def check_web_lost_pixel(cwd: Path) -> CheckResult:
             timeout=300.0,
         )
     else:
-        # Outside Docker — mount cwd/web into the container and run
+        # Outside Docker — use Lost Pixel's built-in docker mode (COMPARISON).
+        # `lost-pixel docker` owns container orchestration: pulls its own image,
+        # serves the built gallery, and runs comparison inside the container.
+        # No host node_modules mount — avoids arm64 vs linux esbuild crash
+        # (verify-kit-c7k). cwd must be the web/ directory so Lost Pixel finds
+        # lostpixel.config.cjs and dist/.
         result = proc_run(
-            [
-                "docker", "run", "--rm",
-                "-v", f"{cwd}/web:/work",
-                "-w", "/work",
-                _DOCKER_IMAGE,
-                "pnpm", "exec", "lost-pixel",
-            ],
+            ["pnpm", "exec", "lost-pixel", "docker"],
+            cwd=cwd / "web",
             env=clean_env(),
             timeout=300.0,
         )
