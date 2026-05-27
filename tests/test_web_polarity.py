@@ -1394,3 +1394,78 @@ def test_lostpixel_approve_shim_absent_when_no_web(tmp_path: Path) -> None:
         raise AssertionError(
             f"has_web=True rendered pyproject.toml is not valid TOML: {exc}"
         ) from exc
+
+
+def test_web_preset_render_and_schedule() -> None:
+    """Plans 07-12: structural guards for PRESET-06 + WCI-02 in template-selftest.yml.
+
+    These assertions read the committed workflow file directly (no render needed).
+    Path is resolved from the test file's location — REVIEW-CHECKLIST §1 (no bare
+    relative Path that leaks cwd).
+
+    Asserts:
+      1. A ``preset-render`` job exists with a strategy matrix containing both
+         "oss-minimalist" and "personal" presets.
+      2. At least one step in preset-render references ``--data-file presets/``
+         (PRESET-06: CI renders the preset files, not just validates their schema).
+      3. ``on.schedule`` is present with at least one cron entry (WCI-02).
+      4. At least one step in the ``selftest`` job carries the
+         ``github.event_name != 'schedule'`` condition (cold-install cache skip).
+    """
+    import json
+    import yaml
+
+    # Resolve workflow path from this test file — cwd-safe (REVIEW-CHECKLIST §1).
+    workflow_path = Path(__file__).parent.parent / ".github" / "workflows" / "template-selftest.yml"
+    assert workflow_path.is_file(), f"template-selftest.yml not found at {workflow_path}"
+
+    with open(workflow_path, encoding="utf-8") as f:
+        workflow = yaml.safe_load(f)
+
+    # 1. preset-render job exists
+    assert "preset-render" in workflow["jobs"], (
+        "preset-render job must exist in template-selftest.yml (PRESET-06). "
+        f"Present jobs: {sorted(workflow['jobs'].keys())}"
+    )
+
+    pr_job = workflow["jobs"]["preset-render"]
+    pr_matrix = pr_job.get("strategy", {}).get("matrix", {})
+
+    # 1a. preset matrix contains both expected preset names
+    preset_list = pr_matrix.get("preset", [])
+    assert "oss-minimalist" in preset_list, (
+        f"preset-render matrix must include 'oss-minimalist'; got: {preset_list}"
+    )
+    assert "personal" in preset_list, (
+        f"preset-render matrix must include 'personal'; got: {preset_list}"
+    )
+
+    # 2. At least one step's run block references --data-file presets/
+    steps_text = json.dumps(pr_job.get("steps", []))
+    assert "--data-file presets/" in steps_text, (
+        "preset-render job must have a step referencing '--data-file presets/' "
+        "(PRESET-06: render the committed preset files, not inline JSON). "
+        f"Rendered steps JSON snippet: {steps_text[:300]}"
+    )
+
+    # 3. on.schedule is present with at least one cron entry (WCI-02).
+    # Note: PyYAML parses the YAML 'on' key as Python True.
+    on_block = workflow.get(True, workflow.get("on", {}))
+    schedule_entries = on_block.get("schedule", [])
+    assert schedule_entries, (
+        "template-selftest.yml must have an on.schedule: block with at least one "
+        "cron entry (WCI-02: weekly cold-install). "
+        f"Current on: triggers: {sorted(str(k) for k in on_block.keys())}"
+    )
+    cron_values = [e.get("cron", "") for e in schedule_entries if isinstance(e, dict)]
+    assert any(cron_values), (
+        f"on.schedule entries must have a 'cron' key; got: {schedule_entries}"
+    )
+
+    # 4. At least one cache step in selftest has the cold-install condition.
+    selftest_steps_text = json.dumps(workflow["jobs"]["selftest"].get("steps", []))
+    assert "github.event_name != 'schedule'" in selftest_steps_text, (
+        "selftest job must have at least one cache step gated with "
+        "\"github.event_name != 'schedule'\" so scheduled runs exercise the "
+        "cold-install path (WCI-02)."
+    )
