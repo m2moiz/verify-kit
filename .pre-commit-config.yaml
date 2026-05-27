@@ -1,0 +1,17 @@
+# verify-kit pre-commit configuration.
+#
+# This file governs the verify-kit TEMPLATE REPO's own pre-commit hooks.
+# It is NOT shipped to consumer projects via copier (no .jinja2 suffix).
+#
+# Install: pip install pre-commit && pre-commit install
+# Run:     pre-commit run --all-files
+
+repos:
+  - repo: local
+    hooks:
+      - id: check-preset-pii
+        name: "Check preset files for PII (D-W13)"
+        entry: scripts/check_preset_pii.sh
+        language: script
+        files: ^presets/.*\.yml$
+        exclude: \.local\.yml$  # .local.yml is gitignored anyway; belt-and-suspenders

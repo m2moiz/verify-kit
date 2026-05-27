@@ -51,6 +51,19 @@ mcp *ARGS:
 mcp-http port='7878' token='':
     uv run verify-kit mcp serve --http :{% raw %}{{port}}{% endraw %} --token={% raw %}{{token}}{% endraw %}
 
+{% if has_web and has_backend %}
+# Run Vite (:5173) and FastAPI (:8000) side-by-side. Ctrl-C kills both.
+dev:
+	mprocs "pnpm --dir web dev" "uv run uvicorn app.main:app --reload --port 8000"
+{% elif has_web %}
+# Frontend-only mode (D-W04): consumer brings their own backend.
+dev:
+	pnpm --dir web dev
+{% elif has_backend %}
+dev:
+	uv run uvicorn app.main:app --reload --port 8000
+{% endif %}
+
 {% if has_backend %}
 # Run the FastAPI app under uvicorn (dev mode, auto-reload)
 serve:
@@ -117,6 +130,30 @@ verify-backend-quick:
     else \
         echo "[verify-backend-quick] app not running on :8000 — pytest only (use \`just verify-backend\` for full slice)"; \
     fi
+{% endif %}
+
+{% if has_web %}
+# Run all web add-on checks (vitest, playwright, lighthouse, axe, lost_pixel).
+# Lighthouse + Lost Pixel are tier=slow — included here; use verify-web-quick to skip them.
+# CLI does exact match per --check (template/harness/core.py.jinja2:101); enumeration is mandatory.
+verify-web:
+	uv run verify-kit verify --check=web.vitest --check=web.playwright --check=web.lighthouse --check=web.axe --check=web.lost_pixel
+
+# Fast feedback loop: only standard-tier web checks (vitest, playwright, axe).
+verify-web-quick:
+	uv run verify-kit verify --check=web.vitest --check=web.playwright --check=web.axe
+
+# Headed-mode Playwright smoke; useful for visual debugging during development.
+smoke-web:
+	cd web && pnpm exec playwright test --headed
+
+# Capture/refresh Lost Pixel baselines inside the pinned Docker image (D-W02).
+# Run this after intentional visual changes; review the new PNGs; commit with `git add`.
+web-baseline:
+	docker run --rm \
+	  -v "$(pwd)/web:/work" -w /work \
+	  mcr.microsoft.com/playwright:v1.60.0-jammy \
+	  pnpm exec lost-pixel update
 {% endif %}
 
 {% if has_llm %}

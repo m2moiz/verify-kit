@@ -1,0 +1,161 @@
+"""Registry smoke test — FROZEN API conformance for web checks.
+
+CONTRACT CONFORMANCE TEST — REVIEW-CHECKLIST §4 API-surface drift guard.
+
+This is the FROZEN API conformance check. It asserts:
+  1. Exactly 5 web.* checks registered (web.vitest, web.playwright,
+     web.lighthouse, web.axe, web.lost_pixel)
+  2. Per-check tier/category/fixable match the 07-RESEARCH.md table
+  3. No @register calls in web.py use forbidden kwargs
+  4. ErrorEnvelope has no 'fixable' field (regression guard)
+  5. MCP verify_check(name=...) is callable for each web check ID
+     (discoverable via static MCP tools — no dynamic per-check tool generation
+     in v0.2; verify-kit-964 v0.3 bead)
+
+If this test fails at import time, a @register kwarg is misspelled or the
+model was changed. See REVIEW-CHECKLIST §4 and 07-RESEARCH.md §Producer API
+Surface (Frozen).
+"""
+from __future__ import annotations
+
+import re
+from pathlib import Path
+
+import harness.checks  # noqa: F401 — triggers @register side-effects
+import harness.registry
+from harness.models import ErrorEnvelope
+from harness.registry import list_checks
+
+# ── Expected per-check config table (07-RESEARCH.md §`harness/checks/web.py`) ─
+
+_EXPECTED_CHECKS = {
+    "web.vitest":      {"tier": "standard", "category": "test",   "fixable": False},
+    "web.playwright":  {"tier": "standard", "category": "test",   "fixable": False},
+    "web.lighthouse":  {"tier": "slow",     "category": "perf",   "fixable": False},
+    "web.axe":         {"tier": "standard", "category": "a11y",   "fixable": True},
+    "web.lost_pixel":  {"tier": "slow",     "category": "visual", "fixable": True},
+}
+
+
+def _web_checks() -> dict:
+    """Return {check_id: CheckSpec} for all registered web.* checks."""
+    return {s.check_id: s for s in list_checks() if s.check_id.startswith("web.")}
+
+
+def test_five_web_checks_registered() -> None:
+    """Exactly 5 web.* checks are registered after importing harness.checks."""
+    web = _web_checks()
+    assert len(web) == 5, (
+        f"Expected exactly 5 web.* checks, got {len(web)}: {sorted(web.keys())}"
+    )
+
+
+def test_web_check_ids_all_present() -> None:
+    """All 5 expected check IDs are present in the registry."""
+    web = _web_checks()
+    for check_id in _EXPECTED_CHECKS:
+        assert check_id in web, (
+            f"Expected check '{check_id}' not found in registry. "
+            f"Registered web checks: {sorted(web.keys())}"
+        )
+
+
+def test_web_checks_tier_matches_table() -> None:
+    """tier for each check matches 07-RESEARCH.md table."""
+    web = _web_checks()
+    for check_id, expected in _EXPECTED_CHECKS.items():
+        spec = web[check_id]
+        assert spec.tier == expected["tier"], (
+            f"Check '{check_id}': expected tier={expected['tier']!r}, "
+            f"got tier={spec.tier!r}"
+        )
+
+
+def test_web_checks_category_matches_table() -> None:
+    """category for each check matches 07-RESEARCH.md table."""
+    web = _web_checks()
+    for check_id, expected in _EXPECTED_CHECKS.items():
+        spec = web[check_id]
+        assert spec.category == expected["category"], (
+            f"Check '{check_id}': expected category={expected['category']!r}, "
+            f"got category={spec.category!r}"
+        )
+
+
+def test_web_checks_fixable_matches_table() -> None:
+    """fixable (per-check) matches 07-RESEARCH.md table.
+
+    Per-check fixability lives on CheckSpec.fixable (from @register(fixable=...)),
+    NOT on ErrorEnvelope. This test is the §4 conformance anchor.
+    """
+    web = _web_checks()
+    for check_id, expected in _EXPECTED_CHECKS.items():
+        spec = web[check_id]
+        assert spec.fixable == expected["fixable"], (
+            f"Check '{check_id}': expected fixable={expected['fixable']!r}, "
+            f"got fixable={spec.fixable!r}"
+        )
+
+
+def test_error_envelope_has_no_fixable_field() -> None:
+    """REVIEW-CHECKLIST §4 regression guard: ErrorEnvelope must NOT have 'fixable'."""
+    import inspect
+    params = inspect.signature(ErrorEnvelope).parameters
+    assert "fixable" not in params, (
+        "ErrorEnvelope gained a 'fixable' field — this breaks the code-suffix "
+        "encoding contract in axe_adapter. REVIEW-CHECKLIST §4."
+    )
+
+
+def test_web_py_source_has_no_forbidden_register_kwargs() -> None:
+    """REVIEW-CHECKLIST §4: web.py source must have zero forbidden @register kwargs.
+
+    Forbidden: severity=, tags=, readOnlyHint=, destructiveHint=, destructive=
+    These are MCP-level annotations or wrongly-named fields from earlier drafts.
+    """
+    import harness.checks.web as _web_mod
+
+    src = Path(_web_mod.__file__).read_text(encoding="utf-8")
+
+    # Extract the @register call blocks (from decorator to function def)
+    register_calls = re.findall(r"@register\((.*?)\)", src, re.DOTALL)
+    for call_body in register_calls:
+        for forbidden in ("severity=", "tags=", "readOnlyHint=", "destructiveHint=", "destructive="):
+            assert forbidden not in call_body, (
+                f"Found forbidden kwarg '{forbidden}' in a @register() call in web.py. "
+                f"REVIEW-CHECKLIST §4 / 07-RESEARCH.md §Producer API Surface (Frozen). "
+                f"Call body excerpt: {call_body[:80]!r}"
+            )
+
+
+def test_web_py_source_has_no_fixable_envelope_kwargs() -> None:
+    """REVIEW-CHECKLIST §4: web.py must have zero ErrorEnvelope(..., fixable=...) calls."""
+    import harness.checks.web as _web_mod
+
+    src = Path(_web_mod.__file__).read_text(encoding="utf-8")
+    match = re.search(r"ErrorEnvelope\([^)]*fixable", src)
+    assert match is None, (
+        f"Found ErrorEnvelope(...fixable=...) in web.py — REVIEW-CHECKLIST §4 violation. "
+        "Per-check fixability lives on @register(fixable=...) only."
+    )
+
+
+def test_web_checks_mcp_discoverable() -> None:
+    """Web check IDs are discoverable via the static MCP verify_check() surface.
+
+    Per 07-RESEARCH.md §MCP tools (static, NOT auto-generated per check):
+    The 5 web.* checks are reachable via the existing static MCP tool
+    verify_check(name=<id>). No per-check MCP tool auto-generation in v0.2
+    (deferred to verify-kit-964 v0.3).
+
+    We mock the subprocess layer — this test verifies that the check ID is
+    recognized by the registry (the MCP tool reads from the same registry).
+    """
+    web = _web_checks()
+    for check_id in _EXPECTED_CHECKS:
+        spec = harness.registry.get_check(check_id)
+        assert spec is not None, (
+            f"harness.registry.get_check({check_id!r}) returned None — "
+            "check is not reachable via MCP verify_check(name=...)"
+        )
+        assert spec.check_id == check_id

@@ -3,13 +3,27 @@
 
 # Self-test workflow for verify-kit.
 #
-# Per DOC-04, every PR runs `copier copy` across the 5 add-on combos and
-# asserts `just verify` exits 0 in the rendered scratch project. Per D-02,
-# the 5 combos are: base, backend, llm, backend-llm, full.
+# Per DOC-04, every PR runs `copier copy` across the add-on combos and
+# asserts `just verify` exits 0 in the rendered scratch project.
+#
+# Combos (6 total — D-W14, CONTEXT.md lock):
+#   base          — no add-ons
+#   backend       — has_backend=true, has_db=true
+#   llm           — has_llm=true
+#   web           — has_web=true (NEW in v0.2)
+#   backend-web   — has_backend=true + has_web=true (NEW in v0.2)
+#   full          — everything on (Lighthouse + Lost Pixel ONLY here)
+#
+# Explicitly skipped: +web+llm (non-realistic combo per CONTEXT.md).
 #
 # Auth contract (06-02): each job sets both VERIFYKIT_AUTH_TOKEN and ENV=dev
 # at the job level — defense-in-depth so the dev-mode fallback covers any row
 # whose generated app does not explicitly read the token.
+#
+# Pitfall §8 (matrix explosion): 6 combos cap; Lighthouse + Lost Pixel gated
+# to full-stack only; timeout-minutes: 20 per combo; fail-fast: false.
+# Pitfall §10 (chrome-version drift): cache ~/.cache/ms-playwright keyed by
+# Playwright version; Lighthouse via treosh/lighthouse-ci-action@v12.
 
 name: template-selftest
 
@@ -18,36 +32,105 @@ on:
     branches: [main]
   push:
     branches: [main]
+  # WCI-02: weekly cold-install run exercises the no-cache path to catch lockfile
+  # drift and transitive resolution regressions that the warm PR cache masks.
+  schedule:
+    - cron: "0 2 * * 1"   # Monday 02:00 UTC
+  # Allow manual trigger to test the cold-install path on demand.
+  workflow_dispatch:
 
 jobs:
   selftest:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     env:
       VERIFYKIT_AUTH_TOKEN: dev-token-for-tests
       ENV: dev
     strategy:
       fail-fast: false
       matrix:
-        combo: [base, backend, llm, backend-llm, full]
+        combo: [base, backend, llm, web, backend-web, full]
         include:
           - combo: base
-            data: '{"has_backend": false, "has_llm": false, "has_logfire": false, "has_fastapi_mcp": false, "has_db": false}'
+            has_web: false
+            data: '{"has_backend": false, "has_llm": false, "has_logfire": false, "has_fastapi_mcp": false, "has_db": false, "has_web": false}'
           - combo: backend
-            data: '{"has_backend": true, "has_llm": false, "has_logfire": false, "has_fastapi_mcp": false, "has_db": true}'
+            has_web: false
+            data: '{"has_backend": true, "has_llm": false, "has_logfire": false, "has_fastapi_mcp": false, "has_db": true, "has_web": false}'
           - combo: llm
-            data: '{"has_backend": false, "has_llm": true, "has_logfire": false, "has_fastapi_mcp": false, "has_db": false}'
-          - combo: backend-llm
-            data: '{"has_backend": true, "has_llm": true, "has_logfire": false, "has_fastapi_mcp": false, "has_db": true}'
+            has_web: false
+            data: '{"has_backend": false, "has_llm": true, "has_logfire": false, "has_fastapi_mcp": false, "has_db": false, "has_web": false}'
+          - combo: web
+            has_web: true
+            data: '{"has_backend": false, "has_llm": false, "has_logfire": false, "has_fastapi_mcp": false, "has_db": false, "has_web": true}'
+          - combo: backend-web
+            has_web: true
+            data: '{"has_backend": true, "has_llm": false, "has_logfire": false, "has_fastapi_mcp": false, "has_db": false, "has_web": true}'
           - combo: full
-            data: '{"has_backend": true, "has_llm": true, "has_logfire": true, "has_fastapi_mcp": true, "has_db": true}'
+            has_web: true
+            run_lighthouse: true
+            run_lost_pixel: true
+            data: '{"has_backend": true, "has_llm": true, "has_logfire": true, "has_fastapi_mcp": true, "has_db": true, "has_web": true}'
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v4
 
       - uses: jdx/mise-action@v4
+
+      # ── Setup Node + corepack + pnpm (web combos only) ──────────────────────
+      - name: Setup Node and pnpm
+        if: matrix.has_web == true
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Enable corepack / pnpm
+        if: matrix.has_web == true
+        run: corepack enable pnpm
+
+      # ── pnpm store cache (web combos only) ──────────────────────────────────
+      - name: Get pnpm store directory
+        if: matrix.has_web == true
+        id: pnpm-cache
+        run: echo "store=$(pnpm store path --silent)" >> $GITHUB_OUTPUT
+
+      - name: Cache pnpm store
+        # WCI-02: skip cache restore on scheduled runs so the cold-install path
+        # is exercised (lockfile drift + transitive resolution checks).
+        if: matrix.has_web == true && github.event_name != 'schedule'
+        uses: actions/cache@v4
+        with:
+          path: ${{ steps.pnpm-cache.outputs.store }}
+          key: pnpm-store-${{ runner.os }}-${{ hashFiles('template/{% if has_web %}web{% endif %}/pnpm-lock.yaml') }}
+          restore-keys: |
+            pnpm-store-${{ runner.os }}-
+
+      # ── Playwright cache (web combos only) ──────────────────────────────────
+      - name: Get Playwright version for cache key
+        if: matrix.has_web == true
+        id: pw-version
+        run: |
+          # Extract version from template pnpm-lock.yaml so cache key is stable.
+          # Falls back to "latest" if not found (belt-and-suspenders).
+          PW_VER=$(grep -A1 '"@playwright/test"' \
+            'template/{% if has_web %}web{% endif %}/pnpm-lock.yaml' 2>/dev/null \
+            | grep 'version:' | head -1 | awk '{print $2}' | tr -d "'\"") || PW_VER="latest"
+          echo "version=${PW_VER:-latest}" >> $GITHUB_OUTPUT
+
+      - name: Cache Playwright browsers
+        # WCI-02: same cold-install intent — skip on schedule so Playwright
+        # binary download is exercised fresh against the current package metadata.
+        if: matrix.has_web == true && github.event_name != 'schedule'
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ steps.pw-version.outputs.version }}
+          restore-keys: |
+            playwright-${{ runner.os }}-
 
       - name: Install copier
         run: uv tool install copier --with copier-template-extensions
 
+      # ── Render scratch project ───────────────────────────────────────────────
       - name: Render scratch project
         run: |
           SCRATCH="/tmp/scratch-${{ matrix.combo }}"
@@ -82,6 +165,102 @@ jobs:
             --data-file "$DATAFILE" \
             "$GITHUB_WORKSPACE" "$SCRATCH"
 
+      # ── Install pnpm dependencies in scratch (web combos only) ──────────────
+      - name: Install pnpm dependencies in scratch web dir
+        if: matrix.has_web == true
+        working-directory: /tmp/scratch-${{ matrix.combo }}/web
+        run: pnpm install --frozen-lockfile
+
+      # ── Install Playwright browser binaries (web combos only) ────────────────
+      - name: Install Playwright Chromium
+        if: matrix.has_web == true
+        working-directory: /tmp/scratch-${{ matrix.combo }}/web
+        run: pnpm exec playwright install --with-deps chromium
+
+      # ── Run just verify (all combos) ─────────────────────────────────────────
       - name: Run just verify in scratch
         working-directory: /tmp/scratch-${{ matrix.combo }}
+        run: just verify
+
+      # ── Run just verify-web (web combos only) ────────────────────────────────
+      # Invokes all 5 web checks via enumerated --check= flags (exact match per
+      # template/harness/core.py.jinja2:101; no glob). Lighthouse + Lost Pixel
+      # are tier=slow and run here as part of the full verify-web.
+      # For the non-full-stack web combos, Docker (for lost_pixel) may not be
+      # available; the lost_pixel check gracefully returns status=fail with a
+      # fix_command pointing to `just web-baseline` — that's expected.
+      - name: Run just verify-web in scratch
+        if: matrix.has_web == true
+        working-directory: /tmp/scratch-${{ matrix.combo }}
+        env:
+          CI: "1"
+        run: just verify-web-quick
+
+      # ── Lighthouse (full-stack combo only) ──────────────────────────────────
+      # Gated to full-stack to avoid matrix explosion (Pitfall §8).
+      # Requires the dev server running; we run a production preview instead.
+      - name: Start web preview server
+        if: matrix.run_lighthouse == true
+        working-directory: /tmp/scratch-${{ matrix.combo }}/web
+        run: |
+          pnpm build
+          pnpm exec vite preview --port 5173 &
+          echo $! > /tmp/vite-preview.pid
+          sleep 3  # wait for server to be ready
+
+      - name: Run Lighthouse CI
+        if: matrix.run_lighthouse == true
+        uses: treosh/lighthouse-ci-action@v12
+        with:
+          urls: |
+            http://localhost:5173
+          uploadArtifacts: false
+          temporaryPublicStorage: false
+
+      - name: Stop web preview server
+        if: matrix.run_lighthouse == true && always()
+        run: kill $(cat /tmp/vite-preview.pid) 2>/dev/null || true
+
+  # ── PRESET-06: end-to-end preset render + verify ─────────────────────────────
+  # Renders each committed preset file (presets/oss-minimalist.yml,
+  # presets/personal.yml) via `copier copy --data-file` and runs `just verify`
+  # in the resulting scaffold. This goes beyond schema coverage
+  # (preset-schema-check.yml) by actually exercising the full render + verify
+  # pipeline with real preset values.
+  #
+  # Both current presets have has_web=false, so no Node/pnpm setup is needed.
+  # A future has_web=true preset would require adding the Node + pnpm +
+  # Playwright setup steps from the selftest job above, gated on the preset's
+  # has_web value (e.g. via a yq-extracted matrix variable).
+  preset-render:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      VERIFYKIT_AUTH_TOKEN: dev-token-for-tests
+      ENV: dev
+    strategy:
+      fail-fast: false
+      matrix:
+        preset: [oss-minimalist, personal]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: jdx/mise-action@v4
+
+      - name: Install copier
+        run: uv tool install copier --with copier-template-extensions
+
+      # PRESET-06: render the preset file end-to-end.
+      # Note: copier allows extra top-level keys in --data-file (e.g. _schema_version),
+      # so no preprocessing is needed. If a future copier version rejects unknown keys,
+      # strip _schema_version with: python3 -c "import yaml,sys; d=yaml.safe_load(open('presets/${{ matrix.preset }}.yml')); d.pop('_schema_version',None); yaml.dump(d,sys.stdout)"
+      - name: Render preset scaffold
+        run: |
+          SCRATCH="/tmp/preset-scratch-${{ matrix.preset }}"
+          copier copy --trust --defaults \
+            --data-file presets/${{ matrix.preset }}.yml \
+            "$GITHUB_WORKSPACE" "$SCRATCH"
+
+      - name: Run just verify in preset scratch
+        working-directory: /tmp/preset-scratch-${{ matrix.preset }}
         run: just verify

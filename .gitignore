@@ -20,3 +20,6 @@ __pycache__/
 # Not for the public-facing branch. Local copies stay on disk for ongoing work.
 research/
 SESSION-HANDOFF.md
+
+# PII-bearing personal presets (D-W12) — never commit
+presets/*.local.yml

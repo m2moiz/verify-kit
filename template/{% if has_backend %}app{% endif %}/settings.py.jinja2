@@ -22,6 +22,17 @@ class Settings(BaseSettings):
     DATABASE_URL: str = Field(default="postgresql+asyncpg://postgres:postgres@localhost:5432/app")
     {% endif %}
     PROFILE_ENABLED: bool = Field(default=True, description="dev-only pyinstrument toggle")
+{% if has_web %}
+    CORS_ALLOW_ORIGINS: list[str] = Field(
+        default=["http://localhost:5173", "http://localhost:3000"],
+        description="Allowed CORS origins. In production, restrict to your actual frontend URL.",
+    )
+
+    @property
+    def cors_allow_origins(self) -> list[str]:
+        return self.CORS_ALLOW_ORIGINS
+
+{% endif %}
     VERIFYKIT_AUTH_TOKEN: str | None = Field(
         default=None,
         description="X-VerifyKit-Token header value; unset enables dev fallback when ENV='dev'",

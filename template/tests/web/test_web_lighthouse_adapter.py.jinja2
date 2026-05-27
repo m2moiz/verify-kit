@@ -1,0 +1,179 @@
+"""Unit tests for harness.web.lighthouse_adapter.
+
+CONTRACT CONFORMANCE TEST — REVIEW-CHECKLIST §4 API-surface drift guard.
+
+Verified signatures checked here:
+  ErrorEnvelope (harness/models.py): NO "fixable" field.
+  Envelope code format: web.lighthouse.budget.<metric-key>
+  docs_url starts with https://web.dev/
+"""
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import pytest
+
+from harness.models import ErrorEnvelope
+from harness.web.lighthouse_adapter import parse_lighthouse_output
+
+# ── Fixtures ──────────────────────────────────────────────────────────────────
+
+def _make_lhr(lcp_ms: float = 3200.0) -> dict:
+    """Minimal LHR JSON with a failing LCP metric."""
+    return {
+        "categories": {
+            "performance": {
+                "score": 0.3,
+                "auditRefs": [
+                    {"id": "largest-contentful-paint"},
+                    {"id": "cumulative-layout-shift"},
+                    {"id": "interactive"},
+                    {"id": "total-byte-weight"},
+                ],
+            }
+        },
+        "audits": {
+            "largest-contentful-paint": {
+                "id": "largest-contentful-paint",
+                "score": 0.3,
+                "numericValue": lcp_ms,
+                "displayValue": f"{lcp_ms / 1000:.1f}s",
+            },
+            "cumulative-layout-shift": {
+                "id": "cumulative-layout-shift",
+                "score": 0.9,
+                "numericValue": 0.05,
+                "displayValue": "0.05",
+            },
+            "interactive": {
+                "id": "interactive",
+                "score": 0.8,
+                "numericValue": 2000.0,
+                "displayValue": "2.0s",
+            },
+            "total-byte-weight": {
+                "id": "total-byte-weight",
+                "score": 0.9,
+                "numericValue": 200000.0,
+                "displayValue": "200KB",
+            },
+            "performance-budget": {
+                "id": "performance-budget",
+                "details": {
+                    "items": []
+                }
+            }
+        }
+    }
+
+
+def _make_clean_lhr() -> dict:
+    """LHR with all metrics scoring well."""
+    lhr = _make_lhr(lcp_ms=1500.0)
+    lhr["audits"]["largest-contentful-paint"]["score"] = 0.9
+    lhr["categories"]["performance"]["score"] = 0.95
+    return lhr
+
+
+def _write_manifest(tmp_path: Path, lhr: dict, is_representative: bool = True) -> Path:
+    """Write a minimal LHCI filesystem manifest + lhr file."""
+    lighthouse_dir = tmp_path / "lighthouse"
+    lighthouse_dir.mkdir(parents=True, exist_ok=True)
+
+    lhr_path = lighthouse_dir / "lhr-0.json"
+    lhr_path.write_text(json.dumps(lhr), encoding="utf-8")
+
+    manifest = [
+        {
+            "url": "http://localhost:4173/",
+            "isRepresentativeRun": is_representative,
+            "jsonPath": "lhr-0.json",
+        }
+    ]
+    (lighthouse_dir / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+
+    return lighthouse_dir
+
+
+# ── Tests ─────────────────────────────────────────────────────────────────────
+
+
+def test_parse_lighthouse_output_failing_lcp(tmp_path: Path) -> None:
+    """LCP = 3200ms (> 2500ms budget) → envelope with correct code."""
+    lhr = _make_lhr(lcp_ms=3200.0)
+    lighthouse_dir = _write_manifest(tmp_path, lhr)
+
+    envelopes = parse_lighthouse_output(lighthouse_dir)
+
+    # Should have at least the LCP envelope
+    lcp_envs = [e for e in envelopes if "lcp" in e.code or "largest-contentful-paint" in e.code]
+    assert lcp_envs, (
+        f"Expected an LCP budget envelope but got codes: {[e.code for e in envelopes]}"
+    )
+
+
+def test_parse_lighthouse_output_docs_url_web_dev(tmp_path: Path) -> None:
+    """docs_url for LCP envelope starts with https://web.dev/."""
+    lhr = _make_lhr(lcp_ms=3200.0)
+    lighthouse_dir = _write_manifest(tmp_path, lhr)
+
+    envelopes = parse_lighthouse_output(lighthouse_dir)
+
+    lcp_envs = [e for e in envelopes if "lcp" in e.code or "largest-contentful-paint" in e.code]
+    if lcp_envs:
+        env = lcp_envs[0]
+        assert env.docs_url is not None, "LCP envelope must have docs_url"
+        assert env.docs_url.startswith("https://web.dev/"), (
+            f"docs_url must start with https://web.dev/, got: {env.docs_url!r}"
+        )
+
+
+def test_parse_lighthouse_output_clean_run(tmp_path: Path) -> None:
+    """All metrics passing → empty envelope list."""
+    lhr = _make_clean_lhr()
+    lighthouse_dir = _write_manifest(tmp_path, lhr)
+
+    envelopes = parse_lighthouse_output(lighthouse_dir)
+    assert envelopes == []
+
+
+def test_parse_lighthouse_output_missing_manifest(tmp_path: Path) -> None:
+    """Missing manifest.json → FileNotFoundError."""
+    lighthouse_dir = tmp_path / "empty"
+    lighthouse_dir.mkdir()
+    with pytest.raises(FileNotFoundError):
+        parse_lighthouse_output(lighthouse_dir)
+
+
+def test_parse_lighthouse_output_no_fixable_kwarg() -> None:
+    """REVIEW-CHECKLIST §4: verify adapter source has no ErrorEnvelope(fixable=) call.
+
+    Reads the adapter source file and asserts no 'fixable' kwarg is passed
+    to ErrorEnvelope(...). This test fires at scaffold import time if someone
+    accidentally adds fixable= to a future revision.
+    """
+    import re
+    from pathlib import Path as _Path
+    import harness.web.lighthouse_adapter as _mod
+
+    src = _Path(_mod.__file__).read_text(encoding="utf-8")
+    match = re.search(r"ErrorEnvelope\([^)]*fixable", src)
+    assert match is None, (
+        f"Found ErrorEnvelope(...fixable=...) at char {match.start()} in "
+        f"lighthouse_adapter.py — REVIEW-CHECKLIST §4 violation. "
+        "Per-check fixability lives on @register(fixable=...), not on envelopes."
+    )
+
+
+def test_parse_lighthouse_output_envelope_no_fixable_attr(tmp_path: Path) -> None:
+    """Resulting envelopes have no 'fixable' attribute."""
+    lhr = _make_lhr(lcp_ms=3200.0)
+    lighthouse_dir = _write_manifest(tmp_path, lhr)
+
+    envelopes = parse_lighthouse_output(lighthouse_dir)
+    for env in envelopes:
+        assert not hasattr(env, "fixable"), (
+            "ErrorEnvelope has a 'fixable' attribute — model changed. "
+            "Read REVIEW-CHECKLIST §4 before modifying ErrorEnvelope."
+        )

@@ -89,3 +89,18 @@ justfile          — canonical task runner (just verify, lint, format, shell)
 > Every feature in this project serves both a human developer and an autonomous coding agent.
 > See https://github.com/m2moiz/verify-kit/blob/main/research/00-architecture-overview.md
 > for the six-row checklist that gates every new feature.
+
+{% if has_web %}
+---
+
+## Web Add-on Agent Rules
+
+- **Inner loop:** `just verify-web-quick` runs vitest, playwright, and axe (~30s). Use this before every commit.
+- **Full bar:** `just verify-web` runs all 5 checks including Lighthouse and Lost Pixel (~3-5 min). Use before marking a task done.
+- **Visual changes need baselines:** `just web-baseline` regenerates Lost Pixel baselines inside the pinned Docker image (D-W02). Always run after intentional visual changes. Stage new PNGs with `git add web/.lost-pixel/baseline/*.png` — this is the explicit approval gesture (D-W03). Commit alongside the visual change in the same PR.
+- **Don't run `shadcn init`:** components are vendored at template-author time (D-W10). Add more components with `pnpm dlx shadcn@latest add <name>` inside `web/`.
+- **No `tailwind.config.{js,ts}`:** Tailwind v4 is CSS-first. Customize via `web/src/index.css` `@theme` block, NOT a config file. Adding a tailwind.config.* file breaks the UI-SPEC Registry Safety guard.
+- **SSE subscribers must bypass the Vite proxy:** `EventSource` calls must use absolute URL `http://localhost:8000/...` (not a relative path). Vite's Connect middleware buffers SSE streams; absolute URL routes around it (Pitfall §5). See `web/src/lib/events.ts` for the reference pattern.
+- **Adapter contract is FROZEN:** registering new web checks uses `@register(check_id, *, tier, category, description, inputs, fixable, tool, skip_if_unavailable)`. Do NOT pass `severity=`, `tags=`, `readOnlyHint=`, or `destructiveHint=`. `ErrorEnvelope` has no `fixable` field — encode per-finding fixability in the `code` suffix (e.g. `web.axe.<rule>.<severity>.<fixable|manual>`).
+- **Verify CLI semantics:** `--check=<id>` is exact match, one flag per check. `--check='web.*'` is NOT valid (CLI does `by_id.get(cid)`, no glob). Always enumerate: `--check=web.vitest --check=web.playwright --check=web.axe` etc.
+{% endif %}
