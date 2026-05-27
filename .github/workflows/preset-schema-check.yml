@@ -1,0 +1,136 @@
+# Copyright (c) 2026 Moiz
+# SPDX-License-Identifier: MIT
+
+# Preset schema drift detection (D-W13 / PRESET-06).
+#
+# Runs on every PR and push to main. Parses all committed presets/*.yml files
+# and asserts:
+#   1. _schema_version == "0.2" is present in each preset.
+#   2. Every prompt key in copier.yml is represented in each preset.
+#      (Catches the case where a new copier.yml prompt is added without updating
+#       the public presets — would cause CI self-test to fail on interactive input.)
+#   3. No surplus keys exist in any preset (catches typos like `auther_name`).
+#
+# Excludes *.local.yml — those are gitignored and never committed.
+
+name: preset-schema-check
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+jobs:
+  schema-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install PyYAML
+        run: pip install pyyaml
+
+      - name: Check preset schema coverage
+        run: |
+          python - <<'PYEOF'
+          import sys
+          import pathlib
+          import yaml
+
+          REPO_ROOT = pathlib.Path(".")
+          COPIER_YML = REPO_ROOT / "copier.yml"
+          PRESETS_DIR = REPO_ROOT / "presets"
+          SCHEMA_VERSION = "0.2"
+
+          # ── Extract prompt keys from copier.yml ───────────────────────────────
+          # Prompt keys are top-level keys that are NOT copier internal keys
+          # (prefixed with _ like _subdirectory, _exclude, _tasks, etc.).
+          COPIER_INTERNAL_KEYS = {
+              "_subdirectory", "_jinja_extensions", "_answers_file",
+              "_templates_suffix", "_min_copier_version", "_envops",
+              "_exclude", "_tasks", "_message_before_copy", "_message_after_copy",
+          }
+
+          with open(COPIER_YML, encoding="utf-8") as f:
+              copier_data = yaml.safe_load(f)
+
+          prompt_keys = set()
+          for key, val in copier_data.items():
+              if key in COPIER_INTERNAL_KEYS or key.startswith("_"):
+                  continue
+              # Skip computed prompts (when: false) — they are derived from other
+              # prompts and should not be supplied in a preset file.
+              if isinstance(val, dict) and val.get("when") is False:
+                  continue
+              prompt_keys.add(key)
+
+          print(f"Prompt keys in copier.yml ({len(prompt_keys)}):")
+          for k in sorted(prompt_keys):
+              print(f"  {k}")
+
+          # ── Check each preset file ────────────────────────────────────────────
+          preset_files = sorted(PRESETS_DIR.glob("*.yml"))
+          # Exclude .local.yml (gitignored — should never exist in CI, but be safe)
+          preset_files = [p for p in preset_files if not p.name.endswith(".local.yml")]
+
+          if not preset_files:
+              print("ERROR: No preset files found in presets/", file=sys.stderr)
+              sys.exit(1)
+
+          errors = []
+
+          for preset_path in preset_files:
+              print(f"\nChecking {preset_path.name} ...")
+              with open(preset_path, encoding="utf-8") as f:
+                  preset_data = yaml.safe_load(f)
+
+              # 1. _schema_version check
+              schema_version = preset_data.get("_schema_version")
+              if schema_version != SCHEMA_VERSION:
+                  errors.append(
+                      f"{preset_path.name}: _schema_version is {schema_version!r}; "
+                      f"expected {SCHEMA_VERSION!r}"
+                  )
+              else:
+                  print(f"  _schema_version: {schema_version!r} OK")
+
+              # Preset keys (excluding internal _ keys)
+              preset_keys = {k for k in preset_data if not k.startswith("_")}
+
+              # 2. Coverage check: every copier.yml prompt key must be in the preset
+              missing_keys = prompt_keys - preset_keys
+              if missing_keys:
+                  errors.append(
+                      f"{preset_path.name}: missing keys from copier.yml: "
+                      + ", ".join(sorted(missing_keys))
+                  )
+              else:
+                  print(f"  Key coverage: all {len(prompt_keys)} copier.yml prompt keys present")
+
+              # 3. No surplus keys (typo guard)
+              surplus_keys = preset_keys - prompt_keys
+              if surplus_keys:
+                  errors.append(
+                      f"{preset_path.name}: surplus keys not in copier.yml (typo?): "
+                      + ", ".join(sorted(surplus_keys))
+                  )
+              else:
+                  print(f"  No surplus keys: OK")
+
+          if errors:
+              print("\nPreset schema check FAILED:", file=sys.stderr)
+              for err in errors:
+                  print(f"  ERROR: {err}", file=sys.stderr)
+              print(
+                  "\nFix: update all presets/*.yml to include new copier.yml prompt keys "
+                  "and set _schema_version: \"0.2\".",
+                  file=sys.stderr,
+              )
+              sys.exit(1)
+          else:
+              print(f"\nAll {len(preset_files)} preset file(s) passed schema check.")
+          PYEOF

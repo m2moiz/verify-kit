@@ -734,6 +734,251 @@ def test_web_vitest_and_playwright(tmp_path: Path) -> None:
     )
 
 
+def test_web_ci_matrix_shape() -> None:
+    """Plan 07-07: CI matrix assertions for template-selftest.yml.
+
+    Asserts:
+      1. All 6 expected combos appear in the matrix.combo list.
+      2. +web+llm is NOT in the matrix (explicitly skipped per CONTEXT.md).
+      3. timeout-minutes: 20 is set on the job.
+      4. fail-fast: false is set on the strategy.
+    """
+    import yaml
+
+    workflow_path = Path(__file__).parent.parent / ".github" / "workflows" / "template-selftest.yml"
+    assert workflow_path.is_file(), f"template-selftest.yml not found at {workflow_path}"
+
+    with open(workflow_path, encoding="utf-8") as f:
+        workflow = yaml.safe_load(f)
+
+    job = workflow["jobs"]["selftest"]
+
+    # 3. timeout-minutes: 20
+    assert job.get("timeout-minutes") == 20, (
+        f"job.timeout-minutes should be 20; got {job.get('timeout-minutes')!r}"
+    )
+
+    # 4. fail-fast: false
+    strategy = job.get("strategy", {})
+    assert strategy.get("fail-fast") is False, (
+        f"strategy.fail-fast should be false; got {strategy.get('fail-fast')!r}"
+    )
+
+    # 1. All 6 expected combos in matrix.combo
+    combo_list = strategy.get("matrix", {}).get("combo", [])
+    expected_combos = {"base", "backend", "llm", "web", "backend-web", "full"}
+    present_combos = set(combo_list)
+    missing = expected_combos - present_combos
+    assert not missing, (
+        f"Expected combos missing from matrix.combo: {sorted(missing)}. "
+        f"Present: {sorted(present_combos)}"
+    )
+
+    # 2. +web+llm is NOT in the matrix (explicitly skipped)
+    assert "web-llm" not in present_combos and "llm-web" not in present_combos, (
+        "web+llm combo should NOT be in the matrix (non-realistic combo per CONTEXT.md). "
+        f"Present combos: {sorted(present_combos)}"
+    )
+
+
+def test_web_cli_surface_guard() -> None:
+    """Plan 07-07: CLI-surface regression guards.
+
+    Asserts:
+      1. No --check='web.*' or --check="web.*" glob in template/justfile.jinja2.
+         (HIGH-1 regression guard: CLI does exact match only per core.py:101.)
+      2. verify-web and verify-web-quick recipe bodies begin with `uv run verify-kit verify`.
+         (HIGH-6 regression guard: bare `verify-kit` is not on PATH in scratch scaffolds.)
+    """
+    justfile = Path(__file__).parent.parent / "template" / "justfile.jinja2"
+    assert justfile.is_file(), f"template/justfile.jinja2 not found at {justfile}"
+    text = justfile.read_text(encoding="utf-8")
+
+    # Guard 1: no glob --check= pattern
+    assert "--check='web.*'" not in text, (
+        "justfile.jinja2 contains --check='web.*' glob — CLI does exact match only "
+        "(core.py.jinja2:101 uses by_id.get(cid)). Enumerate each check ID explicitly."
+    )
+    assert '--check="web.*"' not in text, (
+        'justfile.jinja2 contains --check="web.*" glob — same issue as above.'
+    )
+
+    # Guard 2: verify-web and verify-web-quick recipe bodies use `uv run verify-kit verify`
+    lines = text.splitlines()
+    in_verify_web = False
+    in_verify_web_quick = False
+    for line in lines:
+        if re.match(r"^verify-web:", line) and "quick" not in line:
+            in_verify_web = True
+            in_verify_web_quick = False
+            continue
+        if re.match(r"^verify-web-quick:", line):
+            in_verify_web_quick = True
+            in_verify_web = False
+            continue
+        # Recipe ends when a non-indented non-empty line appears (new recipe or Jinja block)
+        if line and not line[0].isspace() and not line.startswith("{"):
+            in_verify_web = False
+            in_verify_web_quick = False
+
+        if in_verify_web and line.strip():
+            assert "uv run verify-kit verify" in line, (
+                f"verify-web recipe body must use 'uv run verify-kit verify'; got: {line!r}"
+            )
+            in_verify_web = False  # only check first non-empty body line
+        if in_verify_web_quick and line.strip():
+            assert "uv run verify-kit verify" in line, (
+                f"verify-web-quick recipe body must use 'uv run verify-kit verify'; got: {line!r}"
+            )
+            in_verify_web_quick = False
+
+
+def test_web_preset_schema_coverage() -> None:
+    """Plan 07-07: Preset schema coverage assertion.
+
+    Runs the same logic as preset-schema-check.yml inline:
+      - Both public presets have _schema_version: "0.2"
+      - Both presets cover all non-computed copier.yml prompt keys
+      - No surplus keys (typo guard)
+    """
+    import yaml
+
+    repo_root = Path(__file__).parent.parent
+    copier_yml = repo_root / "copier.yml"
+    presets_dir = repo_root / "presets"
+
+    assert copier_yml.is_file(), f"copier.yml not found at {copier_yml}"
+    assert presets_dir.is_dir(), f"presets/ directory not found at {presets_dir}"
+
+    COPIER_INTERNAL_KEYS = {
+        "_subdirectory", "_jinja_extensions", "_answers_file",
+        "_templates_suffix", "_min_copier_version", "_envops",
+        "_exclude", "_tasks", "_message_before_copy", "_message_after_copy",
+    }
+    SCHEMA_VERSION = "0.2"
+
+    with open(copier_yml, encoding="utf-8") as f:
+        copier_data = yaml.safe_load(f)
+
+    prompt_keys = set()
+    for key, val in copier_data.items():
+        if key in COPIER_INTERNAL_KEYS or key.startswith("_"):
+            continue
+        # Skip computed prompts (when: false) — auto-derived from other prompts
+        if isinstance(val, dict) and val.get("when") is False:
+            continue
+        prompt_keys.add(key)
+
+    assert prompt_keys, "No prompt keys found in copier.yml — check COPIER_INTERNAL_KEYS filter"
+
+    preset_files = sorted(presets_dir.glob("*.yml"))
+    preset_files = [p for p in preset_files if not p.name.endswith(".local.yml")]
+    assert len(preset_files) >= 2, (
+        f"Expected at least 2 public preset files in presets/; found {len(preset_files)}: "
+        + ", ".join(p.name for p in preset_files)
+    )
+
+    errors: list[str] = []
+    for preset_path in preset_files:
+        with open(preset_path, encoding="utf-8") as f:
+            preset_data = yaml.safe_load(f)
+
+        schema_version = preset_data.get("_schema_version")
+        if schema_version != SCHEMA_VERSION:
+            errors.append(
+                f"{preset_path.name}: _schema_version is {schema_version!r}; "
+                f"expected {SCHEMA_VERSION!r}"
+            )
+
+        preset_keys = {k for k in preset_data if not k.startswith("_")}
+        missing_keys = prompt_keys - preset_keys
+        if missing_keys:
+            errors.append(
+                f"{preset_path.name}: missing copier.yml keys: {sorted(missing_keys)}"
+            )
+        surplus_keys = preset_keys - prompt_keys
+        if surplus_keys:
+            errors.append(
+                f"{preset_path.name}: surplus keys (typo?): {sorted(surplus_keys)}"
+            )
+
+    assert not errors, (
+        "Preset schema check failed:\n" + "\n".join(f"  {e}" for e in errors)
+    )
+
+
+@pytest.mark.skipif(
+    os.environ.get("VERIFY_KIT_SKIP_E2E") == "1",
+    reason="opt-out for fast local runs (set VERIFY_KIT_SKIP_E2E=1)",
+)
+@pytest.mark.skipif(shutil.which("node") is None, reason="Node required")
+def test_web_verify_web_quick_boss_test(tmp_path: Path) -> None:
+    """Plan 07-07: End-to-end boss test — render scaffold + just verify-web-quick.
+
+    Proves the full pipeline: has_web prompt -> bounded path-shapes -> adapters
+    -> registry -> CLI -> recipe -> exit 0.
+
+    Uses has_web=true, has_backend=false (cheapest combo; no Docker needed).
+    Runs just verify-web-quick (NOT verify-web — skips Lighthouse + Lost Pixel
+    which require Chrome/Docker and are too slow for unit test budget).
+
+    Gate: VERIFY_KIT_SKIP_E2E=1 skips this test for devs without Node.
+    """
+    scratch = _render(tmp_path, has_web=True)
+    assert scratch.is_dir(), f"scaffold root missing: {scratch}"
+
+    web_dir = scratch / "web"
+    assert web_dir.is_dir(), "web/ dir must exist for has_web=True"
+
+    # Install pnpm dependencies
+    subprocess.run(
+        ["corepack", "enable", "pnpm"],
+        cwd=str(web_dir),
+        env=_CLEAN_ENV,
+        check=False,
+    )
+    subprocess.run(
+        ["pnpm", "install", "--frozen-lockfile"],
+        cwd=str(web_dir),
+        env=_CLEAN_ENV,
+        check=True,
+        timeout=180,
+    )
+
+    # Install Playwright Chromium (needed for web.playwright and web.axe checks)
+    subprocess.run(
+        ["pnpm", "exec", "playwright", "install", "--with-deps", "chromium"],
+        cwd=str(web_dir),
+        env=_CLEAN_ENV,
+        check=True,
+        timeout=300,
+    )
+
+    # Build the web app first (vite preview needs dist/)
+    subprocess.run(
+        ["pnpm", "build"],
+        cwd=str(web_dir),
+        env=_CLEAN_ENV,
+        check=True,
+        timeout=120,
+    )
+
+    # Boss test: just verify-web-quick must exit 0
+    result = subprocess.run(
+        ["just", "verify-web-quick"],
+        cwd=str(scratch),
+        env=_CLEAN_ENV,
+        capture_output=True,
+        text=True,
+        timeout=300,
+    )
+    assert result.returncode == 0, (
+        f"just verify-web-quick failed (exit {result.returncode}).\n"
+        f"stdout: {result.stdout[-3000:]}\n"
+        f"stderr: {result.stderr[-1000:]}"
+    )
+
+
 @pytest.mark.skipif(shutil.which("node") is None, reason="Node required")
 def test_web_harness_registry_smoke(tmp_path: Path) -> None:
     """Plan 07-06: registry smoke + adapter contract guards in scratch scaffold.

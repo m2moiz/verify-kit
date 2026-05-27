@@ -1,0 +1,35 @@
+# Public-template default — answers match `default:` values in copier.yml.
+# Used as the seed for OSS consumers who want every add-on OFF.
+# Safe to commit; contains no PII.
+#
+# D-W13: _schema_version is checked by CI workflow preset-schema-check.yml.
+_schema_version: "0.2"
+
+# ── Identity ──────────────────────────────────────────────────────────────────
+project_name: "My OSS Project"
+project_description: "A project scaffolded with verify-kit."
+author_name: "Your Name Here"
+author_email: "you@example.com"
+license: "MIT"
+
+# ── Agent integrations ────────────────────────────────────────────────────────
+# All false: no agent-specific files in the scaffold by default (OSS-minimalist).
+has_claude_code: false
+has_cursor: false
+has_windsurf: false
+has_copilot: false
+has_zed: false
+has_continue: false
+
+# ── Add-ons ───────────────────────────────────────────────────────────────────
+# Matches copier.yml defaults: backend=true, llm=true, rest=false.
+has_backend: true
+has_llm: true
+has_logfire: false
+has_fastapi_mcp: false
+has_db: true
+has_web: false
+llm_backend: "langfuse-cloud"
+
+# ── Optional ──────────────────────────────────────────────────────────────────
+has_devcontainer: false
