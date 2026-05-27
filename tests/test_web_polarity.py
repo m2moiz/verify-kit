@@ -1,7 +1,7 @@
 # Copyright (c) 2026 Moiz
 # SPDX-License-Identifier: MIT
 
-"""Bidirectional web add-on polarity tests (Plans 07-01 through 07-05).
+"""Bidirectional web add-on polarity tests (Plans 07-01 through 07-08).
 
 Plan 07-01: Renders the template in two polarities (has_web=True / has_web=False)
 and asserts that path-gating works correctly in both directions.
@@ -26,8 +26,17 @@ Plan 07-04: Adds a 4-combo (has_web x has_backend) polarity test:
 Plan 07-05: Vitest + Playwright infrastructure:
   - pnpm exec vitest run exits 0 with >= 2 passing tests in scratch scaffold.
   - Playwright smoke test exits 0 (skippable via VERIFY_KIT_SKIP_PLAYWRIGHT=1).
-  - trace fixture contains no @opentelemetry/sdk-trace-web reference (TRACE-03).
+  - TRACE-03 (trace.ts fixture header-only): trace.ts must NOT import the OTel SDK.
+    The test fixture injects W3C traceparent headers only; the production SDK lives
+    in src/otel.ts (see Plan 07-08 below).
   - App.test.tsx and DarkModeToggle.test.tsx exist in the rendered scaffold.
+
+Plan 07-08: Browser OTel SDK (gap closure — TRACE-01 / TRACE-02 / TRACE-04):
+  - @opentelemetry/sdk-trace-web ships in production package.json (TRACE-01).
+  - src/otel.ts (plain .ts, NOT .ts.jinja2) activates the SDK only when
+    VITE_OTEL_EXPORTER_OTLP_ENDPOINT is set at build time (TRACE-02).
+  - OTel-on vs OTel-off bundle delta is <= 100 KB gzipped (TRACE-04).
+    Skip: VERIFY_KIT_SKIP_BUNDLE_BUDGET=1 (heavy double-build; CI always runs).
 
 Design notes:
   - Uses the ``render_scratch_project`` Python-API helper (not raw subprocess)
@@ -641,22 +650,76 @@ def test_web_vitest_and_playwright(tmp_path: Path) -> None:
     )
 
     # ── Tier 2: trace fixture safety (TRACE-03) ───────────────────────────────
+    # The FIXTURE stays header-only — it is the Playwright W3C traceparent
+    # injector and must NOT import the OTel SDK.
+    # The production SDK lives in src/otel.ts (see OTel-present assertions below).
     trace_fixture = web_dir / "tests" / "e2e" / "fixtures" / "trace.ts"
     assert trace_fixture.is_file(), (
         f"tests/e2e/fixtures/trace.ts missing from rendered scaffold at {trace_fixture}. "
         "Check that template/web/tests/e2e/fixtures/trace.ts is committed."
     )
     trace_text = trace_fixture.read_text(encoding="utf-8")
-    # TRACE-03: no SDK import — comments mentioning the package name are fine,
-    # but there must be no actual import/require of the OTel SDK (deferred to v0.3).
+    # TRACE-03: no SDK import in the FIXTURE — comments mentioning the package
+    # name are fine, but there must be no actual import/require of the OTel SDK
+    # in trace.ts.  The SDK ships in production src/otel.ts (TRACE-01, 07-08).
     otel_sdk_import = re.search(
         r'^\s*(import\s|require\s*\()\s*[\'"]@opentelemetry/sdk-trace-web[\'"]',
         trace_text,
         re.MULTILINE,
     )
     assert otel_sdk_import is None, (
-        "trace.ts imports '@opentelemetry/sdk-trace-web' — this must be header-only "
-        "(TRACE-03). SDK init is deferred to v0.3 per 07-CONTEXT.md Deferred Ideas."
+        "trace.ts imports '@opentelemetry/sdk-trace-web' — this test fixture must "
+        "stay header-only (TRACE-03). The production SDK lives in src/otel.ts."
+    )
+
+    # ── Tier 2b: OTel-present assertions (TRACE-01 / TRACE-02 — Plan 07-08) ──
+    # The production web package.json must contain the OTel SDK packages.
+    pkg_json = web_dir / "package.json"
+    assert pkg_json.is_file(), f"package.json missing from rendered scaffold: {pkg_json}"
+    pkg_text = pkg_json.read_text(encoding="utf-8")
+    assert "@opentelemetry/sdk-trace-web" in pkg_text, (
+        "Rendered web/package.json does not contain '@opentelemetry/sdk-trace-web'. "
+        "The OTel SDK must ship in production dependencies (TRACE-01, Plan 07-08)."
+    )
+    assert "@opentelemetry/instrumentation-fetch" in pkg_text, (
+        "Rendered web/package.json does not contain '@opentelemetry/instrumentation-fetch'. "
+        "Fetch auto-instrumentation must be included (TRACE-02, Plan 07-08)."
+    )
+
+    # src/otel.ts must exist as a plain .ts file (NOT .ts.jinja2 — Pitfall §1).
+    otel_ts = web_dir / "src" / "otel.ts"
+    otel_ts_jinja = web_dir / "src" / "otel.ts.jinja2"
+    assert otel_ts.is_file(), (
+        f"src/otel.ts missing from rendered scaffold at {otel_ts}. "
+        "The inert-by-default OTel init file must exist (TRACE-01, Plan 07-08)."
+    )
+    assert not otel_ts_jinja.exists(), (
+        "src/otel.ts.jinja2 found — Pitfall §1 violation. Only vite.config.ts.jinja2 "
+        "and src/config.ts.jinja2 may carry .jinja2; use plain .ts for otel.ts."
+    )
+
+    otel_ts_text = otel_ts.read_text(encoding="utf-8")
+    assert "VITE_OTEL_EXPORTER_OTLP_ENDPOINT" in otel_ts_text, (
+        "src/otel.ts does not reference VITE_OTEL_EXPORTER_OTLP_ENDPOINT. "
+        "The inert-by-default guard must check this env var (TRACE-02, Plan 07-08)."
+    )
+    # src/otel.ts must actually import the SDK (not just reference it in a comment).
+    otel_sdk_init = re.search(
+        r'^\s*import\s.*[\'"]@opentelemetry/sdk-trace-web[\'"]',
+        otel_ts_text,
+        re.MULTILINE,
+    )
+    assert otel_sdk_init is not None, (
+        "src/otel.ts does not import '@opentelemetry/sdk-trace-web'. "
+        "The production OTel init must use the SDK (TRACE-01, Plan 07-08)."
+    )
+
+    # main.tsx must call initOtel() before createRoot.
+    main_tsx = web_dir / "src" / "main.tsx"
+    assert main_tsx.is_file(), f"src/main.tsx missing from rendered scaffold: {main_tsx}"
+    assert "initOtel" in main_tsx.read_text(encoding="utf-8"), (
+        "src/main.tsx does not call initOtel(). "
+        "OTel must be initialised before React mounts (Plan 07-08)."
     )
 
     # ── Tier 3: runtime Vitest + Playwright ───────────────────────────────────
