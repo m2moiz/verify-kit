@@ -188,6 +188,12 @@ export default function App() {
           Dialog renders with defaultOpen so the Lost Pixel snapshot in plan 07-06
           captures the portal-rendered dialog content (Radix portal verification).
           This verifies that Tailwind v4 CSS cascade survives the portal boundary.
+
+          modal={false}: a modal Dialog sets aria-hidden on all sibling content,
+          which hides the rest of the gallery (including the DarkModeToggle) from
+          the accessibility tree and traps focus — breaking the role-based E2E and
+          axe interactions in plans 07-05/07-06. Non-modal keeps the portal content
+          visible for snapshots without aria-hiding or locking the page.
         */}
         <section
           id="gallery-dialog"
@@ -199,7 +205,7 @@ export default function App() {
             Modal overlay. Esc or backdrop click to close.
           </p>
           <div className="mt-4">
-            <Dialog defaultOpen>
+            <Dialog defaultOpen modal={false}>
               <DialogTrigger asChild>
                 <Button variant="outline">Open</Button>
               </DialogTrigger>
@@ -224,6 +230,9 @@ export default function App() {
           Sheet renders with defaultOpen so the Lost Pixel snapshot in plan 07-06
           captures the portal-rendered sheet content (side-drawer portal verification).
           This verifies that Tailwind v4 CSS cascade survives the portal boundary.
+
+          modal={false}: see the Dialog note above — a modal Sheet aria-hides and
+          focus-traps the rest of the page, breaking the toggle E2E/axe interactions.
         */}
         <section
           id="gallery-sheet"
@@ -235,7 +244,7 @@ export default function App() {
             Side drawer. Same interaction as Dialog.
           </p>
           <div className="mt-4">
-            <Sheet defaultOpen>
+            <Sheet defaultOpen modal={false}>
               <SheetTrigger asChild>
                 <Button variant="outline">Open</Button>
               </SheetTrigger>
