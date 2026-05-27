@@ -52,7 +52,7 @@ export default function App() {
       <header className="sticky top-0 z-10 border-b bg-background p-8">
         <div className="flex items-start justify-between gap-4">
           <div className="space-y-1">
-            <h1 className="text-4xl font-bold tracking-tight">{PROJECT_NAME}</h1>
+            <h1 className="text-4xl font-bold tracking-tight">{PROJECT_NAME} — Component Gallery</h1>
             <p className="text-sm text-muted-foreground">{PROJECT_DESCRIPTION}</p>
             <p className="text-sm text-muted-foreground">
               Component gallery. Replace App.tsx with your real app.
