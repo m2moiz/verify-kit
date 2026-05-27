@@ -50,6 +50,8 @@ _KNOWN_DEFAULTS: dict[str, Any] = {
     "has_zed": False,
     "has_continue": False,
     "llm_backend": "none",
+    # Phase 7 add-ons (v0.2+)
+    "has_web": False,
 }
 
 
@@ -72,18 +74,35 @@ def _build_default_answers() -> dict[str, Any]:
 _DEFAULT_ANSWERS = _build_default_answers()
 
 
-def render_scratch_project(tmp_path: Path, **overrides: object) -> Path:
-    """Render the verify-kit template into `tmp_path/scratch` and return the path."""
+def render_scratch_project(
+    tmp_path: Path,
+    *,
+    _vcs_ref: str | None = None,
+    **overrides: object,
+) -> Path:
+    """Render the verify-kit template into ``tmp_path/scratch`` and return the path.
+
+    Args:
+        tmp_path:   Directory to render into (test fixture or tempdir).
+        _vcs_ref:   Optional VCS ref to pass to Copier. Use ``"HEAD"`` in Phase 7+
+                    tests so renders include prompts added after the v0.1.0 tag.
+                    Defaults to ``None`` (Copier uses the latest tag), which
+                    preserves the behaviour of all existing Phase 1-6 tests.
+        **overrides:  Question answers that override the built-in defaults.
+    """
     dst = tmp_path / "scratch"
     answers = {**_DEFAULT_ANSWERS, **overrides}
-    run_copy(
-        src_path=str(_REPO_ROOT),
-        dst_path=str(dst),
-        data=answers,
-        defaults=True,
-        unsafe=True,
-        quiet=True,
-    )
+    copy_kwargs: dict[str, object] = {
+        "src_path": str(_REPO_ROOT),
+        "dst_path": str(dst),
+        "data": answers,
+        "defaults": True,
+        "unsafe": True,
+        "quiet": True,
+    }
+    if _vcs_ref is not None:
+        copy_kwargs["vcs_ref"] = _vcs_ref
+    run_copy(**copy_kwargs)  # type: ignore[arg-type]
     return dst
 
 
