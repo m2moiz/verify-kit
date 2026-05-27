@@ -1,20 +1,22 @@
 # Copyright (c) 2026 Moiz
 # SPDX-License-Identifier: MIT
 
-"""Plan 07-01 — bidirectional web add-on polarity test.
+"""Bidirectional web add-on polarity tests (Plans 07-01 and 07-02).
 
-Renders the template in two polarities (has_web=True / has_web=False) and
-asserts that path-gating works correctly in both directions.
+Plan 07-01: Renders the template in two polarities (has_web=True / has_web=False)
+and asserts that path-gating works correctly in both directions.
+
+Plan 07-02: Adds a build-smoke test (test_web_baseline_builds) that renders a
+scratch scaffold with has_web=True, runs pnpm install + tsc + pnpm build, and
+asserts the built dist/index.html artifact is present.
 
 Design notes:
   - Uses the ``render_scratch_project`` Python-API helper (not raw subprocess)
     to avoid the cwd-leak described in REVIEW-CHECKLIST §1.
   - ``_CLEAN_ENV`` is imported from _helpers and must be passed to any
-    subprocess targeting a scratch project (REVIEW-CHECKLIST §8). No subprocess
-    calls are needed for rendering in this test; the import makes it available
-    for future assertions that invoke shell tools inside the scratch.
-  - Node tooling (pnpm, vite, etc.) is NOT invoked here — 07-02 owns that.
-    This test is purely about path-gating / file presence.
+    subprocess targeting a scratch project (REVIEW-CHECKLIST §8). The helper
+    already strips Python venv vars + Node-specific vars (NODE_*, npm_config_*,
+    PNPM_HOME, NVM_*) per 07-RESEARCH.md §proc.run discipline (threat T-07-05).
   - Dotfile-absence assertions cover the case Phase 4 missed 3x:
     web/.*, web/**/.*, harness/web/.*, harness/web/**/.* must be empty under
     has_web=False (REVIEW-CHECKLIST §3).
@@ -24,6 +26,8 @@ tests/web/ is a harness pytest-invocation target and we must not recurse.
 """
 from __future__ import annotations
 
+import shutil
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -201,4 +205,73 @@ def test_web_true_no_literal_jinja_brace_filenames(tmp_path: Path) -> None:
         "Copier did not resolve the conditional path — check that the Guard-2\n"
         "source directories exist with the exact literal brace names:\n"
         + "\n".join(f"  {p}" for p in sorted(jinja_brace_files))
+    )
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="Node required")
+def test_web_baseline_builds(tmp_path: Path) -> None:
+    """Plan 07-02 build-smoke: has_web=True scaffold installs, typechecks, and builds.
+
+    Renders a scratch scaffold with has_web=True, has_backend=False (cheaper
+    polarity; 07-04 adds the has_backend=True variant), then runs:
+      1. pnpm install --frozen-lockfile
+      2. pnpm exec tsc --noEmit
+      3. pnpm build
+
+    Asserts that dist/index.html is produced (proof that vite build ran to
+    completion). Skips if Node is not on PATH so CI or local devs without Node
+    still see green for the path-gating tests from 07-01.
+
+    _CLEAN_ENV drops outer Python venv vars AND Node-specific vars (NODE_*,
+    npm_config_*, PNPM_HOME, NVM_*) to prevent false-pass from env leakage
+    (REVIEW-CHECKLIST §8, threat T-07-05).
+    """
+    scratch = _render(tmp_path, has_web=True)
+    assert scratch.is_dir(), f"scaffold root missing: {scratch}"
+
+    web_dir = scratch / "web"
+    assert web_dir.is_dir(), "web/ dir must exist for has_web=True"
+
+    # Step 1: enable corepack/pnpm (ignore errors — node version on PATH may
+    # already have corepack active; the lockfile was generated with pnpm@9.15.0
+    # but any compatible pnpm 9.x can install --frozen-lockfile correctly).
+    subprocess.run(
+        ["corepack", "enable", "pnpm"],
+        cwd=str(web_dir),
+        env=_CLEAN_ENV,
+        check=False,  # non-zero is OK if corepack is not installed / no perms
+    )
+
+    # Step 2: install dependencies from the shipped lockfile
+    subprocess.run(
+        ["pnpm", "install", "--frozen-lockfile"],
+        cwd=str(web_dir),
+        env=_CLEAN_ENV,
+        check=True,
+        timeout=180,
+    )
+
+    # Step 3: typecheck
+    subprocess.run(
+        ["pnpm", "exec", "tsc", "--noEmit"],
+        cwd=str(web_dir),
+        env=_CLEAN_ENV,
+        check=True,
+        timeout=60,
+    )
+
+    # Step 4: production build
+    subprocess.run(
+        ["pnpm", "build"],
+        cwd=str(web_dir),
+        env=_CLEAN_ENV,
+        check=True,
+        timeout=120,
+    )
+
+    # Assert the build produced an index.html artifact
+    dist_index = web_dir / "dist" / "index.html"
+    assert dist_index.is_file(), (
+        f"pnpm build succeeded but dist/index.html is missing at {dist_index}; "
+        "check vite.config.ts build.outDir setting"
     )

@@ -152,6 +152,10 @@ def render_and_install(tmp_path: Path, **overrides: object) -> Path:
 #: Outer-process env minus VIRTUAL_ENV / UV_PROJECT_ENVIRONMENT / PYTHONPATH
 #: etc. — pass via ``subprocess.run(..., env=_CLEAN_ENV)`` so the scratch
 #: project resolves its own venv, not the outer one (REVIEW-CHECKLIST §8).
+#:
+#: Also strips Node-specific vars (NODE_*, npm_config_*, PNPM_HOME, NVM_*)
+#: so that outer Node/pnpm installations don't leak into web polarity tests
+#: (07-RESEARCH.md §proc.run subprocess discipline; threat T-07-05).
 _CLEAN_ENV: dict[str, str] = {
     k: v
     for k, v in os.environ.items()
@@ -163,7 +167,11 @@ _CLEAN_ENV: dict[str, str] = {
         "PYTHONHOME",
         "PYTHONSTARTUP",
         "PYTHONNOUSERSITE",
+        "PNPM_HOME",
     }
+    and not k.startswith("NODE_")
+    and not k.startswith("npm_config_")
+    and not k.startswith("NVM_")
 }
 
 
