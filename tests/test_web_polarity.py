@@ -1,7 +1,7 @@
 # Copyright (c) 2026 Moiz
 # SPDX-License-Identifier: MIT
 
-"""Bidirectional web add-on polarity tests (Plans 07-01 through 07-04).
+"""Bidirectional web add-on polarity tests (Plans 07-01 through 07-05).
 
 Plan 07-01: Renders the template in two polarities (has_web=True / has_web=False)
 and asserts that path-gating works correctly in both directions.
@@ -23,6 +23,12 @@ Plan 07-04: Adds a 4-combo (has_web x has_backend) polarity test:
   - justfile `dev:` recipe is present in the right polarity.
   - expose_headers in app/main.py iff has_web=True (when has_backend=True).
 
+Plan 07-05: Vitest + Playwright infrastructure:
+  - pnpm exec vitest run exits 0 with >= 2 passing tests in scratch scaffold.
+  - Playwright smoke test exits 0 (skippable via VERIFY_KIT_SKIP_PLAYWRIGHT=1).
+  - trace fixture contains no @opentelemetry/sdk-trace-web reference (TRACE-03).
+  - App.test.tsx and DarkModeToggle.test.tsx exist in the rendered scaffold.
+
 Design notes:
   - Uses the ``render_scratch_project`` Python-API helper (not raw subprocess)
     to avoid the cwd-leak described in REVIEW-CHECKLIST §1.
@@ -40,6 +46,8 @@ tests/web/ is a harness pytest-invocation target and we must not recurse.
 from __future__ import annotations
 
 import json
+import os
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -584,4 +592,143 @@ def test_web_backend_four_combos(tmp_path: Path, has_web: bool, has_backend: boo
     dist_index = web_dir / "dist" / "index.html"
     assert dist_index.is_file(), (
         f"pnpm build succeeded but dist/index.html is missing at {dist_index}"
+    )
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="Node required")
+def test_web_vitest_and_playwright(tmp_path: Path) -> None:
+    """Plan 07-05: Vitest + Playwright infrastructure assertions.
+
+    Uses the (has_web=True, has_backend=False) scratch scaffold — the cheapest
+    combo that exercises the full test infrastructure.
+
+    Assertions in three tiers (cheapest first):
+
+    Tier 1 (file-level guards):
+      - src/__tests__/App.test.tsx exists (07-05 Task 1 contract).
+      - src/__tests__/DarkModeToggle.test.tsx exists (07-05 Task 1 contract).
+
+    Tier 2 (trace fixture safety — TRACE-03):
+      - tests/e2e/fixtures/trace.ts contains NO "@opentelemetry/sdk-trace-web"
+        or "sdk-trace-web" reference (header-only, no SDK; deferred to v0.3).
+
+    Tier 3 (runtime — skippable):
+      - ``pnpm exec vitest run`` exits 0 with >= 2 passing tests.
+      - (Optional, skipped by default for fast local runs via
+        VERIFY_KIT_SKIP_PLAYWRIGHT=1) ``pnpm exec playwright install --with-deps
+        chromium`` + ``pnpm exec playwright test`` exit 0.
+
+    Cache hint for CI (07-07): cache ~/.cache/ms-playwright keyed by
+    @playwright/test version from ``pnpm list --json @playwright/test``.
+    """
+    scratch = _render(tmp_path, has_web=True)
+    assert scratch.is_dir(), f"scaffold root missing: {scratch}"
+
+    web_dir = scratch / "web"
+    assert web_dir.is_dir(), "web/ dir must exist for has_web=True"
+
+    # ── Tier 1: file-level guards ─────────────────────────────────────────────
+    app_test = web_dir / "src" / "__tests__" / "App.test.tsx"
+    assert app_test.is_file(), (
+        f"src/__tests__/App.test.tsx missing from rendered scaffold at {app_test}. "
+        "Check that template/web/src/__tests__/App.test.tsx is committed."
+    )
+
+    toggle_test = web_dir / "src" / "__tests__" / "DarkModeToggle.test.tsx"
+    assert toggle_test.is_file(), (
+        f"src/__tests__/DarkModeToggle.test.tsx missing from rendered scaffold at {toggle_test}. "
+        "Check that template/web/src/__tests__/DarkModeToggle.test.tsx is committed."
+    )
+
+    # ── Tier 2: trace fixture safety (TRACE-03) ───────────────────────────────
+    trace_fixture = web_dir / "tests" / "e2e" / "fixtures" / "trace.ts"
+    assert trace_fixture.is_file(), (
+        f"tests/e2e/fixtures/trace.ts missing from rendered scaffold at {trace_fixture}. "
+        "Check that template/web/tests/e2e/fixtures/trace.ts is committed."
+    )
+    trace_text = trace_fixture.read_text(encoding="utf-8")
+    # TRACE-03: no SDK import — comments mentioning the package name are fine,
+    # but there must be no actual import/require of the OTel SDK (deferred to v0.3).
+    otel_sdk_import = re.search(
+        r'^\s*(import\s|require\s*\()\s*[\'"]@opentelemetry/sdk-trace-web[\'"]',
+        trace_text,
+        re.MULTILINE,
+    )
+    assert otel_sdk_import is None, (
+        "trace.ts imports '@opentelemetry/sdk-trace-web' — this must be header-only "
+        "(TRACE-03). SDK init is deferred to v0.3 per 07-CONTEXT.md Deferred Ideas."
+    )
+
+    # ── Tier 3: runtime Vitest + Playwright ───────────────────────────────────
+    subprocess.run(
+        ["corepack", "enable", "pnpm"],
+        cwd=str(web_dir),
+        env=_CLEAN_ENV,
+        check=False,
+    )
+
+    subprocess.run(
+        ["pnpm", "install", "--frozen-lockfile"],
+        cwd=str(web_dir),
+        env=_CLEAN_ENV,
+        check=True,
+        timeout=180,
+    )
+
+    # Build first so vite preview has something to serve (required for Playwright)
+    subprocess.run(
+        ["pnpm", "build"],
+        cwd=str(web_dir),
+        env=_CLEAN_ENV,
+        check=True,
+        timeout=120,
+    )
+
+    # --- Vitest run (always runs) ---
+    vitest_result = subprocess.run(
+        ["pnpm", "exec", "vitest", "run"],
+        cwd=str(web_dir),
+        env=_CLEAN_ENV,
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    assert vitest_result.returncode == 0, (
+        f"pnpm exec vitest run failed (exit {vitest_result.returncode}).\n"
+        f"stdout: {vitest_result.stdout[-2000:]}\n"
+        f"stderr: {vitest_result.stderr[-1000:]}"
+    )
+
+    # Parse number of passing tests from vitest output.
+    # Vitest prints: "Tests  N passed (N)" or "Tests  X failed | N passed (T)"
+    stdout = vitest_result.stdout + vitest_result.stderr
+    passed_match = re.search(r"(\d+)\s+passed", stdout)
+    passed_count = int(passed_match.group(1)) if passed_match else 0
+    assert passed_count >= 2, (
+        f"vitest run passed only {passed_count} test(s); expected >= 2 "
+        f"(App.test.tsx x2 + DarkModeToggle.test.tsx x1).\n"
+        f"Output: {stdout[-2000:]}"
+    )
+
+    # --- Playwright (skippable for fast local runs) ---
+    skip_playwright = os.environ.get("VERIFY_KIT_SKIP_PLAYWRIGHT") == "1"
+    if skip_playwright:
+        return  # opt-out — CI always runs this
+
+    # Install Chromium browser binaries (cached in CI via ~/.cache/ms-playwright)
+    subprocess.run(
+        ["pnpm", "exec", "playwright", "install", "--with-deps", "chromium"],
+        cwd=str(web_dir),
+        env=_CLEAN_ENV,
+        check=True,
+        timeout=300,
+    )
+
+    # Run Playwright smoke spec
+    subprocess.run(
+        ["pnpm", "exec", "playwright", "test"],
+        cwd=str(web_dir),
+        env={**_CLEAN_ENV, "CI": "1"},  # CI=1 → single worker, no server reuse
+        check=True,
+        timeout=120,
     )
