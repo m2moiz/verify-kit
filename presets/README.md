@@ -24,11 +24,14 @@ Two public preset files live in this directory:
 ## The `.local.yml` Pattern for Personal Use
 
 1. Copy the placeholder template:
+
    ```sh
    cp presets/personal.yml presets/personal.local.yml
    ```
+
 2. Edit `presets/personal.local.yml` with your real values (name, email, preferred add-ons).
 3. Invoke copier with `--data-file`:
+
    ```sh
    copier copy --data-file presets/personal.local.yml gh:m2moiz/verify-kit /path/to/new-project
    ```
@@ -70,7 +73,7 @@ file. It greps for:
 
 If PII is found, the commit is blocked with a message like:
 
-```
+```text
 PII detected in presets/personal.local.yml:5: real.name@gmail.com
 If this is intentional, commit with --no-verify (documented in presets/README.md).
 ```
@@ -86,9 +89,11 @@ bypassing the hook.
 Example: an `oss-maximalist.yml` with every add-on enabled.
 
 1. Copy `personal.yml` as a starting point:
+
    ```sh
    cp presets/personal.yml presets/oss-maximalist.yml
    ```
+
 2. Edit the file. Set `has_backend: true`, `has_llm: true`, `has_web: true`, etc.
 3. Replace placeholder identity values with appropriate OSS defaults.
 4. Ensure `_schema_version: "0.2"` is present. Update the value if `copier.yml`
