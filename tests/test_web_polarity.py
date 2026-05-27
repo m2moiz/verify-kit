@@ -23,6 +23,11 @@ Plan 07-04: Adds a 4-combo (has_web x has_backend) polarity test:
   - justfile `dev:` recipe is present in the right polarity.
   - expose_headers in app/main.py iff has_web=True (when has_backend=True).
 
+Plan 07-10: Extends the 4-combo test with SSE spec presence assertion:
+  - tests/e2e/sse.spec.ts exists iff has_web=True and has_backend=True.
+  - Gated by same {% if not has_backend or not has_web %} guard as events.ts.
+  - DEV-W03 / ROADMAP SC-2 second half.
+
 Plan 07-05: Vitest + Playwright infrastructure:
   - pnpm exec vitest run exits 0 with >= 2 passing tests in scratch scaffold.
   - Playwright smoke test exits 0 (skippable via VERIFY_KIT_SKIP_PLAYWRIGHT=1).
@@ -454,12 +459,12 @@ def test_web_backend_four_combos(tmp_path: Path, has_web: bool, has_backend: boo
 
     Asserts the following matrix of structural properties:
 
-    | has_web | has_backend | proxy in vite.config? | events.ts? | dev: in justfile? | expose_headers in main.py? | web/ exists? |
-    |---------|-------------|----------------------|------------|-------------------|----------------------------|--------------|
-    | False   | False       | n/a                  | n/a        | No                | n/a                        | No           |
-    | False   | True        | n/a                  | n/a        | Yes (uvicorn)     | No                         | No           |
-    | True    | False       | No                   | No         | Yes (vite-only)   | n/a                        | Yes          |
-    | True    | True        | Yes                  | Yes        | Yes (mprocs)      | Yes                        | Yes          |
+    | has_web | has_backend | proxy in vite.config? | events.ts? | sse.spec.ts? | dev: in justfile? | expose_headers in main.py? | web/ exists? |
+    |---------|-------------|----------------------|------------|--------------|-------------------|----------------------------|--------------|
+    | False   | False       | n/a                  | n/a        | n/a          | No                | n/a                        | No           |
+    | False   | True        | n/a                  | n/a        | n/a          | Yes (uvicorn)     | No                         | No           |
+    | True    | False       | No                   | No         | No           | Yes (vite-only)   | n/a                        | Yes          |
+    | True    | True        | Yes                  | Yes        | Yes          | Yes (mprocs)      | Yes                        | Yes          |
 
     The build-smoke (pnpm install + tsc + build) runs only on the True/False and
     True/True combos where has_web=True (the two has_web=False combos are cheap
@@ -520,8 +525,10 @@ def test_web_backend_four_combos(tmp_path: Path, has_web: bool, has_backend: boo
     events_ts = web_dir / "src" / "lib" / "events.ts"
     justfile_text = justfile_path.read_text(encoding="utf-8")
 
+    sse_spec = web_dir / "tests" / "e2e" / "sse.spec.ts"
+
     if has_backend:
-        # (True, True): proxy + events.ts + mprocs dev recipe + expose_headers
+        # (True, True): proxy + events.ts + sse.spec.ts + mprocs dev recipe + expose_headers
         assert "proxy" in vite_text, (
             "vite.config.ts must contain a proxy block when has_backend=True "
             "(Vite dev → FastAPI :8000)"
@@ -532,6 +539,10 @@ def test_web_backend_four_combos(tmp_path: Path, has_web: bool, has_backend: boo
         )
         assert "http://localhost:8000/__debug/events" in events_ts.read_text(encoding="utf-8"), (
             "events.ts must use absolute URL to bypass Vite proxy buffering (Pitfall §5)"
+        )
+        assert sse_spec.is_file(), (
+            "tests/e2e/sse.spec.ts must exist when has_web=True and has_backend=True "
+            "(DEV-W03 / ROADMAP SC-2 SSE assertion; gated by same guard as events.ts)"
         )
         assert "\ndev:\n" in justfile_text, (
             "justfile must have a 'dev:' recipe for the web+backend combo"
@@ -546,7 +557,7 @@ def test_web_backend_four_combos(tmp_path: Path, has_web: bool, has_backend: boo
             "expose_headers must appear in main.py when has_web=True (TRACE-04)"
         )
     else:
-        # (True, False): no proxy, no events.ts, vite-only dev recipe, no mprocs
+        # (True, False): no proxy, no events.ts, no sse.spec.ts, vite-only dev recipe, no mprocs
         assert "proxy" not in vite_text, (
             "vite.config.ts must NOT contain a proxy block when has_backend=False "
             "(frontend-only mode D-W04)"
@@ -554,6 +565,10 @@ def test_web_backend_four_combos(tmp_path: Path, has_web: bool, has_backend: boo
         assert not events_ts.exists(), (
             "src/lib/events.ts must NOT exist when has_backend=False "
             "(file-level Guard-1 exclude in copier.yml)"
+        )
+        assert not sse_spec.exists(), (
+            "tests/e2e/sse.spec.ts must NOT exist when has_backend=False "
+            "(gated by same {% if not has_backend or not has_web %} guard as events.ts; DEV-W03)"
         )
         assert "\ndev:\n" in justfile_text, (
             "justfile must have a 'dev:' recipe for web-only combo (pnpm --dir web dev)"
