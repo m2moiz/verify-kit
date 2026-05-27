@@ -34,6 +34,9 @@ import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-http";
 import { ZoneContextManager } from "@opentelemetry/context-zone";
 import { registerInstrumentations } from "@opentelemetry/instrumentation";
 import { FetchInstrumentation } from "@opentelemetry/instrumentation-fetch";
+import { resourceFromAttributes } from "@opentelemetry/resources";
+import { ATTR_SERVICE_NAME } from "@opentelemetry/semantic-conventions";
+import { WEB_SERVICE_NAME } from "@/config";
 
 // Module-level guard: prevents double-registration when initOtel() is called
 // more than once (e.g. React StrictMode double-invoke in development).
@@ -65,7 +68,9 @@ export function initOtel(): void {
 
   // Active path: endpoint is set at build time.
   const exporter = new OTLPTraceExporter({ url: endpoint });
+  const resource = resourceFromAttributes({ [ATTR_SERVICE_NAME]: WEB_SERVICE_NAME });
   const provider = new WebTracerProvider({
+    resource,
     spanProcessors: [new BatchSpanProcessor(exporter)],
   });
 
