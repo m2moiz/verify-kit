@@ -3,8 +3,8 @@
 CONTRACT CONFORMANCE TEST — REVIEW-CHECKLIST §4 API-surface drift guard.
 
 This is the FROZEN API conformance check. It asserts:
-  1. Exactly 5 web.* checks registered (web.vitest, web.playwright,
-     web.lighthouse, web.axe, web.lost_pixel)
+  1. Exactly 6 web.* checks registered (web.vitest, web.playwright,
+     web.lighthouse, web.axe, web.lost_pixel, web.otel_trace)
   2. Per-check tier/category/fixable match the 07-RESEARCH.md table
   3. No @register calls in web.py use forbidden kwargs
   4. ErrorEnvelope has no 'fixable' field (regression guard)
@@ -34,6 +34,7 @@ _EXPECTED_CHECKS = {
     "web.lighthouse":  {"tier": "slow",     "category": "perf",   "fixable": False},
     "web.axe":         {"tier": "standard", "category": "a11y",   "fixable": True},
     "web.lost_pixel":  {"tier": "slow",     "category": "visual", "fixable": True},
+    "web.otel_trace":  {"tier": "slow",     "category": "otel",   "fixable": False},
 }
 
 
@@ -42,16 +43,16 @@ def _web_checks() -> dict:
     return {s.check_id: s for s in list_checks() if s.check_id.startswith("web.")}
 
 
-def test_five_web_checks_registered() -> None:
-    """Exactly 5 web.* checks are registered after importing harness.checks."""
+def test_web_checks_registered_count() -> None:
+    """Exactly 6 web.* checks are registered after importing harness.checks."""
     web = _web_checks()
-    assert len(web) == 5, (
-        f"Expected exactly 5 web.* checks, got {len(web)}: {sorted(web.keys())}"
+    assert len(web) == 6, (
+        f"Expected exactly 6 web.* checks, got {len(web)}: {sorted(web.keys())}"
     )
 
 
 def test_web_check_ids_all_present() -> None:
-    """All 5 expected check IDs are present in the registry."""
+    """All 6 expected check IDs are present in the registry."""
     web = _web_checks()
     for check_id in _EXPECTED_CHECKS:
         assert check_id in web, (
