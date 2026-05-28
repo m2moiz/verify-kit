@@ -74,7 +74,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: jdx/mise-action@v4
+      - uses: ./.github/actions/setup-mise
 
       # ── Setup Node + corepack + pnpm (web combos only) ──────────────────────
       - name: Setup Node and pnpm
@@ -245,7 +245,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: jdx/mise-action@v4
+      - uses: ./.github/actions/setup-mise
 
       - name: Install copier
         run: uv tool install copier --with copier-template-extensions

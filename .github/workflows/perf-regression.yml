@@ -27,7 +27,7 @@ jobs:
 
       # mise provides `just` (and the pinned Python toolchain). The benchmark
       # fixtures shell out to `just verify`, so mise must run before uv sync.
-      - uses: jdx/mise-action@v4
+      - uses: ./.github/actions/setup-mise
 
       - uses: astral-sh/setup-uv@v3
         with:
@@ -64,7 +64,7 @@ jobs:
 
       # mise provides `just` (and the pinned Python toolchain). The benchmark
       # fixtures shell out to `just verify`, so mise must run before uv sync.
-      - uses: jdx/mise-action@v4
+      - uses: ./.github/actions/setup-mise
 
       - uses: astral-sh/setup-uv@v3
         with:
