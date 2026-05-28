@@ -56,7 +56,13 @@ async def lifespan(app: FastAPI):
 
     engine = make_engine(settings.DATABASE_URL)
     # Async engine wraps a sync engine; SQLAlchemyInstrumentor hooks the sync layer.
-    SQLAlchemyInstrumentor().instrument(engine=engine.sync_engine)
+    # SQLAlchemyInstrumentor patches globally (process-wide), so guard against
+    # re-instrumenting when the app is constructed more than once in a single
+    # process (e.g. the in-process schemathesis fuzz harness) — calling instrument()
+    # twice otherwise logs "Attempting to instrument while already instrumented".
+    _sqla_instrumentor = SQLAlchemyInstrumentor()
+    if not _sqla_instrumentor.is_instrumented_by_opentelemetry:
+        _sqla_instrumentor.instrument(engine=engine.sync_engine)
     app.state.engine = engine
     app.state.sessionmaker = make_sessionmaker(engine)
 {% endif %}
