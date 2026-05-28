@@ -14,6 +14,7 @@ Decision references:
 from __future__ import annotations
 
 from collections.abc import Callable
+from datetime import datetime
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -61,7 +62,18 @@ class ErrorEnvelope(BaseModel):
 
 
 class CheckResult(BaseModel):
-    """Result of a single verification check (Decision 1.4)."""
+    """Result of a single verification check (Decision 1.4).
+
+    Provenance fields (executed_at / run_id):
+        executed_at: Timestamp set only when spec.fn ACTUALLY executed (fresh run).
+            None on cache-replayed results — the original replayed result may carry
+            the run_id from the process that first ran it.
+        run_id:     Per-process UUID stamped by runner.run_check on every fresh
+            execution. Cache-replayed results retain the original (stale) run_id
+            from the process that populated the cache.  --require uses this to
+            assert in-process execution: a result whose run_id != the current
+            process's run_id was replayed, not freshly run.
+    """
 
     check_id: str
     status: CheckStatus
@@ -69,6 +81,8 @@ class CheckResult(BaseModel):
     duration_ms: int = 0
     error: ErrorEnvelope | None = None
     cached: bool = False
+    executed_at: datetime | None = None
+    run_id: str | None = None
 
 
 # ── ReportSummary ─────────────────────────────────────────────────────────────
