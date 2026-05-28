@@ -50,6 +50,33 @@ async def lifespan(app: FastAPI):
     configure_logging()
     app.state.settings = settings
     log.info("app.startup", env=settings.ENV)
+{% if has_backend and not has_logfire %}
+    # SDK TracerProvider for the no-logfire path (BL-1).
+    # Built here — before SQLAlchemyInstrumentor attaches — so every
+    # FastAPI/SQLAlchemy span is captured by a real exporter.
+    # Gated on OTEL_EXPORTER_OTLP_ENDPOINT so the off-path stays zero-cost
+    # (no OTel imports, no provider built) when the env var is absent.
+    import os as _os
+
+    _otlp_endpoint = _os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT")
+    if _otlp_endpoint:
+        from opentelemetry import trace as _trace
+        from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+        from opentelemetry.sdk.resources import Resource
+        from opentelemetry.sdk.trace import TracerProvider
+        from opentelemetry.sdk.trace.export import BatchSpanProcessor
+
+        _service_name = _os.environ.get("OTEL_SERVICE_NAME", "unknown_service")
+        _resource = Resource.create({"service.name": _service_name})
+        _provider = TracerProvider(resource=_resource)
+        _provider.add_span_processor(
+            BatchSpanProcessor(
+                OTLPSpanExporter(endpoint=_otlp_endpoint, insecure=True)
+            )
+        )
+        _trace.set_tracer_provider(_provider)
+        app.state.otel_provider = _provider
+{% endif %}
 {% if has_db %}
     from opentelemetry.instrumentation.sqlalchemy import SQLAlchemyInstrumentor
 
@@ -72,6 +99,12 @@ async def lifespan(app: FastAPI):
     finally:
 {% if has_db %}
         await app.state.engine.dispose()
+{% endif %}
+{% if has_backend and not has_logfire %}
+        # Flush and shut down the SDK provider if one was built in this lifespan.
+        _provider_to_shutdown = getattr(app.state, "otel_provider", None)
+        if _provider_to_shutdown is not None:
+            _provider_to_shutdown.shutdown()
 {% endif %}
         log.info("app.shutdown")
 
