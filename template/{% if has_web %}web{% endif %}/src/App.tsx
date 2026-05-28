@@ -31,13 +31,21 @@ import {
 import { DarkModeToggle } from "@/components/gallery/DarkModeToggle";
 import { PROJECT_NAME, PROJECT_DESCRIPTION } from "./config";
 
+// When VITE_API_BASE_URL is set (e.g. in CI preview builds), target FastAPI at
+// that absolute origin (cross-origin). Falls back to the relative /api dev-proxy
+// path when unset (existing Vite dev-server behavior, unchanged).
+const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "/api";
+
 export default function App() {
   const [isFetching, setIsFetching] = useState(false);
 
-  async function handleTraceFetch() {
+  async function handleTraceFetch(traceTestId?: string) {
     setIsFetching(true);
     try {
-      const res = await fetch("/api/trace-demo");
+      const url = traceTestId
+        ? `${API_BASE}/trace-demo?trace_test_id=${encodeURIComponent(traceTestId)}`
+        : `${API_BASE}/trace-demo`;
+      const res = await fetch(url);
       toast(`Fetch returned ${res.status}. Check \`just trace --last\` for the waterfall.`);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -71,7 +79,7 @@ export default function App() {
           </p>
           <div className="mt-4">
             <Button
-              onClick={handleTraceFetch}
+              onClick={() => handleTraceFetch()}
               disabled={isFetching}
               aria-busy={isFetching}
             >
