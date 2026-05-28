@@ -46,7 +46,6 @@ import { registerInstrumentations } from "@opentelemetry/instrumentation";
 import { FetchInstrumentation } from "@opentelemetry/instrumentation-fetch";
 import { resourceFromAttributes } from "@opentelemetry/resources";
 import { ATTR_SERVICE_NAME } from "@opentelemetry/semantic-conventions";
-import { trace, context, SpanStatusCode } from "@opentelemetry/api";
 import { WEB_SERVICE_NAME } from "@/config";
 
 // Module-level guard: prevents double-registration when initOtel() is called
