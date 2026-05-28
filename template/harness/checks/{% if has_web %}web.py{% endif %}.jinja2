@@ -567,8 +567,9 @@ def check_web_lost_pixel(cwd: Path) -> CheckResult:
     tier="slow",
     category="otel",
     description=(
-        "Browser→FastAPI→DB trace connectivity assertion "
-        "(WEB_SERVICE_NAME + api + DB spans, shared traceID, per-run UUID marker)"
+        "Browser→FastAPI trace connectivity assertion "
+        "(WEB_SERVICE_NAME + api spans, shared traceID, per-run UUID marker"
+        "{% if has_db %}; DB span asserted when has_db=true{% endif %})"
     ),
     inputs=["web/src/otel.ts", "web/tests/e2e/trace-demo.spec.ts"],
     fixable=False,
@@ -841,6 +842,11 @@ def check_web_otel_trace(cwd: Path) -> CheckResult:
         )
 
     # Assert >=1 DB span (tolerant regex matching SQLAlchemy SELECT queries)
+    # WR-01: only assert the DB span in DB-enabled scaffolds. In has_db=false
+    # renders, /trace-demo returns {"db": false} and emits no SQLAlchemy span —
+    # asserting one would produce false failures on legitimate no-DB stacks.
+    # Browser and API service span assertions above remain unconditional (BL-5).
+{% if has_db %}
     _DB_SPAN_RE = re.compile(
         r"SELECT|sqlalchemy|db\.|database|postgres|sqlite|mysql",
         re.IGNORECASE,
@@ -869,6 +875,7 @@ def check_web_otel_trace(cwd: Path) -> CheckResult:
                 docs_url="https://opentelemetry.io/docs/",
             ),
         )
+{% endif %}
 
     # Assert all spans share ONE traceID (cross-service propagation check)
     trace_ids = {tr.get("traceID") for tr in traces if tr.get("traceID")}
