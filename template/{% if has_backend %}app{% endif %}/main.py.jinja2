@@ -51,8 +51,9 @@ async def lifespan(app: FastAPI):
     app.state.settings = settings
     log.info("app.startup", env=settings.ENV)
 {% if has_db %}
-    from app.db import make_engine, make_sessionmaker
     from opentelemetry.instrumentation.sqlalchemy import SQLAlchemyInstrumentor
+
+    from app.db import make_engine, make_sessionmaker
 
     engine = make_engine(settings.DATABASE_URL)
     # Async engine wraps a sync engine; SQLAlchemyInstrumentor hooks the sync layer.
