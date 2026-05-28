@@ -8,6 +8,7 @@ services:
     environment:
       ENV: dev
       OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4317
+      OTEL_SERVICE_NAME: "{{ project_name }}-api"
 {% if has_db %}
       DATABASE_URL: postgresql+asyncpg://postgres:postgres@postgres:5432/app
 {% endif %}
