@@ -62,7 +62,7 @@ async def events_stream() -> EventSourceResponse:
 
 
 @router.get("/trace-demo")
-async def trace_demo(request: Request):
+async def trace_demo(request: Request, trace_test_id: str | None = None):
     """Demonstrate the OTel distributed trace waterfall.
 
     Performs a real DB query when has_db=true so SQLAlchemyInstrumentor emits a
@@ -71,7 +71,19 @@ async def trace_demo(request: Request):
     in-process with no live DB) so the route is always safe to hit — it never
     returns a 5xx. The engine/sessionmaker live on app.state (set in lifespan);
     this route never constructs its own engine.
+
+    When trace_test_id is provided (a per-run UUID from the harness), it is set
+    as a span attribute (verify_kit.trace_test_id) on the current server span so
+    the OTel check can correlate this specific request's trace in Jaeger (D-02).
     """
+    # D-02: set the per-run marker on the server span so the harness can find
+    # exactly this trace in Jaeger by tag query. Only set when the param is
+    # present so the route stays safe to hit without it (no attribute overhead).
+    if trace_test_id is not None:
+        from opentelemetry import trace as _trace
+
+        _span = _trace.get_current_span()
+        _span.set_attribute("verify_kit.trace_test_id", trace_test_id)
 {% if has_db %}
     from sqlalchemy import text
     from sqlalchemy.exc import SQLAlchemyError
