@@ -50,11 +50,12 @@ services:
       # Allow browser OTel SDK to POST spans directly to Jaeger OTLP-HTTP (:4318).
       # :5173 = Vite dev server origin; :4173 = Vite preview origin (`pnpm preview`).
       COLLECTOR_OTLP_HTTP_CORS_ALLOWED_ORIGINS: "http://localhost:5173,http://localhost:4173"
-      COLLECTOR_OTLP_HTTP_CORS_ALLOWED_HEADERS: "content-type"
+      COLLECTOR_OTLP_HTTP_CORS_ALLOWED_HEADERS: "content-type,traceparent,tracestate,x-b3-traceid,x-b3-spanid,x-b3-sampled"
     ports:
       - "16686:16686"
       - "4317:4317"
       - "4318:4318"
+      - "14269:14269"
 {% if has_db %}
 
 volumes:
