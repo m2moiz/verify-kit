@@ -79,7 +79,11 @@ export default function App() {
           </p>
           <div className="mt-4">
             <Button
-              onClick={() => handleTraceFetch()}
+              onClick={() =>
+                handleTraceFetch(
+                  new URLSearchParams(window.location.search).get("trace_test_id") ?? undefined,
+                )
+              }
               disabled={isFetching}
               aria-busy={isFetching}
             >
