@@ -486,6 +486,12 @@ def check_web_lost_pixel(cwd: Path) -> CheckResult:
             result = proc_run(
                 [
                     "docker", "run", "--rm",
+                    # host.docker.internal is built in on Docker Desktop (macOS/Windows)
+                    # but NOT on Linux — without this, the container cannot reach the
+                    # host's vite preview at host.docker.internal:3000 and Lost Pixel
+                    # captures a blank/errored page (verify-kit-i7n). Harmless on
+                    # Docker Desktop where the name already resolves.
+                    "--add-host", "host.docker.internal:host-gateway",
                     "-v", f"{web_dir}:{web_dir}",
                     "-e", f"WORKSPACE={web_dir}",
                     "-e", "DOCKER=1",
