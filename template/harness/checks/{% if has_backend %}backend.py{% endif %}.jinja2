@@ -52,6 +52,10 @@ def _docker_reachable(timeout_s: float = 3.0) -> bool:
         "OpenAPI (over-network when app reachable on :8000, in-process via "
         "ASGITransport otherwise), and smoke-tests /healthz."
     ),
+    # Cache key inputs: editing the app, its tests, or its deps must invalidate
+    # this check's cached result. Without these, a route/lifespan change leaves a
+    # stale pass/fail in the cache (verify-kit-b4z).
+    inputs=["app/**", "tests/backend/**", "pyproject.toml"],
     fixable=False,
     tool="uv",
 )
