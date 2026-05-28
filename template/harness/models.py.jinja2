@@ -14,10 +14,18 @@ Decision references:
 from __future__ import annotations
 
 from collections.abc import Callable
+from contextvars import ContextVar
 from datetime import datetime
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
+
+# ── Required-mode contextvar (CR-02) ──────────────────────────────────────────
+# Set to True by runner.run_check when spec.check_id is in required_ids, so
+# check functions can read the required flag without the runner needing to pass
+# it as an argument (avoids changing every check's signature).
+# Default is False (non-required / legacy mode) so existing callers are unchanged.
+REQUIRED_CHECK_MODE: ContextVar[bool] = ContextVar("REQUIRED_CHECK_MODE", default=False)
 
 # ── Type aliases ──────────────────────────────────────────────────────────────
 
@@ -186,6 +194,7 @@ __all__ = [
     "VerifyReport",
     "CheckSpec",
     "CheckCatalogEntry",
+    "REQUIRED_CHECK_MODE",
     "EXIT_OK",
     "EXIT_CHECK_FAIL",
     "EXIT_BAD_INPUT",

@@ -34,7 +34,7 @@ import subprocess
 import time
 from pathlib import Path
 
-from harness.models import CheckResult, CheckStatus, ErrorEnvelope
+from harness.models import CheckResult, CheckStatus, ErrorEnvelope, REQUIRED_CHECK_MODE
 from harness.proc import run as proc_run
 from harness.registry import register
 from harness.web._env import clean_env
@@ -394,6 +394,10 @@ def check_web_lost_pixel(cwd: Path) -> CheckResult:
     import os
 
     t0 = time.monotonic()
+    # CR-02: wall-clock start time for freshness check of comparison-results.json.
+    # Captured before the Lost Pixel subprocess so the artifact mtime can be
+    # compared to this timestamp (stale = mtime < lp_run_start).
+    lp_run_start = time.time()
 
     # Detect Docker availability
     inside_docker = Path("/.dockerenv").exists()
@@ -529,9 +533,16 @@ def check_web_lost_pixel(cwd: Path) -> CheckResult:
             ),
         )
 
-    # Parse diff output
+    # Parse diff output (CR-02: pass run_start_time + required so the adapter
+    # enforces freshness in --require mode; REQUIRED_CHECK_MODE is set by the
+    # runner around spec.fn and resets in a finally — no import cycle because
+    # web.py already imports from harness.models which is the leaf module).
     lostpixel_dir = cwd / "web" / ".lost-pixel"
-    envelopes = parse_lostpixel_output(lostpixel_dir)
+    envelopes = parse_lostpixel_output(
+        lostpixel_dir,
+        run_start_time=lp_run_start,
+        required=REQUIRED_CHECK_MODE.get(),
+    )
 
     if envelopes:
         return CheckResult(

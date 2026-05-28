@@ -31,7 +31,7 @@ from harness.cache import (
     make_cache_key,
 )
 from harness.logging import log
-from harness.models import CheckResult, CheckSpec, ErrorEnvelope
+from harness.models import CheckResult, CheckSpec, ErrorEnvelope, REQUIRED_CHECK_MODE
 from harness.observability import tracer
 
 # ── Per-process run identity ───────────────────────────────────────────────────
@@ -121,7 +121,11 @@ def run_check(
         # ── run (cwd-aware invocation contract; carryover-cwd) ────────────
         # NEVER call spec.fn() without forwarding cwd — that would let the
         # cache key (hashed under `cwd`) drift from the check's process CWD.
+        # CR-02: set REQUIRED_CHECK_MODE contextvar so check functions (e.g.
+        # check_web_lost_pixel) can read the required flag without a signature
+        # change. Reset in finally so async/generator callers don't leak state.
         fn_start_ts = datetime.now(tz=timezone.utc)
+        _required_token = REQUIRED_CHECK_MODE.set(is_required)
         try:
             result = spec.fn(cwd=cwd)
         except Exception as exc:
@@ -137,6 +141,8 @@ def run_check(
                 ),
             )
             log.exception("check.crashed", check_id=spec.check_id)
+        finally:
+            REQUIRED_CHECK_MODE.reset(_required_token)
 
         # ── stamp provenance (executed_at + run_id) ───────────────────────
         # ONLY stamp on actual fn execution — never on cache replays.
