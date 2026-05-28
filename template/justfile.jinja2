@@ -148,11 +148,12 @@ smoke-web:
 	cd web && pnpm exec playwright test --headed
 
 # Capture/refresh Lost Pixel baselines inside the pinned Docker image (D-W02).
-# Uses Lost Pixel's built-in `lost-pixel docker update` mode which owns the
-# container, pulls its own image, and takes screenshots — no host dep directory
-# mount required (verify-kit-c7k: host arm64 binaries crash linux).
-# Gallery must be served at localhost:3000 for the container to reach it;
-# vite preview runs for the duration then is killed by the EXIT trap.
+# Uses an explicit `docker run` (mirrors the web.lost_pixel check) with
+# LOST_PIXEL_MODE=update so baselines are written — no host dep directory mount
+# (verify-kit-c7k: host arm64 binaries crash linux). `--add-host` makes
+# host.docker.internal resolve on Linux too (verify-kit-i7n); it is built in on
+# Docker Desktop, so the flag is harmless there. Gallery is served by vite
+# preview at :3000 for the duration, then killed by the EXIT trap.
 # Run this after intentional visual changes; review the new PNGs; commit with `git add`.
 web-baseline:
 	#!/usr/bin/env bash
@@ -163,7 +164,16 @@ web-baseline:
 	trap 'kill $_vite_pid 2>/dev/null || true' EXIT
 	# Give vite preview a moment to start
 	sleep 1
-	cd web && pnpm exec lost-pixel docker update
+	_lp_version=$(cd web && pnpm exec lost-pixel --version 2>/dev/null | tail -1 | tr -d '[:space:]')
+	_lp_version=${_lp_version:-3.22.0}
+	docker run --rm \
+	  --add-host host.docker.internal:host-gateway \
+	  -v "$PWD/web:$PWD/web" \
+	  -e WORKSPACE="$PWD/web" \
+	  -e DOCKER=1 \
+	  -e LOST_PIXEL_DISABLE_TELEMETRY=1 \
+	  -e LOST_PIXEL_MODE=update \
+	  "lostpixel/lost-pixel:v$_lp_version"
 
 {% endif %}
 
