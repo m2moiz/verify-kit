@@ -42,6 +42,7 @@ import argparse
 import json
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 from harness.models import ErrorEnvelope
@@ -54,20 +55,30 @@ _BASELINE_HINT = (
 _DOCS_URL = "https://lost-pixel.com/docs"
 
 
-def parse_lostpixel_output(lostpixel_dir: Path) -> list[ErrorEnvelope]:
+def parse_lostpixel_output(
+    lostpixel_dir: Path,
+    run_start_time: float | None = None,
+    required: bool = False,
+) -> list[ErrorEnvelope]:
     """Read Lost Pixel comparison-results.json and return ErrorEnvelope list.
 
     Args:
         lostpixel_dir: Path to the .lost-pixel/ directory inside the web/ dir
             (e.g. <cwd>/web/.lost-pixel/).
+        run_start_time: Unix timestamp (time.time()) when the current verify
+            run started. Used to detect stale artifacts (mtime < run_start_time).
+            When None, staleness checking is skipped (legacy caller behaviour).
+        required: When True, enforce freshness requirements — return an
+            ErrorEnvelope instead of [] when the artifact is missing,
+            malformed, has zero comparisons, or is stale (BL-4). When False
+            (legacy/default), missing artifact still returns [] for backwards
+            compatibility with non-required callers.
 
     Returns:
         List of ErrorEnvelope for each snapshot diff that exceeds the threshold.
-        Returns empty list if all snapshots match (clean run) or if the
-        comparison-results.json does not exist (no run yet).
-
-    Raises:
-        json.JSONDecodeError: if comparison-results.json is malformed.
+        Returns empty list if all snapshots match (clean run).
+        In required mode: returns an ErrorEnvelope list if the artifact is
+        missing/malformed/stale/empty rather than silently returning [].
 
     Note on D-W03: The fix_command for each envelope is the literal git add
     command that approves the new baseline. This command is surfaced via the
@@ -77,11 +88,88 @@ def parse_lostpixel_output(lostpixel_dir: Path) -> list[ErrorEnvelope]:
     """
     results_path = lostpixel_dir / "comparison-results.json"
 
+    # ── Artifact existence check ──────────────────────────────────────────────
     if not results_path.exists():
-        # No run yet — not a failure condition (Docker may not be available)
+        if required:
+            return [
+                ErrorEnvelope(
+                    code="web.lost_pixel.no_run.missing",
+                    message=(
+                        f"comparison-results.json not found at {results_path}. "
+                        "Lost Pixel has not run yet — run `just web-baseline` and "
+                        "`just verify --full` inside Docker to produce a fresh result."
+                    ),
+                    hint=_BASELINE_HINT,
+                    fix_command="just web-baseline",
+                    docs_url=_DOCS_URL,
+                )
+            ]
+        # Non-required mode: legacy behaviour — not a failure condition
         return []
 
-    raw: list[dict] = json.loads(results_path.read_text(encoding="utf-8"))
+    # ── Parse JSON ───────────────────────────────────────────────────────────
+    try:
+        raw: list[dict] = json.loads(results_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, ValueError) as exc:
+        return [
+            ErrorEnvelope(
+                code="web.lost_pixel.no_run.malformed",
+                message=(
+                    f"comparison-results.json is malformed: {exc}. "
+                    "Delete the file and run `just web-baseline` to regenerate."
+                ),
+                hint="Malformed JSON in comparison-results.json — likely a partial write.",
+                docs_url=_DOCS_URL,
+            )
+        ]
+
+    # ── Zero comparisons check ────────────────────────────────────────────────
+    if not raw:
+        if required:
+            return [
+                ErrorEnvelope(
+                    code="web.lost_pixel.no_run.empty",
+                    message=(
+                        "comparison-results.json is empty (zero comparisons). "
+                        "Lost Pixel ran but produced no results — run `just web-baseline` "
+                        "to capture baselines and re-run `just verify --full`."
+                    ),
+                    hint=_BASELINE_HINT,
+                    fix_command="just web-baseline",
+                    docs_url=_DOCS_URL,
+                )
+            ]
+        return []
+
+    # ── Staleness check ───────────────────────────────────────────────────────
+    # Compares comparison-results.json mtime against the verify run start time.
+    # A leftover artifact from a prior run (mtime < run_start_time) could pass
+    # --require when no visual diff exists, masking the fact that Lost Pixel
+    # never ran in THIS verify invocation (BL-4).
+    if required and run_start_time is not None:
+        try:
+            artifact_mtime = results_path.stat().st_mtime
+        except OSError:
+            artifact_mtime = 0.0
+        if artifact_mtime < run_start_time:
+            return [
+                ErrorEnvelope(
+                    code="web.lost_pixel.no_run.stale",
+                    message=(
+                        f"comparison-results.json is stale "
+                        f"(mtime {artifact_mtime:.1f} < run_start {run_start_time:.1f}). "
+                        "The artifact is from a prior run — run `just web-baseline` "
+                        "and `just verify --full` to produce a fresh result."
+                    ),
+                    hint=(
+                        "Run `just verify --full --require=web.lost_pixel` AFTER "
+                        "running `just web-baseline` so the artifact is fresh."
+                    ),
+                    fix_command="just web-baseline",
+                    docs_url=_DOCS_URL,
+                )
+            ]
+
     envelopes: list[ErrorEnvelope] = []
 
     for item in raw:

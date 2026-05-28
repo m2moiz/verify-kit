@@ -19,6 +19,8 @@ diverge. Public API `core.verify(cwd=p)` therefore both hashes inputs under
 from __future__ import annotations
 
 import time
+import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -32,12 +34,20 @@ from harness.logging import log
 from harness.models import CheckResult, CheckSpec, ErrorEnvelope
 from harness.observability import tracer
 
+# ── Per-process run identity ───────────────────────────────────────────────────
+# Generated ONCE per process at import time. Every CheckResult produced by a
+# FRESH run in this process carries this UUID. Cache-replayed results retain
+# whatever run_id was in the cache (stale) — NEVER stamped with CURRENT_RUN_ID.
+# --require's post-run assertion checks result.run_id == CURRENT_RUN_ID.
+CURRENT_RUN_ID: str = str(uuid.uuid4())
+
 
 def run_check(
     spec: CheckSpec,
     cwd: Path = Path("."),
     cache: CacheStore | None = None,
     config: Any = None,
+    required_ids: set[str] | None = None,
 ) -> CheckResult:
     """Run a single check inside an OTel span + cache layer.
 
@@ -50,9 +60,16 @@ def run_check(
             before invocation and cache.put is called on miss.
         config: Optional HarnessConfig (currently unused at run_check level;
             run_phase filters disabled checks before calling here).
+        required_ids: Optional set of check ids that must execute fresh.
+            When spec.check_id is in required_ids, the cache lookup is
+            BYPASSED regardless of the --no-cache flag — the check MUST
+            actually run spec.fn so the result carries CURRENT_RUN_ID.
 
     Returns:
         A CheckResult — pass/fail/skip status plus optional ErrorEnvelope.
+        Fresh executions carry executed_at (timestamp) and run_id
+        (CURRENT_RUN_ID). Cache-replayed results retain the original
+        (stale) run_id — NOT stamped with CURRENT_RUN_ID.
         Never raises: uncaught exceptions are converted to status="fail"
         with code=f"{check_id}.unhandled".
     """
@@ -65,8 +82,12 @@ def run_check(
         start = time.monotonic()
 
         key: str | None = None
-        # ── cache lookup ──────────────────────────────────────────────────
-        if cache is not None:
+        # ── cache lookup (skipped for required ids — BL-3) ────────────────
+        # A check in required_ids MUST run fresh: we need its result to carry
+        # CURRENT_RUN_ID so the post-run assertion in core.verify can confirm
+        # in-process execution. Cache-replaying a prior pass would defeat --require.
+        is_required = required_ids is not None and spec.check_id in required_ids
+        if cache is not None and not is_required:
             key = make_cache_key(
                 spec.check_id,
                 hash_inputs(spec.inputs, cwd),
@@ -87,9 +108,20 @@ def run_check(
                 )
                 return cached
 
+        # Compute the cache key for write-through even when we bypassed the
+        # read (required check re-populates the cache with its fresh result).
+        if cache is not None and key is None:
+            key = make_cache_key(
+                spec.check_id,
+                hash_inputs(spec.inputs, cwd),
+                get_tool_version(spec.tool),
+                [],
+            )
+
         # ── run (cwd-aware invocation contract; carryover-cwd) ────────────
         # NEVER call spec.fn() without forwarding cwd — that would let the
         # cache key (hashed under `cwd`) drift from the check's process CWD.
+        fn_start_ts = datetime.now(tz=timezone.utc)
         try:
             result = spec.fn(cwd=cwd)
         except Exception as exc:
@@ -105,6 +137,16 @@ def run_check(
                 ),
             )
             log.exception("check.crashed", check_id=spec.check_id)
+
+        # ── stamp provenance (executed_at + run_id) ───────────────────────
+        # ONLY stamp on actual fn execution — never on cache replays.
+        # The spec.fn return value may already carry executed_at/run_id if
+        # the check itself sets them; we override with the authoritative values
+        # to guarantee CURRENT_RUN_ID is present on every fresh result.
+        result = result.model_copy(update={
+            "executed_at": fn_start_ts,
+            "run_id": CURRENT_RUN_ID,
+        })
 
         # ── write-through cache ───────────────────────────────────────────
         if cache is not None and key is not None:
@@ -131,6 +173,7 @@ def run_phase(
     cwd: Path = Path("."),
     cache: CacheStore | None = None,
     config: Any = None,
+    required_ids: set[str] | None = None,
 ) -> list[CheckResult]:
     """Run every spec sequentially and return a list of CheckResults.
 
@@ -139,6 +182,9 @@ def run_phase(
 
     When `config` is provided, specs whose `check_id` appears in
     `config.checks.disabled` are filtered out before execution.
+
+    When `required_ids` is provided, checks in that set bypass the cache
+    (forced fresh execution; see run_check docstring).
 
     Sequential execution is intentional in Phase 2 — checks are short
     I/O-bound subprocess calls and concurrency would complicate the
@@ -157,8 +203,10 @@ def run_phase(
 
     results: list[CheckResult] = []
     for spec in specs:
-        results.append(run_check(spec, cwd=cwd, cache=cache, config=config))
+        results.append(
+            run_check(spec, cwd=cwd, cache=cache, config=config, required_ids=required_ids)
+        )
     return results
 
 
-__all__ = ["run_check", "run_phase"]
+__all__ = ["run_check", "run_phase", "CURRENT_RUN_ID"]

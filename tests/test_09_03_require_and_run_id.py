@@ -23,7 +23,7 @@ from tests._helpers import render_scratch_project
 
 @pytest.fixture(scope="module")
 def require_modules(tmp_path_factory: pytest.TempPathFactory):
-    scratch = render_scratch_project(tmp_path_factory.mktemp("require-scratch"))
+    scratch = render_scratch_project(tmp_path_factory.mktemp("require-scratch"), _vcs_ref="HEAD")
     sys.path.insert(0, str(scratch))
     try:
         for mod in list(sys.modules):

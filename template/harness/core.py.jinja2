@@ -31,9 +31,9 @@ from harness.cache import CacheCorruptError, CacheStore
 from harness.config import HarnessConfig, load_config
 from harness.didyoumean import suggest
 from harness.logging import log
-from harness.models import VerifyReport
+from harness.models import EXIT_BAD_INPUT, VerifyReport
 from harness.registry import list_checks as registry_list_checks
-from harness.runner import run_phase
+from harness.runner import CURRENT_RUN_ID, run_phase
 
 
 def list_checks() -> list[str]:
@@ -48,6 +48,7 @@ def verify(
     no_cache: bool = False,
     cwd: Path = Path("."),
     config: HarnessConfig | None = None,
+    required_ids: set[str] | None = None,
 ) -> VerifyReport:
     """Run the requested checks (or all of them) and return a VerifyReport.
 
@@ -64,6 +65,14 @@ def verify(
             check fn cwd argument, **and** config path resolution.
         config: Optional pre-loaded ``HarnessConfig``. When ``None``, loaded
             from ``cwd / "pyproject.toml"`` (cwd contract).
+        required_ids: Set of check ids that MUST prove fresh in-process
+            execution (D-08 / BL-3).  Pre-run validation:
+              (a) unknown id → ValueError naming the id (F-02 hard invariant).
+              (b) id not selected by the current tier/filter → ValueError with
+                  actionable message (D-08 strictness (b), LOCKED).
+            During the run: each required id bypasses the cache.
+            Post-run assertion: each required id's result must carry
+            CURRENT_RUN_ID; if not, the result was replayed and we raise.
 
     Returns:
         A fully-populated ``VerifyReport`` (including ``summary``).
@@ -115,6 +124,33 @@ def verify(
     disabled = set(config.checks.disabled or [])
     filtered = [s for s in filtered if s.check_id not in disabled]
 
+    # ── --require pre-run validation (D-08 / BL-3 / F-02) ────────────────────
+    # Must run BEFORE cache/run so a bad required id aborts early.
+    if required_ids:
+        all_known_ids = {s.check_id for s in all_specs}
+        filtered_ids = {s.check_id for s in filtered}
+        # (a) Unknown required id → fail immediately, naming the id (F-02).
+        for rid in sorted(required_ids):
+            if rid not in all_known_ids:
+                raise ValueError(
+                    f"--require: unknown check id {rid!r}. "
+                    "The id is not in the registry — check spelling or run "
+                    "`verify-kit list-checks` to see available ids."
+                )
+        # (b) Required id not selected by current tier/filter → actionable error.
+        # The check EXISTS but is not in the running set (e.g. tier=slow, not in standard).
+        for rid in sorted(required_ids):
+            if rid not in filtered_ids:
+                # Find the spec to report its tier
+                spec_by_id = {s.check_id: s for s in all_specs}
+                spec_tier = spec_by_id[rid].tier
+                raise ValueError(
+                    f"--require: required id {rid!r} is a {spec_tier!r} check "
+                    f"not selected by the current tier ({tier!r}). "
+                    f"Use `verify --full --require={rid}` to include slow checks, "
+                    "or adjust the --quick/--full flag."
+                )
+
     # ── cache ────────────────────────────────────────────────────────────────
     cache: CacheStore | None
     if no_cache or not config.cache.enabled:
@@ -128,8 +164,26 @@ def verify(
 
     # ── run ──────────────────────────────────────────────────────────────────
     start = time.monotonic()
-    results = run_phase(filtered, cwd=cwd, cache=cache, config=config)
+    results = run_phase(filtered, cwd=cwd, cache=cache, config=config, required_ids=required_ids)
     total_ms = int((time.monotonic() - start) * 1000)
+
+    # ── --require post-run assertion (BL-3) ───────────────────────────────────
+    # Every required id must carry CURRENT_RUN_ID — proves in-process execution.
+    # A cache-replayed result keeps the original (stale) run_id from when it
+    # was first cached (which may differ from CURRENT_RUN_ID if the required
+    # bypass in run_check failed somehow). This is a safety net.
+    if required_ids:
+        results_by_id = {r.check_id: r for r in results}
+        for rid in sorted(required_ids):
+            result = results_by_id.get(rid)
+            if result is None or result.run_id != CURRENT_RUN_ID:
+                actual_rid = result.run_id if result else None
+                raise ValueError(
+                    f"--require: check {rid!r} did not execute in this process "
+                    f"(result run_id={actual_rid!r}, expected {CURRENT_RUN_ID!r}). "
+                    "This indicates a cache-replay slipped through. "
+                    "Run with --no-cache or re-run to force a fresh execution."
+                )
 
     report = VerifyReport.from_checks(results, total_duration_ms=total_ms)
 
