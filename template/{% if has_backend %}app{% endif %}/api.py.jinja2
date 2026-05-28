@@ -59,6 +59,40 @@ async def events_stream() -> EventSourceResponse:
             yield {"event": "tick", "data": str(i)}
 
     return EventSourceResponse(gen())
+
+
+@router.get("/trace-demo")
+async def trace_demo(request: Request):
+    """Demonstrate the OTel distributed trace waterfall.
+
+    Performs a real DB query when has_db=true so SQLAlchemyInstrumentor emits a
+    child DB span (producing the full browser → FastAPI → DB waterfall). Degrades
+    gracefully to {"db": false} when the database is unreachable (e.g. fuzzed
+    in-process with no live DB) so the route is always safe to hit — it never
+    returns a 5xx. The engine/sessionmaker live on app.state (set in lifespan);
+    this route never constructs its own engine.
+    """
+{% if has_db %}
+    from sqlalchemy import text
+    from sqlalchemy.exc import SQLAlchemyError
+
+    sessionmaker = getattr(request.app.state, "sessionmaker", None)
+    if sessionmaker is None:
+        return {"db": False, "result": None}
+    try:
+        async with sessionmaker() as session:
+            result = await session.execute(text("SELECT 1"))
+            row = result.scalar()
+    except (SQLAlchemyError, OSError):
+        # OSError covers connect-refused / DNS / timeout — asyncpg raises a raw
+        # OSError at connect time before SQLAlchemy wraps it; SQLAlchemyError
+        # covers query/DB-layer errors. Degrade to a clean 200 so the route is
+        # always safe to fuzz (the in-process schemathesis check has no live DB).
+        return {"db": False, "result": None}
+    return {"db": True, "result": row}
+{% else %}
+    return {"db": False}
+{% endif %}
 {% if has_llm %}
 
 

@@ -27,6 +27,7 @@ Subprocess discipline (every web check):
 from __future__ import annotations
 
 import shutil
+import subprocess
 import time
 from pathlib import Path
 
@@ -359,19 +360,27 @@ def check_web_axe(cwd: Path) -> CheckResult:
         "Lost Pixel visual regression "
         "(Docker-pinned mcr.microsoft.com/playwright:v1.60.0-jammy per D-W02)"
     ),
-    inputs=["web/.lost-pixel/baseline/**", "web/lost-pixel.config.ts"],
+    inputs=["web/.lost-pixel/baseline/**", "web/lostpixel.config.cjs"],
     fixable=True,
     tool="lost-pixel",
     skip_if_unavailable=True,
 )
 def check_web_lost_pixel(cwd: Path) -> CheckResult:
-    """Run Lost Pixel visual regression inside Docker.
+    """Run Lost Pixel visual regression inside Docker (comparison mode).
 
-    D-W02: runs inside mcr.microsoft.com/playwright:v1.60.0-jammy (pinned tag)
-    to prevent cross-platform font drift in baselines.
+    D-W02: uses Lost Pixel's built-in `lost-pixel docker` mode which pulls
+    mcr.microsoft.com/playwright:v1.60.0-jammy and runs comparison inside
+    the container — no host node_modules mount (verify-kit-c7k fix).
 
-    If Docker is unavailable, returns status="fail" (CheckStatus has no
-    "warning" variant — verified models.py.jinja2:23).
+    If Docker is unavailable, returns status="skip" (not fail) so that agents
+    on Docker-less machines do not see a false red (D8-A local-check
+    degradation). @register already declares skip_if_unavailable=True.
+
+    COMPARISON mode (subcommand: `lost-pixel docker`):
+    exits 1 when diffs are found vs baseline, 0 when they match. The
+    baseline-regeneration subcommand always exits 0 — using it here would
+    be a silent no-op that never catches regressions. Use `just web-baseline`
+    to intentionally regenerate baselines.
 
     D-W03: the `git add` approval verb flows through ErrorEnvelope.fix_command
     for each diff, surfaced via the existing zero-arg MCP fix_propose() tool
@@ -390,25 +399,24 @@ def check_web_lost_pixel(cwd: Path) -> CheckResult:
 
     if not inside_docker and not docker_binary and not docker_env_set:
         duration_ms = int((time.monotonic() - t0) * 1000)
+        # Skip (not fail) when Docker is absent — agents on Docker-less boxes
+        # must not see a false red (D8-A local-check degradation). The
+        # @register decorator already declares skip_if_unavailable=True;
+        # this aligns the runtime return value with that intent.
         return CheckResult(
             check_id="web.lost_pixel",
-            status="fail",  # no "warning" in CheckStatus (models.py.jinja2:23)
+            status="skip",
             duration_ms=duration_ms,
-            error=ErrorEnvelope(
-                code="web.lost_pixel.docker_unavailable",
-                message=(
-                    "Lost Pixel requires Docker to run consistently across platforms "
-                    "(D-W02: pinned to mcr.microsoft.com/playwright:v1.60.0-jammy). "
-                    "Docker daemon not found."
-                ),
-                hint="Start Docker Desktop and re-run, or use `just web-baseline` to run in Docker",
-                fix_command="just web-baseline",
-                docs_url="https://lost-pixel.com/docs",
+            message=(
+                "Lost Pixel requires Docker for cross-platform reproducibility "
+                "(D-W02: pinned to mcr.microsoft.com/playwright:v1.60.0-jammy). "
+                "Docker daemon not found — run `just web-baseline` on a machine "
+                "with Docker to generate/verify baselines."
             ),
         )
 
     if inside_docker:
-        # Already inside the pinned image — run Lost Pixel directly
+        # Already inside the pinned image — run Lost Pixel in comparison mode directly
         result = proc_run(
             ["pnpm", "exec", "lost-pixel"],
             cwd=cwd / "web",
@@ -416,18 +424,84 @@ def check_web_lost_pixel(cwd: Path) -> CheckResult:
             timeout=300.0,
         )
     else:
-        # Outside Docker — mount cwd/web into the container and run
-        result = proc_run(
-            [
-                "docker", "run", "--rm",
-                "-v", f"{cwd}/web:/work",
-                "-w", "/work",
-                _DOCKER_IMAGE,
-                "pnpm", "exec", "lost-pixel",
-            ],
-            env=clean_env(),
-            timeout=300.0,
+        # Outside Docker — use Lost Pixel's built-in docker mode (COMPARISON).
+        # `lost-pixel docker` owns container orchestration (pulls lostpixel/lost-pixel
+        # image, mounts web/ into the container). No host dep directory mount —
+        # avoids arm64 vs linux esbuild crash (verify-kit-c7k).
+        #
+        # Lost Pixel pageShots mode does NOT serve static files — it connects to
+        # the baseUrl (host.docker.internal:3000) from inside the container.
+        # We must serve web/dist/ on the host first so the container can reach it.
+        dist_dir = cwd / "web" / "dist"
+        if not dist_dir.exists():
+            duration_ms = int((time.monotonic() - t0) * 1000)
+            return CheckResult(
+                check_id="web.lost_pixel",
+                status="fail",
+                duration_ms=duration_ms,
+                error=ErrorEnvelope(
+                    code="web.lost_pixel.dist_missing",
+                    message=(
+                        "web/dist/ not found — run `pnpm --dir web build` first "
+                        "so Lost Pixel can screenshot the production build."
+                    ),
+                    hint="Run `cd web && pnpm build` then re-run this check",
+                    fix_command="pnpm --dir web build",
+                    docs_url="https://lost-pixel.com/docs",
+                ),
+            )
+
+        # Start vite preview to serve dist/ at port 3000 (host.docker.internal:3000
+        # reaches this from inside the lostpixel container on macOS/Linux Docker).
+        preview_proc = subprocess.Popen(
+            # --host 0.0.0.0 binds all interfaces so host.docker.internal:3000
+            # inside the lostpixel container can reach this preview server.
+            # Without 0.0.0.0, vite only listens on 127.0.0.1 (loopback) which
+            # is unreachable from Docker containers via host.docker.internal.
+            ["pnpm", "--dir", "web", "exec", "vite", "preview",
+             "--port", "3000", "--host", "0.0.0.0"],
+            cwd=str(cwd),
+            env={**clean_env(), "FORCE_COLOR": "0"},
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
         )
+        try:
+            # Give vite preview a moment to bind the port
+            time.sleep(2)
+            # Use `docker run` directly (not `lost-pixel docker`) so the
+            # container's exit code is propagated correctly. `lost-pixel docker`
+            # is a convenience wrapper that catches the container exit code and
+            # always exits 0 — making it useless as a CI gate.
+            # The lostpixel/lost-pixel image already has pnpm + lost-pixel
+            # installed; no host dep directory mount needed (verify-kit-c7k fix).
+            web_dir = cwd / "web"
+            version_result = proc_run(
+                ["pnpm", "exec", "lost-pixel", "--version"],
+                cwd=web_dir,
+                capture_output=True,
+                text=True,
+                timeout=10.0,
+            )
+            lp_version = version_result.stdout.strip().split("\n")[-1].strip() if version_result.returncode == 0 else "3.22.0"
+            result = proc_run(
+                [
+                    "docker", "run", "--rm",
+                    "-v", f"{web_dir}:{web_dir}",
+                    "-e", f"WORKSPACE={web_dir}",
+                    "-e", "DOCKER=1",
+                    "-e", "LOST_PIXEL_DISABLE_TELEMETRY=1",
+                    f"lostpixel/lost-pixel:v{lp_version}",
+                ],
+                cwd=web_dir,
+                env=clean_env(),
+                timeout=300.0,
+            )
+        finally:
+            preview_proc.terminate()
+            try:
+                preview_proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                preview_proc.kill()
 
     duration_ms = int((time.monotonic() - t0) * 1000)
 

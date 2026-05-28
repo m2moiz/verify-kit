@@ -37,7 +37,7 @@ export default function App() {
   async function handleTraceFetch() {
     setIsFetching(true);
     try {
-      const res = await fetch("/api/healthz");
+      const res = await fetch("/api/trace-demo");
       toast(`Fetch returned ${res.status}. Check \`just trace --last\` for the waterfall.`);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -67,7 +67,7 @@ export default function App() {
         <section className="p-6 border-b">
           <h2 className="text-2xl font-semibold">Trace test</h2>
           <p className="mt-1 text-sm text-muted-foreground">
-            Fires a fetch to /api/healthz and shows OTel propagation in a toast.
+            Fires a fetch to /api/trace-demo and shows OTel propagation in a toast.
           </p>
           <div className="mt-4">
             <Button

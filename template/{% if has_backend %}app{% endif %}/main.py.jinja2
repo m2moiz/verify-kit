@@ -50,9 +50,29 @@ async def lifespan(app: FastAPI):
     configure_logging()
     app.state.settings = settings
     log.info("app.startup", env=settings.ENV)
+{% if has_db %}
+    from opentelemetry.instrumentation.sqlalchemy import SQLAlchemyInstrumentor
+
+    from app.db import make_engine, make_sessionmaker
+
+    engine = make_engine(settings.DATABASE_URL)
+    # Async engine wraps a sync engine; SQLAlchemyInstrumentor hooks the sync layer.
+    # SQLAlchemyInstrumentor patches globally (process-wide), so guard against
+    # re-instrumenting when the app is constructed more than once in a single
+    # process (e.g. the in-process schemathesis fuzz harness) — calling instrument()
+    # twice otherwise logs "Attempting to instrument while already instrumented".
+    _sqla_instrumentor = SQLAlchemyInstrumentor()
+    if not _sqla_instrumentor.is_instrumented_by_opentelemetry:
+        _sqla_instrumentor.instrument(engine=engine.sync_engine)
+    app.state.engine = engine
+    app.state.sessionmaker = make_sessionmaker(engine)
+{% endif %}
     try:
         yield
     finally:
+{% if has_db %}
+        await app.state.engine.dispose()
+{% endif %}
         log.info("app.shutdown")
 
 
@@ -185,6 +205,14 @@ def create_app(cwd: Path | None = None) -> FastAPI:
 
     # Routes
     app.include_router(api_router)
+
+    # OTel FastAPI instrumentation — adds server spans for every request.
+    # Gated off when has_logfire: logfire.instrument_fastapi(app) already adds
+    # the server span; running both would produce duplicate spans (T-08-07).
+{% if has_backend and not has_logfire %}
+    from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+    FastAPIInstrumentor.instrument_app(app)
+{% endif %}
 
     # HARN-03 debug router — mounted only in dev so prod gets 404
     settings_for_mount = load_settings(cwd)

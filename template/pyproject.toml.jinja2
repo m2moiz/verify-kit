@@ -39,12 +39,16 @@ dependencies = [
     "asgi-lifespan>=2.1",
     "polyfactory>=2.16",
     "dirty-equals>=0.8",
+    # OTel contrib instrumentation — pinned to 0.62b1 to match otel-sdk==1.41.1
+    # (which requires semantic-conventions==0.62b1; 0.62b0 requires 0.62b0 -> conflict).
+    "opentelemetry-instrumentation-fastapi==0.62b1",
 {% endif %}
 {% if has_backend and has_db %}
     # Async DB stack
     "sqlalchemy[asyncio]>=2.0",
     "asyncpg>=0.29",
     "alembic>=1.13",
+    "opentelemetry-instrumentation-sqlalchemy>=0.62b1,<0.63",
 {% endif %}
 {% if has_backend and has_logfire %}
     # Logfire opt-in — auto-traces FastAPI + httpx + LLM SDKs.

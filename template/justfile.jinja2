@@ -148,12 +148,23 @@ smoke-web:
 	cd web && pnpm exec playwright test --headed
 
 # Capture/refresh Lost Pixel baselines inside the pinned Docker image (D-W02).
+# Uses Lost Pixel's built-in `lost-pixel docker update` mode which owns the
+# container, pulls its own image, and takes screenshots — no host dep directory
+# mount required (verify-kit-c7k: host arm64 binaries crash linux).
+# Gallery must be served at localhost:3000 for the container to reach it;
+# vite preview runs for the duration then is killed by the EXIT trap.
 # Run this after intentional visual changes; review the new PNGs; commit with `git add`.
 web-baseline:
-	docker run --rm \
-	  -v "$(pwd)/web:/work" -w /work \
-	  mcr.microsoft.com/playwright:v1.60.0-jammy \
-	  pnpm exec lost-pixel update
+	#!/usr/bin/env bash
+	set -e
+	pnpm --dir web build
+	pnpm --dir web exec vite preview --port 3000 --host 0.0.0.0 &
+	_vite_pid=$!
+	trap 'kill $_vite_pid 2>/dev/null || true' EXIT
+	# Give vite preview a moment to start
+	sleep 1
+	cd web && pnpm exec lost-pixel docker update
+
 {% endif %}
 
 {% if has_llm %}
