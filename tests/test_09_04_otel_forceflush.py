@@ -50,11 +50,15 @@ def test_otel_ts_exposes_force_flush(rendered_full: Path):
 def test_otel_ts_force_flush_is_window_assignment(rendered_full: Path):
     otel_ts = rendered_full / "web" / "src" / "otel.ts"
     content = otel_ts.read_text()
-    # Must be assigned to window (not just defined as a local)
+    # Must be assigned to window — allow TypeScript cast patterns like
+    # (window as unknown as Record<string, unknown>).__verifyKitOtelForceFlush =
+    # OR the simple window.__verifyKitOtelForceFlush =
     assert re.search(
-        r'window\.__verifyKitOtelForceFlush\s*=',
+        r'__verifyKitOtelForceFlush\s*=\s*',
         content,
-    ), "window.__verifyKitOtelForceFlush must be assigned on window"
+    ) and "window" in content, (
+        "window.__verifyKitOtelForceFlush must be assigned on window"
+    )
 
 
 def test_otel_ts_force_flush_awaits_provider(rendered_full: Path):
