@@ -518,14 +518,21 @@ def check_web_lost_pixel(cwd: Path) -> CheckResult:
     duration_ms = int((time.monotonic() - t0) * 1000)
 
     if result.returncode not in (0, 1):
-        # Non-0/1 exit = Lost Pixel itself crashed (not just diffs found)
+        # Non-0/1 exit = Lost Pixel itself crashed (not just diffs found).
+        # Surface the subprocess stderr/stdout tail: exit 125 in particular is
+        # the Docker daemon failing *before* the container runs (bad image tag,
+        # pull/rate-limit, mount or --add-host error), and the bare exit code
+        # alone is undebuggable. A check that hides why it failed defeats the
+        # purpose — give the reader the actual daemon message.
+        diag = (result.stderr or "").strip() or (result.stdout or "").strip()
+        diag_tail = diag[-600:] if diag else "(no stderr/stdout captured)"
         return CheckResult(
             check_id="web.lost_pixel",
             status="fail",
             duration_ms=duration_ms,
             error=ErrorEnvelope(
                 code="web.lost_pixel.run.failed",
-                message=f"lost-pixel exited {result.returncode} (unexpected crash)",
+                message=f"lost-pixel exited {result.returncode} (unexpected crash): {diag_tail}",
                 hint="Run `just web-baseline` to debug inside Docker",
                 fix_command="just web-baseline",
                 docs_url="https://lost-pixel.com/docs",
