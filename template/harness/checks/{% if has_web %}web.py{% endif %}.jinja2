@@ -144,9 +144,14 @@ def check_web_playwright(cwd: Path) -> CheckResult:
     status: CheckStatus = "pass" if result.returncode == 0 else "fail"
     err: ErrorEnvelope | None = None
     if status == "fail":
+        # Surface the reporter tail so the failing spec + assertion are visible
+        # without a re-run — the bare exit code is undebuggable in CI. Playwright
+        # writes the failure summary to stdout; fall back to stderr.
+        diag = (result.stdout or "").strip() or (result.stderr or "").strip()
+        diag_tail = diag[-800:] if diag else "(no reporter output captured)"
         err = ErrorEnvelope(
             code="web.playwright.failed",
-            message=f"Playwright exited {result.returncode}",
+            message=f"Playwright exited {result.returncode}: {diag_tail}",
             hint="Run `cd web && pnpm exec playwright test --reporter=list` for details",
             fix_command="cd web && pnpm exec playwright test",
             docs_url="https://playwright.dev/docs/running-tests",
