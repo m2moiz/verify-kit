@@ -268,17 +268,13 @@ def test_web_baseline_builds(tmp_path: Path) -> None:
     web_dir = scratch / "web"
     assert web_dir.is_dir(), "web/ dir must exist for has_web=True"
 
-    # Step 1: enable corepack/pnpm (ignore errors — node version on PATH may
-    # already have corepack active; the lockfile was generated with pnpm@9.15.0
-    # but any compatible pnpm 9.x can install --frozen-lockfile correctly).
-    subprocess.run(
-        ["corepack", "enable", "pnpm"],
-        cwd=str(web_dir),
-        env=_CLEAN_ENV,
-        check=False,  # non-zero is OK if corepack is not installed / no perms
-    )
-
-    # Step 2: install dependencies from the shipped lockfile
+    # Step 1: install dependencies from the shipped lockfile.
+    #
+    # No `corepack enable pnpm` here (verify-kit-49l): the scaffold pins pnpm
+    # via mise (.mise.toml pnpm = "9.15.0") matching web/package.json's
+    # `packageManager`. Enabling corepack puts a shim on PATH that fights mise
+    # and refuses to switch versions; the lockfile is lockfileVersion 9.0, which
+    # any pnpm 9.x/10.x installs --frozen-lockfile correctly.
     subprocess.run(
         ["pnpm", "install", "--frozen-lockfile"],
         cwd=str(web_dir),
@@ -287,7 +283,7 @@ def test_web_baseline_builds(tmp_path: Path) -> None:
         timeout=180,
     )
 
-    # Step 3: typecheck
+    # Step 2: typecheck
     subprocess.run(
         ["pnpm", "exec", "tsc", "--noEmit"],
         cwd=str(web_dir),
@@ -296,7 +292,7 @@ def test_web_baseline_builds(tmp_path: Path) -> None:
         timeout=60,
     )
 
-    # Step 4: production build
+    # Step 3: production build
     subprocess.run(
         ["pnpm", "build"],
         cwd=str(web_dir),
@@ -343,12 +339,8 @@ def test_web_tailwind_shadcn_baseline(tmp_path: Path) -> None:
     assert web_dir.is_dir(), "web/ dir must exist for has_web=True"
 
     # --- Install and build (same flow as test_web_baseline_builds) -----------
-    subprocess.run(
-        ["corepack", "enable", "pnpm"],
-        cwd=str(web_dir),
-        env=_CLEAN_ENV,
-        check=False,
-    )
+    # pnpm is mise-provisioned at the pinned version (verify-kit-49l); no
+    # `corepack enable pnpm` — corepack's shim fights mise and refuses to switch.
 
     subprocess.run(
         ["pnpm", "install", "--frozen-lockfile"],
@@ -582,12 +574,8 @@ def test_web_backend_four_combos(tmp_path: Path, has_web: bool, has_backend: boo
     if shutil.which("node") is None:
         pytest.skip("Node required for build smoke")
 
-    subprocess.run(
-        ["corepack", "enable", "pnpm"],
-        cwd=str(web_dir),
-        env=_CLEAN_ENV,
-        check=False,
-    )
+    # pnpm is mise-provisioned at the pinned version (verify-kit-49l); no
+    # `corepack enable pnpm` — corepack's shim fights mise and refuses to switch.
 
     subprocess.run(
         ["pnpm", "install", "--frozen-lockfile"],
@@ -738,12 +726,8 @@ def test_web_vitest_and_playwright(tmp_path: Path) -> None:
     )
 
     # ── Tier 3: runtime Vitest + Playwright ───────────────────────────────────
-    subprocess.run(
-        ["corepack", "enable", "pnpm"],
-        cwd=str(web_dir),
-        env=_CLEAN_ENV,
-        check=False,
-    )
+    # pnpm is mise-provisioned at the pinned version (verify-kit-49l); no
+    # `corepack enable pnpm` — corepack's shim fights mise and refuses to switch.
 
     subprocess.run(
         ["pnpm", "install", "--frozen-lockfile"],
@@ -1012,12 +996,8 @@ def test_web_otel_bundle_budget(tmp_path: pytest.TempPathFactory) -> None:
     assert web_dir.is_dir(), f"web/ dir must exist: {web_dir}"
 
     # Install once; reuse node_modules across both builds.
-    subprocess.run(
-        ["corepack", "enable", "pnpm"],
-        cwd=str(web_dir),
-        env=_CLEAN_ENV,
-        check=False,
-    )
+    # pnpm is mise-provisioned at the pinned version (verify-kit-49l); no
+    # `corepack enable pnpm` — corepack's shim fights mise and refuses to switch.
     subprocess.run(
         ["pnpm", "install", "--frozen-lockfile"],
         cwd=str(web_dir),
@@ -1088,12 +1068,8 @@ def test_web_verify_web_quick_boss_test(tmp_path: Path) -> None:
     assert web_dir.is_dir(), "web/ dir must exist for has_web=True"
 
     # Install pnpm dependencies
-    subprocess.run(
-        ["corepack", "enable", "pnpm"],
-        cwd=str(web_dir),
-        env=_CLEAN_ENV,
-        check=False,
-    )
+    # pnpm is mise-provisioned at the pinned version (verify-kit-49l); no
+    # `corepack enable pnpm` — corepack's shim fights mise and refuses to switch.
     subprocess.run(
         ["pnpm", "install", "--frozen-lockfile"],
         cwd=str(web_dir),
@@ -1157,12 +1133,8 @@ def test_web_harness_registry_smoke(tmp_path: Path) -> None:
     assert web_dir.is_dir(), "web/ dir must exist for has_web=True"
 
     # --- pnpm install for later runtime checks ---
-    subprocess.run(
-        ["corepack", "enable", "pnpm"],
-        cwd=str(web_dir),
-        env=_CLEAN_ENV,
-        check=False,
-    )
+    # pnpm is mise-provisioned at the pinned version (verify-kit-49l); no
+    # `corepack enable pnpm` — corepack's shim fights mise and refuses to switch.
     subprocess.run(
         ["pnpm", "install", "--frozen-lockfile"],
         cwd=str(web_dir),

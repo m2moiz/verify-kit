@@ -16,7 +16,5 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: jdx/mise-action@v2
-        with:
-          cache: true
+      - uses: ./.github/actions/setup-mise
 {% raw %}      - run: just smoke ${{ inputs.url }}{% endraw %}

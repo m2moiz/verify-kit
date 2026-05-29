@@ -90,10 +90,17 @@ _message_after_copy: |
 #    `|| true` keeps scaffolding resilient if ruff/uv is unavailable —
 #    `just verify` will surface any real format issues at the consumer's
 #    first run.
+#
+# NOTE: there is deliberately NO `corepack enable pnpm` task. pnpm is
+# provisioned by mise at the EXACT version pinned in .mise.toml
+# (pnpm = "9.15.0"), which matches web/package.json's `packageManager` field.
+# mise and corepack both managing pnpm conflict — corepack's shim refuses to
+# switch versions ("pnpm does not switch versions under corepack") whenever
+# the installed pnpm differs from the pin, which broke the harness web-build
+# subprocess (verify-kit-49l). Letting mise own pnpm avoids the conflict.
 _tasks:
   - "chmod +x .claude/hooks/post-tool-use.sh .claude/hooks/stop.sh scripts/ralph.sh 2>/dev/null || true"
   - "uvx --quiet ruff format . 2>/dev/null || true"
-  - "{% if has_web %}corepack enable pnpm 2>/dev/null || true{% endif %}"
 
 # ── Group: Identity ──────────────────────────────────────────────────────────
 

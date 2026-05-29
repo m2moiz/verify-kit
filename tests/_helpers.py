@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -149,6 +150,16 @@ def render_and_install(tmp_path: Path, **overrides: object) -> Path:
     return scratch
 
 
+#: Writable per-run COREPACK_HOME so `corepack enable pnpm` (run by the web
+#: polarity tests) symlinks the pnpm shim into a tmp dir we own — NOT
+#: /usr/local/bin. Without this, corepack tries to symlink into a
+#: system-owned bin dir and fails with EACCES on repeated local runs / in
+#: sandboxes (verify-kit-kbi). A unique per-process dir avoids cross-run
+#: collisions; it is created lazily here so the directory exists before any
+#: subprocess uses it.
+_COREPACK_HOME = Path(tempfile.gettempdir()) / f"vk-corepack-{os.getpid()}"
+_COREPACK_HOME.mkdir(parents=True, exist_ok=True)
+
 #: Outer-process env minus VIRTUAL_ENV / UV_PROJECT_ENVIRONMENT / PYTHONPATH
 #: etc. — pass via ``subprocess.run(..., env=_CLEAN_ENV)`` so the scratch
 #: project resolves its own venv, not the outer one (REVIEW-CHECKLIST §8).
@@ -156,22 +167,29 @@ def render_and_install(tmp_path: Path, **overrides: object) -> Path:
 #: Also strips Node-specific vars (NODE_*, npm_config_*, PNPM_HOME, NVM_*)
 #: so that outer Node/pnpm installations don't leak into web polarity tests
 #: (07-RESEARCH.md §proc.run subprocess discipline; threat T-07-05).
+#:
+#: COREPACK_HOME is forced to a writable per-run tmp dir (verify-kit-kbi) so
+#: `corepack enable pnpm` does not EACCES trying to symlink into /usr/local/bin.
 _CLEAN_ENV: dict[str, str] = {
-    k: v
-    for k, v in os.environ.items()
-    if k
-    not in {
-        "VIRTUAL_ENV",
-        "UV_PROJECT_ENVIRONMENT",
-        "PYTHONPATH",
-        "PYTHONHOME",
-        "PYTHONSTARTUP",
-        "PYTHONNOUSERSITE",
-        "PNPM_HOME",
-    }
-    and not k.startswith("NODE_")
-    and not k.startswith("npm_config_")
-    and not k.startswith("NVM_")
+    **{
+        k: v
+        for k, v in os.environ.items()
+        if k
+        not in {
+            "VIRTUAL_ENV",
+            "UV_PROJECT_ENVIRONMENT",
+            "PYTHONPATH",
+            "PYTHONHOME",
+            "PYTHONSTARTUP",
+            "PYTHONNOUSERSITE",
+            "PNPM_HOME",
+            "COREPACK_HOME",
+        }
+        and not k.startswith("NODE_")
+        and not k.startswith("npm_config_")
+        and not k.startswith("NVM_")
+    },
+    "COREPACK_HOME": str(_COREPACK_HOME),
 }
 
 

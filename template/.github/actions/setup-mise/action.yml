@@ -1,0 +1,22 @@
+# Copyright (c) 2026 Moiz
+# SPDX-License-Identifier: MIT
+
+# Composite action: install mise and put it on PATH.
+#
+# Centralises the jdx/mise-action reference so every workflow uses a single
+# source of truth (Postmortem Pattern D / c22). Adding mise to a new workflow
+# means one line: `uses: ./.github/actions/setup-mise` — no copy-paste.
+#
+# This file is intentionally static (no .jinja2 suffix): a GitHub Actions
+# expression `${{ ... }}` shares brace syntax with Jinja, so rendering it
+# through Copier would break the action. Keep it as a plain action.yml.
+
+name: setup-mise
+description: "Install mise and put it on PATH (wraps jdx/mise-action@v4)"
+
+runs:
+  using: composite
+  steps:
+    - uses: jdx/mise-action@v4
+      with:
+        cache: true
