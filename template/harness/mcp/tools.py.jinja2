@@ -15,6 +15,12 @@ Each tool function:
     3. Sets ``ToolAnnotations(readOnlyHint=..., destructiveHint=...,
        idempotentHint=...)`` to the §2.2 table values.
 
+Stub tools (debug_state, debug_events, eval_run, eval_compare) are
+registered to keep the 13-tool roster a fixed contract, but are NOT yet
+implemented; they return the honest ``harness.mcp._roster.stub_payload``
+shape and are marked ``implemented=false`` in ``describe.mcp_tools``.
+Planned for the v0.3 diagnose surface (verify-kit-dy4).
+
 After-return ordering (REVIEW-CHECKLIST §2):
     Every tool body builds the result first, then ``return result``. No
     statements follow ``return`` in any branch. Enforced by
@@ -39,11 +45,6 @@ from mcp.types import ToolAnnotations
 # so the byte-identical CLI twin runs are deterministic and cheap.
 _DEFAULT_CHECK_ID = "mise.toml.valid"
 
-# Phase markers for the Category-C stubs (MCP-02). These bodies are
-# placeholders — Phase 4 fills debug_*; Phase 5 fills eval_*.
-_PHASE_DEBUG = 4
-_PHASE_EVAL = 5
-
 
 def register_tools(mcp: FastMCP, *, cwd: Path) -> None:
     """Register the 13 verify-kit tools on ``mcp``.
@@ -57,6 +58,7 @@ def register_tools(mcp: FastMCP, *, cwd: Path) -> None:
     from harness import fix as _fix
     from harness import jaeger as _jaeger
     from harness import ralph as _ralph
+    from harness.mcp._roster import stub_payload as _stub_payload
     from harness.models import CheckCatalogEntry
     from harness.registry import list_checks as _registry_list_checks
 
@@ -156,38 +158,44 @@ def register_tools(mcp: FastMCP, *, cwd: Path) -> None:
         result = _ralph.status(cwd=cwd)
         return result
 
-    # ── Category C: stubs (4 tools) ──────────────────────────────────────
+    # ── Category C: stubs (4 tools — not implemented; v0.3) ──────────────
+    # These four tools are registered (the 13-tool roster is a fixed contract)
+    # but not yet implemented. They return the honest ``stub_payload`` shape
+    # ``{status:"not_implemented", note, tracking}`` — NOT a phase number,
+    # which lied once phases 4/5 shipped without filling them. The honest
+    # roster lives in ``harness.mcp._roster.MCP_TOOLS`` and is surfaced to
+    # agents via ``describe.mcp_tools``.
 
     @mcp.tool(
         annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True)
     )
     def debug_state() -> dict:
-        """Phase-4 stub: backend debug-state introspection."""
-        result = {"status": "not_implemented", "available_in_phase": _PHASE_DEBUG}
+        """Not implemented (stub); planned for the v0.3 diagnose surface."""
+        result = _stub_payload("debug_state")
         return result
 
     @mcp.tool(
         annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True)
     )
     def debug_events() -> dict:
-        """Phase-4 stub: backend debug-events stream."""
-        result = {"status": "not_implemented", "available_in_phase": _PHASE_DEBUG}
+        """Not implemented (stub); planned for the v0.3 diagnose surface."""
+        result = _stub_payload("debug_events")
         return result
 
     @mcp.tool(
         annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=False)
     )
     def eval_run() -> dict:
-        """Phase-5 stub: run an LLM eval suite."""
-        result = {"status": "not_implemented", "available_in_phase": _PHASE_EVAL}
+        """Not implemented (stub); planned for the v0.3 diagnose surface."""
+        result = _stub_payload("eval_run")
         return result
 
     @mcp.tool(
         annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True)
     )
     def eval_compare() -> dict:
-        """Phase-5 stub: compare two LLM eval runs."""
-        result = {"status": "not_implemented", "available_in_phase": _PHASE_EVAL}
+        """Not implemented (stub); planned for the v0.3 diagnose surface."""
+        result = _stub_payload("eval_compare")
         return result
 
 

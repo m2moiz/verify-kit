@@ -54,7 +54,9 @@ def mcp_installed_scratch(tmp_path_factory: pytest.TempPathFactory) -> Path:
     if shutil.which("uv") is None:
         pytest.skip("uv not available on PATH")
     root = tmp_path_factory.mktemp("mcp-byte-id")
-    scratch = render_scratch_project(root)
+    # Render from HEAD (not the latest tag) so the MCP layer under test reflects
+    # current template code (e.g. the honest stub roster / describe.mcp_tools).
+    scratch = render_scratch_project(root, _vcs_ref="HEAD")
     subprocess.run(
         ["uv", "venv", "--python", "3.13", str(scratch / ".venv")],
         cwd=scratch,

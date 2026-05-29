@@ -296,24 +296,40 @@ def test_cat_b_fix_propose_sarif_envelope(mcp_installed_scratch: Path) -> None:
 # ── Category C: 4 stub-shape tests ───────────────────────────────────────────
 
 
+# The 4 Category-C tools are registered stubs but NOT implemented. Their
+# payload is the HONEST shape (verify-kit-dy4): {status, note, tracking}. The
+# old {status, available_in_phase: N} shape lied — phases 4/5 shipped without
+# filling these tools, so the phase number was actively false.
+_PLAN = "v0.3 diagnose surface"
+_TRACKING = "verify-kit-dy4"
+
+
+def _expected_stub(tool: str) -> dict:
+    return {
+        "status": "not_implemented",
+        "note": f"{tool}: stub — not yet implemented; planned for the {_PLAN}",
+        "tracking": _TRACKING,
+    }
+
+
 def test_cat_c_debug_state_stub(mcp_installed_scratch: Path) -> None:
     result = _mcp_call(mcp_installed_scratch, "debug_state")
-    assert result == {"status": "not_implemented", "available_in_phase": 4}
+    assert result == _expected_stub("debug_state")
 
 
 def test_cat_c_debug_events_stub(mcp_installed_scratch: Path) -> None:
     result = _mcp_call(mcp_installed_scratch, "debug_events")
-    assert result == {"status": "not_implemented", "available_in_phase": 4}
+    assert result == _expected_stub("debug_events")
 
 
 def test_cat_c_eval_run_stub(mcp_installed_scratch: Path) -> None:
     result = _mcp_call(mcp_installed_scratch, "eval_run")
-    assert result == {"status": "not_implemented", "available_in_phase": 5}
+    assert result == _expected_stub("eval_run")
 
 
 def test_cat_c_eval_compare_stub(mcp_installed_scratch: Path) -> None:
     result = _mcp_call(mcp_installed_scratch, "eval_compare")
-    assert result == {"status": "not_implemented", "available_in_phase": 5}
+    assert result == _expected_stub("eval_compare")
 
 
 # ── grep-guard: forbidden install-command strings must not appear ───────────

@@ -21,5 +21,8 @@ __pycache__/
 research/
 SESSION-HANDOFF.md
 
+# Internal recon / audit artifacts — never leak to the public OSS repo.
+.audit/
+
 # PII-bearing personal presets (D-W12) — never commit
 presets/*.local.yml

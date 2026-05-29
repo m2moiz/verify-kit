@@ -68,6 +68,18 @@ def _build_results(report: VerifyReport) -> list[dict]:
         }
         if err and err.docs_url:
             entry["hostedViewerUri"] = err.docs_url
+        # SARIF 2.1.0 §3.8 property bag: surface the machine-actionable
+        # `fix_command` (and `hint`) so the agent reading SARIF / fix_propose
+        # gets the same next-action the human gets from pretty output. Pretty
+        # renders `err.fix_command`; without this the agent path went blind.
+        if err:
+            properties: dict = {}
+            if err.fix_command:
+                properties["fix_command"] = err.fix_command
+            if err.hint:
+                properties["hint"] = err.hint
+            if properties:
+                entry["properties"] = properties
         results.append(entry)
     return results
 
