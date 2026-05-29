@@ -358,22 +358,22 @@ jobs:
           VITE_OTEL_EXPORTER_OTLP_ENDPOINT: http://localhost:4318/v1/traces
         run: pnpm build
 
-      # ── Start vite preview (needed for Lost Pixel + otel_trace Playwright) ──
-      # Lost Pixel's baseUrl is http://host.docker.internal:3000 (lostpixel.config.cjs).
-      # vite preview --port 3000 --host 0.0.0.0 serves the built dist/.
-      # otel_trace Playwright navigates /?trace_test_id=<uuid> at this URL.
-      - name: Start vite preview server
+      # ── Start vite preview on :3000 ONLY (for Lost Pixel) ──────────────────
+      # Lost Pixel's baseUrl is http://host.docker.internal:3000 (lostpixel.config.cjs),
+      # so :3000 must be served on the host for its docker run.
+      #
+      # Do NOT pre-start :4173 here. The playwright-based checks (web.playwright,
+      # web.axe, web.otel_trace) and Lighthouse run with CI=1 and self-start their
+      # OWN :4173 server (playwright webServer.command / LHCI startServerCommand,
+      # reuseExistingServer:false). A pre-started :4173 collides with that fresh
+      # start and fails all of them (verify-kit-cyo). Each check manages :4173 for
+      # its own duration.
+      - name: Start vite preview server (:3000 for Lost Pixel)
         working-directory: /tmp/scratch-live/web
         run: |
-          pnpm exec vite preview --port 4173 --host 0.0.0.0 &
-          echo $! > /tmp/vite-preview.pid
-          sleep 2
-          # Also serve on :3000 for Lost Pixel (its config hardcodes host.docker.internal:3000)
           pnpm exec vite preview --port 3000 --host 0.0.0.0 &
           echo $! > /tmp/vite-preview-3000.pid
           sleep 2
-          # Verify both are up
-          curl -s -o /dev/null -w "vite :4173 -> %{http_code}\n" http://127.0.0.1:4173/
           curl -s -o /dev/null -w "vite :3000 -> %{http_code}\n" http://127.0.0.1:3000/
 
       # ── Run verify --full --require=web.lost_pixel,web.otel_trace ──────────
@@ -396,10 +396,11 @@ jobs:
             --require=web.otel_trace
 
       # ── Cleanup ─────────────────────────────────────────────────────────────
-      - name: Stop vite preview servers
+      - name: Stop vite preview server
         if: always()
         run: |
-          kill $(cat /tmp/vite-preview.pid 2>/dev/null) 2>/dev/null || true
+          # Only :3000 is pre-started here; the playwright/Lighthouse checks
+          # tear down their own self-started :4173 servers.
           kill $(cat /tmp/vite-preview-3000.pid 2>/dev/null) 2>/dev/null || true
 
       - name: Stop live stack
