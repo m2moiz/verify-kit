@@ -1,6 +1,21 @@
-"""harness.web.lostpixel_adapter — Parse Lost Pixel comparison output into ErrorEnvelope list.
+"""harness.web.lostpixel_adapter — Interpret Lost Pixel OSS comparison output.
 
-# Verified signatures (2026-05-27):
+# Verified against lost-pixel v3.22.0 OSS local mode (2026-05-29):
+#
+# Lost Pixel OSS (no SaaS project id) signals comparison results via the
+# process EXIT CODE, NOT a results file:
+#   exit 0 → no differences (all snapshots match baseline)        → PASS
+#   exit 1 → one or more snapshots differ (or have no baseline)   → FAIL
+#   exit >1 → Lost Pixel/Docker crashed (handled by the check)
+#
+# On a differing run it writes one PNG per differing snapshot to
+#   <web>/.lost-pixel/difference/<name>.png
+# On a clean run it writes NOTHING beyond baseline/ and current/ PNGs.
+#
+# It does NOT write `comparison-results.json` — that is a Lost Pixel *platform*
+# (SaaS) artifact and is never produced in OSS mode. (An earlier version of this
+# adapter parsed a comparison-results.json that lost-pixel never emits, so the
+# check could never go green on a cold path — verify-kit live-full caught it.)
 #
 # ErrorEnvelope (template/harness/models.py.jinja2:40):
 #   code: str, message: str, hint: str | None, fix_command: str | None,
@@ -15,31 +30,24 @@
 #        Baseline update = git add web/.lost-pixel/baseline/<filename>
 #        This surfaces via the existing zero-arg MCP fix_propose() tool.
 #
-# Lost Pixel OSS v3.x output:
-#   comparison-results.json: array of result objects per snapshot
-#   Each item has:
-#     name: str (snapshot name, matches the data-lost-pixel-id or page name)
-#     baselinePath: str (relative path to baseline PNG)
-#     currentPath: str (relative path to current capture PNG)
-#     diffPath: str | None (relative path to diff PNG, null if no diff)
-#     diffPercentage: float (0.0-100.0, pixel diff %)
-#     threshold: float (configured threshold, 0.0-100.0)
-#     isNew: bool (no baseline exists yet)
-#     isUpdated: bool (diff exceeds threshold)
-#     isDeleted: bool (baseline exists but no current capture)
+# --require freshness is NOT this adapter's concern: the harness runner
+# (harness/core.py) enforces it generically by asserting each required check
+# carries the current process run_id (a cache-replay keeps a stale run_id and
+# fails). The check always executes lost-pixel, so its exit code is fresh by
+# construction. See tests/test_09_03_require_and_run_id.py.
 #
 # lost-pixel-approve CLI shim (VIZ-03 — standalone CLI half):
 #   Provides an argparse main() callable as `lost-pixel-approve` console script.
-#   --dry-run (or no flag): preview mode — print baselines that would be approved.
-#   --confirm: destructive mode — stage baselines via `git add <baselinePath>`.
-#   MCP fix_propose --check=visual --approve wiring is DELIBERATELY DEFERRED to v0.3
-#   (bead verify-kit-pc8). The MCP half depends on a per-check --approve arg shape
-#   that does not exist in the current zero-arg fix_propose() signature.
+#   Enumerates the snapshots that differed (difference/<name>.png) and either
+#   previews or stages their baselines via git add.
+#   --dry-run (or no flag): preview the git add commands; do not mutate.
+#   --confirm: stage each baseline via git add.
+#   MCP fix_propose --check=visual --approve wiring is DELIBERATELY DEFERRED to
+#   v0.3 (bead verify-kit-pc8).
 """
 from __future__ import annotations
 
 import argparse
-import json
 import subprocess
 import sys
 from pathlib import Path
@@ -47,115 +55,85 @@ from pathlib import Path
 from harness.models import ErrorEnvelope
 
 _BASELINE_HINT = (
-    "Run `just web-baseline` in Docker to capture a fresh baseline, "
-    "review the diff PNG, then `git add` the new baseline if the change is intentional."
+    "Review the diff PNG under web/.lost-pixel/difference/, then if the change is "
+    "intentional run `just web-baseline` to regenerate the baseline and `git add` it."
 )
 
 _DOCS_URL = "https://lost-pixel.com/docs"
 
 
+def _diff_pngs(lostpixel_dir: Path) -> list[Path]:
+    """Return sorted difference PNGs written by a Lost Pixel comparison run."""
+    difference_dir = lostpixel_dir / "difference"
+    if not difference_dir.is_dir():
+        return []
+    return sorted(difference_dir.glob("*.png"))
+
+
 def parse_lostpixel_output(lostpixel_dir: Path) -> list[ErrorEnvelope]:
-    """Read Lost Pixel comparison-results.json and return ErrorEnvelope list.
+    """Build an ErrorEnvelope per differing snapshot from the difference/ dir.
+
+    Lost Pixel OSS signals diffs via exit code 1 and writes one PNG per differing
+    snapshot to <lostpixel_dir>/difference/<name>.png. The web.lost_pixel check
+    owns the exit-code interpretation and calls this only when the comparison
+    exited 1 (diffs found); this turns each diff PNG into an ErrorEnvelope whose
+    fix verb is `git add <baseline>` (D-W03).
 
     Args:
         lostpixel_dir: Path to the .lost-pixel/ directory inside the web/ dir
             (e.g. <cwd>/web/.lost-pixel/).
 
     Returns:
-        List of ErrorEnvelope for each snapshot diff that exceeds the threshold.
-        Returns empty list if all snapshots match (clean run) or if the
-        comparison-results.json does not exist (no run yet).
-
-    Raises:
-        json.JSONDecodeError: if comparison-results.json is malformed.
-
-    Note on D-W03: The fix_command for each envelope is the literal git add
-    command that approves the new baseline. This command is surfaced via the
-    existing zero-arg MCP fix_propose() tool (verified tools.py.jinja2:144).
-    Per-finding fix_propose --check/--finding arg support deferred to v0.3
-    (bead verify-kit-pc8).
+        One ErrorEnvelope per difference PNG. Empty list if none are present
+        (which, on an exit-1 run, is itself unexpected — the check surfaces a
+        generic diff envelope in that case).
     """
-    results_path = lostpixel_dir / "comparison-results.json"
-
-    if not results_path.exists():
-        # No run yet — not a failure condition (Docker may not be available)
-        return []
-
-    raw: list[dict] = json.loads(results_path.read_text(encoding="utf-8"))
     envelopes: list[ErrorEnvelope] = []
-
-    for item in raw:
-        name: str = item.get("name", "unknown")
-        diff_pct: float = float(item.get("diffPercentage", 0.0))
-        threshold: float = float(item.get("threshold", 0.0))
-        is_new: bool = bool(item.get("isNew", False))
-        is_updated: bool = bool(item.get("isUpdated", False))
-        is_deleted: bool = bool(item.get("isDeleted", False))
-
-        # Only emit an envelope for snapshots that differ from baseline
-        if not (is_new or is_updated or is_deleted):
-            continue
-
-        # Baseline-relative path for the diff PNG (used as file field + fix_command)
-        diff_path: str | None = item.get("diffPath")
-        baseline_path: str | None = item.get("baselinePath")
-
-        if is_deleted:
-            code = f"web.lost_pixel.deleted.{name}"
-            message = f"Snapshot '{name}' baseline exists but no current capture found"
-            fix_cmd = None  # deletion: investigate whether page was removed
-        elif is_new:
-            code = f"web.lost_pixel.new.{name}"
-            message = f"Snapshot '{name}' has no baseline yet — run `just web-baseline` to create one"
-            # New baseline: git add the baseline PNG
-            baseline_rel = baseline_path or f"web/.lost-pixel/baseline/{name}.png"
-            fix_cmd = f"git add {baseline_rel}"
-        else:
-            # isUpdated = diff exceeds threshold
-            code = f"web.lost_pixel.diff.{name}"
-            message = (
-                f"Visual diff of {diff_pct:.1f}% on '{name}' "
-                f"(threshold {threshold:.1f}%)"
+    for png in _diff_pngs(lostpixel_dir):
+        name = png.stem
+        baseline_rel = f"web/.lost-pixel/baseline/{name}.png"
+        envelopes.append(
+            ErrorEnvelope(
+                code=f"web.lost_pixel.diff.{name}",
+                message=(
+                    f"Visual diff on '{name}' — the current render differs from the "
+                    f"baseline beyond the configured threshold. Diff image: {png}"
+                ),
+                hint=_BASELINE_HINT,
+                # D-W03: git add is the approval verb — literal string surfaced via
+                # the MCP fix_propose() tool.
+                fix_command=f"git add {baseline_rel}",
+                docs_url=_DOCS_URL,
+                # file: diff PNG path so an MCP fix_propose() consumer can render it.
+                file=str(png),
             )
-            # D-W03: git add is the approval verb — literal string surfaced via MCP fix_propose()
-            baseline_rel = baseline_path or f"web/.lost-pixel/baseline/{name}.png"
-            fix_cmd = f"git add {baseline_rel}"
-
-        envelopes.append(ErrorEnvelope(
-            code=code,
-            message=message,
-            hint=_BASELINE_HINT,
-            fix_command=fix_cmd,
-            docs_url=_DOCS_URL,
-            # file: diff PNG path so MCP fix_propose() consumer can render the diff
-            file=diff_path,
-        ))
-
+        )
     return envelopes
 
 
 def main(argv: list[str] | None = None) -> int:
     """CLI entry point for lost-pixel-approve (VIZ-03 — standalone CLI shim).
 
-    Enumerates snapshots where isNew or isUpdated is True in
-    comparison-results.json and either previews or stages them via git add.
+    Enumerates snapshots that differed (difference/<name>.png) and either previews
+    or stages their baselines via git add.
 
     Default behaviour (no flags): acts as --dry-run (preview only, no mutation).
     --dry-run: print the git add commands that would run; exit 0.
-    --confirm: run git add for each new/updated baseline; exit 0 on success.
+    --confirm: run git add for each differing snapshot's baseline; exit 0 on success.
     --dry-run and --confirm are mutually exclusive.
 
+    Approval flow: after reviewing the diff PNGs, run `just web-baseline` to
+    regenerate the baselines, then this shim (or `git add`) stages them.
+
     MCP note: MCP fix_propose --check=visual --approve wiring is DELIBERATELY
-    DEFERRED to v0.3 (bead verify-kit-pc8). That path requires a per-check
-    --approve argument shape on fix_propose() that does not exist in the current
-    zero-arg signature (verified tools.py.jinja2:144). This shim is the
-    standalone CLI half of VIZ-03 only.
+    DEFERRED to v0.3 (bead verify-kit-pc8).
     """
     parser = argparse.ArgumentParser(
         prog="lost-pixel-approve",
         description=(
-            "Preview or approve visual baselines from Lost Pixel comparison-results.json. "
-            "Default (no flags) is dry-run — use --confirm to stage baselines via git add."
+            "Preview or approve visual baselines for snapshots that differed in the "
+            "last Lost Pixel run (web/.lost-pixel/difference/). Default (no flags) is "
+            "dry-run — use --confirm to stage baselines via git add."
         ),
     )
     parser.add_argument(
@@ -190,7 +168,7 @@ def main(argv: list[str] | None = None) -> int:
         "--confirm",
         action="store_true",
         default=False,
-        help="Stage each new/updated baseline via git add (destructive — mutates the git index).",
+        help="Stage each differing snapshot's baseline via git add (mutates the git index).",
     )
 
     args = parser.parse_args(argv)
@@ -199,26 +177,11 @@ def main(argv: list[str] | None = None) -> int:
     is_dry_run = args.dry_run or (not args.dry_run and not args.confirm)
 
     lostpixel_dir = args.lostpixel_dir
-    results_path = lostpixel_dir / "comparison-results.json"
 
-    if not results_path.exists():
-        print(f"No comparison-results.json found at {results_path}. Nothing to approve.")
-        return 0
-
-    raw: list[dict] = json.loads(results_path.read_text(encoding="utf-8"))
-
-    # Collect baselines eligible for approval (new or updated only).
-    to_approve: list[str] = []
-    for item in raw:
-        is_new: bool = bool(item.get("isNew", False))
-        is_updated: bool = bool(item.get("isUpdated", False))
-        if not (is_new or is_updated):
-            continue
-        baseline_path: str | None = item.get("baselinePath")
-        name: str = item.get("name", "unknown")
-        if not baseline_path:
-            baseline_path = f"web/.lost-pixel/baseline/{name}.png"
-        to_approve.append(baseline_path)
+    # The snapshots needing approval are exactly those that differed.
+    to_approve: list[str] = [
+        f"web/.lost-pixel/baseline/{png.stem}.png" for png in _diff_pngs(lostpixel_dir)
+    ]
 
     if not to_approve:
         print("All snapshots are clean — no baselines need approval.")

@@ -1,0 +1,470 @@
+# Copyright (c) 2026 Moiz
+# SPDX-License-Identifier: MIT
+
+# Live-full self-test: renders has_web=true + has_backend=true + has_db=true + has_logfire=false
+# and brings up a real Jaeger+FastAPI+Postgres stack, then runs both headline web verification
+# checks against it.
+#
+# Why a separate workflow (F-04):
+#   The existing template-selftest.yml's "full" combo has has_logfire=true (BL-6). That means
+#   FastAPI's OTel instrumentation goes through logfire's TracerProvider — it never exercises
+#   BL-1's FastAPIInstrumentor path (the path every non-logfire consumer actually ships).
+#   This job targets the no-logfire path with a live stack so both web.otel_trace and
+#   web.lost_pixel can't silently regress.
+#
+# Readiness gate sequence (D-10, P9-04):
+#   1. pg_isready — Postgres accepting connections
+#   2. /healthz — FastAPI accepting requests (F7: /healthz not /health)
+#   3. :14269 — Jaeger admin endpoint 2xx (published from 09-02)
+#   4. :16686/api/services — Jaeger query returns data array
+#   5. Synthetic OTLP write-then-readback — POST a UUID-tagged span, poll until Jaeger sees it
+#      (gates the server-side OTLP export race)
+#   6. Browser-origin CORS canary — OPTIONS preflight from the real browser origin (:4173)
+#      to Jaeger :4318 (P9-04 — a server-side curl can pass while the browser export fails)
+#
+# Tag-gating note (D-14): v0.2.0 is gated via branch protection requiring this job to pass
+# on PRs to main. There is NO push.tags / release trigger here — that would bypass PR checks.
+
+name: template-selftest-live
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "template/**"
+      - "harness/**"
+      - ".github/workflows/**"
+      - ".github/actions/**"
+      - "justfile*"
+      - "copier.yml"
+      - "pyproject.toml"
+      - "uv.lock"
+      - "src/**"
+  push:
+    branches: [main]
+    paths:
+      - "template/**"
+      - "harness/**"
+      - ".github/workflows/**"
+      - ".github/actions/**"
+      - "justfile*"
+      - "copier.yml"
+      - "pyproject.toml"
+      - "uv.lock"
+      - "src/**"
+  workflow_dispatch:
+
+jobs:
+  live-full:
+    name: live-full (web+backend+db, no-logfire)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      VERIFYKIT_AUTH_TOKEN: dev-token-for-tests
+      ENV: dev
+      # Service names must match OTEL_SERVICE_NAME in docker-compose (D-01)
+      OTEL_SERVICE_NAME: SelftestScratch-api
+      VITE_OTEL_SERVICE_NAME: SelftestScratch-web
+      # Jaeger OTLP-HTTP endpoint used by the browser SDK (injected into the vite build)
+      VITE_OTEL_EXPORTER_OTLP_ENDPOINT: http://localhost:4318/v1/traces
+      # VITE_API_BASE_URL: set later in "Build web assets" step after stack is up
+      # JAEGER_QUERY_BASE_URL: default http://localhost:16686 — no override needed
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/setup-mise
+
+      # ── Node + pnpm setup ───────────────────────────────────────────────────
+      - name: Setup Node and pnpm
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Enable corepack / pnpm
+        run: corepack enable pnpm
+
+      # ── pnpm store cache ────────────────────────────────────────────────────
+      - name: Get pnpm store directory
+        id: pnpm-cache
+        run: echo "store=$(pnpm store path --silent)" >> $GITHUB_OUTPUT
+
+      - name: Cache pnpm store
+        uses: actions/cache@v4
+        with:
+          path: ${{ steps.pnpm-cache.outputs.store }}
+          key: pnpm-store-${{ runner.os }}-live-${{ hashFiles('template/{% if has_web %}web{% endif %}/pnpm-lock.yaml') }}
+          restore-keys: |
+            pnpm-store-${{ runner.os }}-live-
+            pnpm-store-${{ runner.os }}-
+
+      # ── Playwright cache ────────────────────────────────────────────────────
+      - name: Get Playwright version for cache key
+        id: pw-version
+        run: |
+          PW_VER=$(grep -A1 '"@playwright/test"' \
+            'template/{% if has_web %}web{% endif %}/pnpm-lock.yaml' 2>/dev/null \
+            | grep 'version:' | head -1 | awk '{print $2}' | tr -d "'\"") || PW_VER="latest"
+          echo "version=${PW_VER:-latest}" >> $GITHUB_OUTPUT
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ steps.pw-version.outputs.version }}-live
+          restore-keys: |
+            playwright-${{ runner.os }}-${{ steps.pw-version.outputs.version }}-
+            playwright-${{ runner.os }}-
+
+      # ── Install copier ──────────────────────────────────────────────────────
+      - name: Install copier
+        run: uv tool install copier --with copier-template-extensions
+
+      # ── Render the no-logfire combo (BL-6) ─────────────────────────────────
+      # has_logfire=false is the critical difference from the existing "full" combo.
+      # Every non-logfire consumer ships this capability set — this is the path
+      # BL-1's FastAPIInstrumentor exercises (logfire hijacks the TracerProvider).
+      - name: Render scratch project (web+backend+db, logfire=false)
+        run: |
+          SCRATCH="/tmp/scratch-live"
+          cat > /tmp/copier-live.json <<'EOF'
+          {
+            "project_name": "SelftestScratch",
+            "project_description": "verify-kit live-full CI scratch",
+            "project_slug": "selftest-scratch",
+            "package_name": "selftest_scratch",
+            "author_name": "verify-kit CI",
+            "author_email": "ci@verify-kit.example",
+            "license": "MIT",
+            "has_web": true,
+            "has_backend": true,
+            "has_db": true,
+            "has_logfire": false,
+            "has_llm": false,
+            "has_fastapi_mcp": false,
+            "has_claude_code": false,
+            "has_cursor": false,
+            "has_windsurf": false,
+            "has_copilot": false,
+            "has_zed": false,
+            "has_continue": false,
+            "has_devcontainer": false,
+            "llm_backend": "langfuse-cloud"
+          }
+          EOF
+          copier copy --trust --defaults \
+            --data-file /tmp/copier-live.json \
+            "$GITHUB_WORKSPACE" "$SCRATCH"
+
+      # ── Install pnpm dependencies in scratch ─────────────────────────────────
+      - name: Install pnpm dependencies in scratch web dir
+        working-directory: /tmp/scratch-live/web
+        run: pnpm install --frozen-lockfile
+
+      # ── Install Playwright browsers ─────────────────────────────────────────
+      - name: Install Playwright Chromium
+        working-directory: /tmp/scratch-live/web
+        run: pnpm exec playwright install --with-deps chromium
+
+      # ── Bring up the live stack ─────────────────────────────────────────────
+      # Uses the rendered docker-compose.yml which has Jaeger 1.76.0 (with CORS
+      # headers + admin port 14269 from 09-02), FastAPI, and Postgres.
+      - name: Start live stack (Jaeger + FastAPI + Postgres)
+        working-directory: /tmp/scratch-live
+        run: |
+          docker compose up -d
+          echo "Stack started"
+
+      # ── Readiness gate 1: pg_isready ────────────────────────────────────────
+      - name: Readiness gate — Postgres (pg_isready)
+        run: |
+          echo "Waiting for Postgres to accept connections..."
+          for i in $(seq 1 30); do
+            if pg_isready -h 127.0.0.1 -p 5432 -U postgres 2>/dev/null; then
+              echo "Postgres is ready"
+              break
+            fi
+            if [ "$i" -eq 30 ]; then
+              echo "ERROR: Postgres not ready after 30 attempts" >&2
+              exit 1
+            fi
+            sleep 2
+          done
+
+      # ── Readiness gate 2: FastAPI /healthz ─────────────────────────────────
+      # F7: /healthz not /health
+      - name: Readiness gate — FastAPI /healthz
+        run: |
+          echo "Waiting for FastAPI to be healthy..."
+          for i in $(seq 1 30); do
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8000/healthz 2>/dev/null || echo "000")
+            if [ "$STATUS" = "200" ]; then
+              echo "FastAPI /healthz returned 200"
+              break
+            fi
+            if [ "$i" -eq 30 ]; then
+              echo "ERROR: FastAPI /healthz not returning 200 after 30 attempts (last status: $STATUS)" >&2
+              exit 1
+            fi
+            sleep 2
+          done
+
+      # ── Readiness gate 3: Jaeger admin :14269 ──────────────────────────────
+      # Published in 09-02; 2xx means the admin server is up (not just the UI).
+      - name: Readiness gate — Jaeger admin :14269
+        run: |
+          echo "Waiting for Jaeger admin endpoint :14269..."
+          for i in $(seq 1 30); do
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:14269/ 2>/dev/null || echo "000")
+            if [ "$STATUS" -ge 200 ] && [ "$STATUS" -lt 400 ] 2>/dev/null; then
+              echo "Jaeger admin :14269 returned HTTP $STATUS"
+              break
+            fi
+            if [ "$i" -eq 30 ]; then
+              echo "ERROR: Jaeger admin :14269 not responding after 30 attempts (last status: $STATUS)" >&2
+              exit 1
+            fi
+            sleep 2
+          done
+
+      # ── Readiness gate 4: Jaeger query /api/services ───────────────────────
+      - name: Readiness gate — Jaeger query /api/services
+        run: |
+          echo "Waiting for Jaeger query :16686/api/services..."
+          for i in $(seq 1 20); do
+            RESPONSE=$(curl -s http://127.0.0.1:16686/api/services 2>/dev/null || echo "{}")
+            # Jaeger returns {"data": [...], "total": N, ...}
+            HAS_DATA=$(echo "$RESPONSE" | python3 -c "import sys,json; d=json.load(sys.stdin); print('ok' if isinstance(d.get('data'), list) else 'no')" 2>/dev/null || echo "no")
+            if [ "$HAS_DATA" = "ok" ]; then
+              echo "Jaeger /api/services returned a data array"
+              break
+            fi
+            if [ "$i" -eq 20 ]; then
+              echo "ERROR: Jaeger /api/services did not return a data array after 20 attempts" >&2
+              echo "Last response: $RESPONSE" >&2
+              exit 1
+            fi
+            sleep 3
+          done
+
+      # ── Readiness gate 5: Synthetic OTLP write-then-readback ───────────────
+      # Posts a tiny synthetic OTLP trace with a per-run UUID tag, then polls
+      # Jaeger until the span is retrievable. This gates the server-side OTLP
+      # export race (the trace-demo click could complete before Jaeger indexes it).
+      - name: Readiness gate — synthetic OTLP write-then-readback
+        run: |
+          PROBE_ID="readiness-probe-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-$(date +%s)"
+          echo "Synthetic OTLP probe ID: $PROBE_ID"
+
+          # Build a minimal OTLP JSON payload with the probe ID as a span attribute.
+          # Timestamps are in nanoseconds since Unix epoch.
+          NOW_NS=$(python3 -c "import time; print(int(time.time() * 1e9))")
+          END_NS=$(python3 -c "import time; print(int(time.time() * 1e9) + 1000000)")
+          TRACE_ID="00000000000000000000000000000001"
+          SPAN_ID="0000000000000001"
+
+          PAYLOAD=$(python3 - <<PYEOF
+          import json
+          payload = {
+            "resourceSpans": [{
+              "resource": {
+                "attributes": [{"key": "service.name", "value": {"stringValue": "readiness-probe"}}]
+              },
+              "scopeSpans": [{
+                "scope": {"name": "readiness-probe"},
+                "spans": [{
+                  "traceId": "$TRACE_ID",
+                  "spanId": "$SPAN_ID",
+                  "name": "readiness-probe",
+                  "kind": 1,
+                  "startTimeUnixNano": "$NOW_NS",
+                  "endTimeUnixNano": "$END_NS",
+                  "status": {"code": 1},
+                  "attributes": [
+                    {"key": "readiness.probe_id", "value": {"stringValue": "$PROBE_ID"}}
+                  ]
+                }]
+              }]
+            }]
+          }
+          print(json.dumps(payload))
+          PYEOF
+          )
+
+          # POST the synthetic trace to Jaeger OTLP-HTTP :4318
+          HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+            -X POST http://127.0.0.1:4318/v1/traces \
+            -H "Content-Type: application/json" \
+            -d "$PAYLOAD" 2>/dev/null || echo "000")
+          echo "OTLP POST to :4318 returned HTTP $HTTP_STATUS"
+          if [ "$HTTP_STATUS" != "200" ] && [ "$HTTP_STATUS" != "204" ]; then
+            echo "ERROR: OTLP POST failed with status $HTTP_STATUS" >&2
+            exit 1
+          fi
+
+          # Poll Jaeger until the probe span is retrievable (timeout: 60s)
+          echo "Polling Jaeger for probe span..."
+          TAGS_JSON="{\"readiness.probe_id\":\"$PROBE_ID\"}"
+          for i in $(seq 1 20); do
+            RESULT=$(curl -s \
+              "http://127.0.0.1:16686/api/traces?service=readiness-probe&tags=$(python3 -c "import urllib.parse,sys; print(urllib.parse.quote('$TAGS_JSON'))")" \
+              2>/dev/null || echo "{}")
+            COUNT=$(echo "$RESULT" | python3 -c "import sys,json; d=json.load(sys.stdin); print(len(d.get('data',[])))" 2>/dev/null || echo "0")
+            if [ "$COUNT" -gt 0 ]; then
+              echo "Synthetic probe span found in Jaeger after $i attempt(s)"
+              break
+            fi
+            if [ "$i" -eq 20 ]; then
+              echo "ERROR: Synthetic probe span not found in Jaeger after 20 attempts" >&2
+              echo "Last Jaeger response: $RESULT" >&2
+              exit 1
+            fi
+            sleep 3
+          done
+
+      # ── Readiness gate 6: Browser-origin CORS canary (P9-04) ───────────────
+      # An OPTIONS preflight from the real browser origin (http://localhost:4173,
+      # the vite preview origin) to Jaeger OTLP-HTTP :4318.
+      # A server-side curl (no Origin header) can succeed while the browser export
+      # fails on CORS — this gate catches exactly that failure mode.
+      - name: Readiness gate — browser-origin CORS canary (OPTIONS preflight)
+        run: |
+          echo "Sending OPTIONS preflight from browser origin http://localhost:4173 to Jaeger :4318..."
+          RESPONSE=$(curl -s -i -X OPTIONS http://127.0.0.1:4318/v1/traces \
+            -H "Origin: http://localhost:4173" \
+            -H "Access-Control-Request-Method: POST" \
+            -H "Access-Control-Request-Headers: content-type,traceparent" \
+            2>/dev/null)
+          echo "Preflight response:"
+          echo "$RESPONSE"
+          # Assert the response allows the browser origin
+          if echo "$RESPONSE" | grep -qi "access-control-allow-origin"; then
+            echo "CORS canary PASSED: Access-Control-Allow-Origin header present"
+          else
+            echo "ERROR: CORS canary FAILED — Jaeger :4318 did not return ACAO header for origin http://localhost:4173" >&2
+            echo "This means the browser OTel SDK will be blocked by CORS even if the server-side export works." >&2
+            exit 1
+          fi
+
+      # ── Build web assets with CI topology (D-01) ───────────────────────────
+      # VITE_API_BASE_URL points at FastAPI's real origin (cross-origin, absolute).
+      # VITE_OTEL_EXPORTER_OTLP_ENDPOINT points at Jaeger :4318.
+      # This is the production consumer topology (static assets served separately,
+      # API at its real origin) — the topology that exercises BL-2.
+      - name: Build web assets with live-stack env vars
+        working-directory: /tmp/scratch-live/web
+        env:
+          VITE_API_BASE_URL: http://localhost:8000
+          VITE_OTEL_EXPORTER_OTLP_ENDPOINT: http://localhost:4318/v1/traces
+        run: pnpm build
+
+      # ── Start vite preview on :3000 ONLY (for Lost Pixel) ──────────────────
+      # Lost Pixel's baseUrl is http://host.docker.internal:3000 (lostpixel.config.cjs),
+      # so :3000 must be served on the host for its docker run.
+      #
+      # Do NOT pre-start :4173 here. The playwright-based checks (web.playwright,
+      # web.axe, web.otel_trace) and Lighthouse run with CI=1 and self-start their
+      # OWN :4173 server (playwright webServer.command / LHCI startServerCommand,
+      # reuseExistingServer:false). A pre-started :4173 collides with that fresh
+      # start and fails all of them (verify-kit-cyo). Each check manages :4173 for
+      # its own duration.
+      - name: Start vite preview server (:3000 for Lost Pixel)
+        working-directory: /tmp/scratch-live/web
+        run: |
+          pnpm exec vite preview --port 3000 --host 0.0.0.0 &
+          echo $! > /tmp/vite-preview-3000.pid
+          sleep 2
+          curl -s -o /dev/null -w "vite :3000 -> %{http_code}\n" http://127.0.0.1:3000/
+
+      # ── Seed the Lost Pixel baseline in-job ─────────────────────────────────
+      # A freshly-rendered scratch ships NO baseline PNGs (only .gitkeep), and a
+      # committed baseline could not be pixel-correct for a fresh Linux render
+      # anyway (font/AA differences vs the author's machine). Generate the
+      # baseline here against the running :3000 preview, so the comparison run
+      # below diffs the same render against it (identical → pass). This exercises
+      # the full Lost Pixel pipeline end-to-end — the point of the live-full job
+      # (verify-kit-ail) — rather than guarding the demo UI against regressions.
+      # Mirrors the web.lost_pixel docker run + LOST_PIXEL_MODE=update, with an
+      # absolute -v mount ($PWD; the relative-path 125 fix).
+      - name: Seed Lost Pixel baseline (LOST_PIXEL_MODE=update)
+        working-directory: /tmp/scratch-live/web
+        run: |
+          LP_VERSION=$(pnpm exec lost-pixel --version 2>/dev/null | tail -1 | tr -d '[:space:]')
+          LP_VERSION=${LP_VERSION:-3.22.0}
+          # Update mode exits 1 to signal "baselines were added/changed" (the
+          # expected outcome on first seed); only >1 is a real crash (e.g. 125).
+          # Mirror the web.lost_pixel check's `returncode not in (0, 1)` rule.
+          set +e
+          docker run --rm \
+            --add-host host.docker.internal:host-gateway \
+            -v "$PWD:$PWD" \
+            -e WORKSPACE="$PWD" \
+            -e DOCKER=1 \
+            -e LOST_PIXEL_DISABLE_TELEMETRY=1 \
+            -e LOST_PIXEL_MODE=update \
+            "lostpixel/lost-pixel:v$LP_VERSION"
+          rc=$?
+          set -e
+          if [ "$rc" -ne 0 ] && [ "$rc" -ne 1 ]; then
+            echo "Lost Pixel baseline generation crashed (exit $rc)" >&2
+            exit "$rc"
+          fi
+          echo "Baselines generated (update mode exit $rc):"
+          ls -la .lost-pixel/baseline/
+
+      # ── Run verify --full --require=web.lost_pixel,web.otel_trace ──────────
+      # Tier-based (--full includes slow-tier checks). NOT verify-web* recipes (F8).
+      # --require makes a skip/cache-replay/no-op fail (09-03 semantics).
+      # OTEL_SERVICE_NAME / VITE_OTEL_SERVICE_NAME / VITE_OTEL_EXPORTER_OTLP_ENDPOINT
+      # are already set in job env so the web.otel_trace check can identify the api span.
+      - name: Run verify --full --require=web.lost_pixel,web.otel_trace
+        working-directory: /tmp/scratch-live
+        env:
+          OTEL_SERVICE_NAME: SelftestScratch-api
+          VITE_OTEL_SERVICE_NAME: SelftestScratch-web
+          VITE_OTEL_EXPORTER_OTLP_ENDPOINT: http://localhost:4318/v1/traces
+          # Tell the otel_trace check where to find the Playwright-served app
+          VITE_API_BASE_URL: http://localhost:8000
+          CI: "1"
+        run: |
+          uv run verify-kit verify --full \
+            --require=web.lost_pixel \
+            --require=web.otel_trace
+
+      # ── Cleanup ─────────────────────────────────────────────────────────────
+      - name: Stop vite preview server
+        if: always()
+        run: |
+          # Only :3000 is pre-started here; the playwright/Lighthouse checks
+          # tear down their own self-started :4173 servers.
+          kill $(cat /tmp/vite-preview-3000.pid 2>/dev/null) 2>/dev/null || true
+
+      - name: Stop live stack
+        if: always()
+        working-directory: /tmp/scratch-live
+        run: docker compose down -v --remove-orphans 2>/dev/null || true
+
+      # ── On-failure artifact upload (D-07) ──────────────────────────────────
+      - name: Collect docker logs on failure
+        if: failure()
+        working-directory: /tmp/scratch-live
+        run: |
+          mkdir -p /tmp/live-artifacts
+          docker compose logs --no-color > /tmp/live-artifacts/docker-compose.log 2>&1 || true
+          # Capture Jaeger query JSON for the last service query (diagnostic)
+          curl -s "http://127.0.0.1:16686/api/services" > /tmp/live-artifacts/jaeger-services.json 2>/dev/null || true
+          echo "Artifacts collected in /tmp/live-artifacts/"
+
+      - name: Upload failure artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: live-full-failure-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            /tmp/live-artifacts/
+            /tmp/scratch-live/.verify/
+            /tmp/scratch-live/web/test-results/
+            /tmp/scratch-live/web/.lost-pixel/difference/
+            /tmp/scratch-live/web/.lost-pixel/current/
+          retention-days: 7
+          if-no-files-found: ignore

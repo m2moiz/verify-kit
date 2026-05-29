@@ -165,6 +165,16 @@ def verify(
         "--check",
         help="Run only this check id (repeatable; CSV also accepted: --check=lint.ruff,format.ruff).",
     ),
+    require: list[str] = typer.Option(
+        None,
+        "--require",
+        help=(
+            "Require these check ids to prove fresh in-process execution "
+            "(repeatable; CSV accepted: --require=web.otel_trace,web.lost_pixel). "
+            "Bypasses the cache for named ids; fails if the id is unknown, "
+            "not selected by the current tier, or was not actually run in this process."
+        ),
+    ),
 ) -> None:
     """Run verification checks. Always writes .verify/report.{json,junit.xml,sarif}."""
     # ── Resolve tier ──────────────────────────────────────────────────────
@@ -181,6 +191,15 @@ def verify(
             check_ids.extend([c.strip() for c in item.split(",") if c.strip()])
         if not check_ids:
             check_ids = None
+
+    # ── Resolve --require (multi-value + CSV) ─────────────────────────────
+    required_ids: set[str] | None = None
+    if require:
+        parsed_require: list[str] = []
+        for item in require:
+            parsed_require.extend([r.strip() for r in item.split(",") if r.strip()])
+        if parsed_require:
+            required_ids = set(parsed_require)
 
     # ── Resolve --format ──────────────────────────────────────────────────
     if output_format is None:
@@ -202,6 +221,7 @@ def verify(
             tier=tier,
             no_cache=no_cache,
             cwd=cwd,
+            required_ids=required_ids,
         )
     except ValueError as exc:
         typer.echo(f"error: {exc}", err=True)

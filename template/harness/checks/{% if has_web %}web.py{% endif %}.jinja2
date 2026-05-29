@@ -26,6 +26,8 @@ Subprocess discipline (every web check):
 """
 from __future__ import annotations
 
+import json
+import os
 import shutil
 import subprocess
 import time
@@ -142,9 +144,14 @@ def check_web_playwright(cwd: Path) -> CheckResult:
     status: CheckStatus = "pass" if result.returncode == 0 else "fail"
     err: ErrorEnvelope | None = None
     if status == "fail":
+        # Surface the reporter tail so the failing spec + assertion are visible
+        # without a re-run — the bare exit code is undebuggable in CI. Playwright
+        # writes the failure summary to stdout; fall back to stderr.
+        diag = (result.stdout or "").strip() or (result.stderr or "").strip()
+        diag_tail = diag[-800:] if diag else "(no reporter output captured)"
         err = ErrorEnvelope(
             code="web.playwright.failed",
-            message=f"Playwright exited {result.returncode}",
+            message=f"Playwright exited {result.returncode}: {diag_tail}",
             hint="Run `cd web && pnpm exec playwright test --reporter=list` for details",
             fix_command="cd web && pnpm exec playwright test",
             docs_url="https://playwright.dev/docs/running-tests",
@@ -474,7 +481,12 @@ def check_web_lost_pixel(cwd: Path) -> CheckResult:
             # always exits 0 — making it useless as a CI gate.
             # The lostpixel/lost-pixel image already has pnpm + lost-pixel
             # installed; no host dep directory mount needed (verify-kit-c7k fix).
-            web_dir = cwd / "web"
+            # MUST be absolute: docker -v / WORKSPACE reject relative mount paths
+            # ("invalid mount path: 'web' must be absolute" → exit 125). The verify
+            # runner passes a relative cwd, so `cwd / "web"` is relative; the other
+            # web checks survive it (it's only a *subprocess* cwd) but docker's
+            # bind-mount flag does not. Resolve before building the docker args.
+            web_dir = (cwd / "web").resolve()
             version_result = proc_run(
                 ["pnpm", "exec", "lost-pixel", "--version"],
                 cwd=web_dir,
@@ -512,34 +524,423 @@ def check_web_lost_pixel(cwd: Path) -> CheckResult:
     duration_ms = int((time.monotonic() - t0) * 1000)
 
     if result.returncode not in (0, 1):
-        # Non-0/1 exit = Lost Pixel itself crashed (not just diffs found)
+        # Non-0/1 exit = Lost Pixel itself crashed (not just diffs found).
+        # Surface the subprocess stderr/stdout tail: exit 125 in particular is
+        # the Docker daemon failing *before* the container runs (bad image tag,
+        # pull/rate-limit, mount or --add-host error), and the bare exit code
+        # alone is undebuggable. A check that hides why it failed defeats the
+        # purpose — give the reader the actual daemon message.
+        diag = (result.stderr or "").strip() or (result.stdout or "").strip()
+        diag_tail = diag[-600:] if diag else "(no stderr/stdout captured)"
         return CheckResult(
             check_id="web.lost_pixel",
             status="fail",
             duration_ms=duration_ms,
             error=ErrorEnvelope(
                 code="web.lost_pixel.run.failed",
-                message=f"lost-pixel exited {result.returncode} (unexpected crash)",
+                message=f"lost-pixel exited {result.returncode} (unexpected crash): {diag_tail}",
                 hint="Run `just web-baseline` to debug inside Docker",
                 fix_command="just web-baseline",
                 docs_url="https://lost-pixel.com/docs",
             ),
         )
 
-    # Parse diff output
+    # Lost Pixel OSS signals comparison results via the EXIT CODE, not a results
+    # file (it never writes comparison-results.json — that is a SaaS artifact):
+    #   exit 0 → no differences → pass
+    #   exit 1 → diffs found; one PNG per differing snapshot under difference/
+    # (exit >1 was handled above as a crash.) --require freshness is enforced
+    # generically by the runner via run_id (a cache-replay keeps a stale run_id
+    # and fails) — the check always runs lost-pixel, so its exit code is fresh.
     lostpixel_dir = cwd / "web" / ".lost-pixel"
-    envelopes = parse_lostpixel_output(lostpixel_dir)
 
-    if envelopes:
+    if result.returncode == 0:
         return CheckResult(
             check_id="web.lost_pixel",
+            status="pass",
+            duration_ms=duration_ms,
+        )
+
+    # returncode == 1 → differences found. parse_lostpixel_output turns each
+    # difference PNG into an ErrorEnvelope (D-W03 git-add approval verb).
+    envelopes = parse_lostpixel_output(lostpixel_dir)
+    if not envelopes:
+        # Exit 1 but no difference PNG on disk — unexpected. Surface the run
+        # output rather than reporting a phantom pass.
+        diag = (result.stdout or "").strip() or (result.stderr or "").strip()
+        envelopes = [
+            ErrorEnvelope(
+                code="web.lost_pixel.diff.unknown",
+                message=(
+                    "Lost Pixel reported differences (exit 1) but wrote no diff PNG "
+                    f"under {lostpixel_dir / 'difference'}. Output: "
+                    f"{diag[-400:] if diag else '(none)'}"
+                ),
+                hint="Run `just web-baseline` in Docker to inspect the comparison.",
+                fix_command="just web-baseline",
+                docs_url="https://lost-pixel.com/docs",
+            )
+        ]
+    return CheckResult(
+        check_id="web.lost_pixel",
+        status="fail",
+        duration_ms=duration_ms,
+        error=envelopes[0],  # first diff; D-W03 git add in fix_command
+    )
+
+
+# ── web.otel_trace ────────────────────────────────────────────────────────────
+
+
+@register(
+    "web.otel_trace",
+    tier="slow",
+    category="otel",
+    description=(
+        "Browser→FastAPI trace connectivity assertion "
+        "(WEB_SERVICE_NAME + api spans, shared traceID, per-run UUID marker"
+        "{% if has_db %}; DB span asserted when has_db=true{% endif %})"
+    ),
+    inputs=["web/src/otel.ts", "web/tests/e2e/trace-demo.spec.ts"],
+    fixable=False,
+    tool="playwright",
+    skip_if_unavailable=True,
+)
+def check_web_otel_trace(cwd: Path) -> CheckResult:
+    """Assert the browser→FastAPI→DB trace connected end-to-end.
+
+    Runtime-gated (P9-06): registered unconditionally; returns a LOUD
+    status="skip" when the required config env vars are absent so the check
+    is always discoverable via `verify-kit list-checks` but never raises on
+    unconfigured stacks.
+
+    Failure-state table (D9-INT-11/12):
+      config absent       → skip (LOUD message naming the missing vars)
+      Jaeger unreachable  → skip (infra absent, not a trace failure)
+      readiness/driver fail → fail
+      trace not found     → fail + diagnostics (D-11)
+      mid-run errors      → fail + diagnostics
+
+    Connectivity assertion (D-04, BL-5):
+      >=1 trace for the per-run UUID marker
+      spans from >=2 distinct services including WEB_SERVICE_NAME (browser
+        client/fetch span — BL-5) AND the api service
+      >=1 DB span (SQLAlchemy SELECT, matched by tolerant regex)
+      all spans share ONE traceID
+
+    Consumer config (F-05): env Jaeger query URL + api service name only;
+    DB-span match is a hardcoded tolerant regex.
+
+    No module-scope imports from app/ — all backend interaction is HTTP/Jaeger.
+    """
+    import uuid
+
+    t0 = time.monotonic()
+
+    # ── Config (F-05): env Jaeger query URL + api service name ────────────────
+    jaeger_base_url = os.environ.get("JAEGER_QUERY_BASE_URL", "http://localhost:16686")
+    api_service_name = os.environ.get("OTEL_SERVICE_NAME", "")
+    web_service_name = os.environ.get(
+        "VITE_OTEL_SERVICE_NAME",
+        # Fallback: derive from project directory name (<project>-web convention)
+        f"{cwd.name}-web",
+    )
+
+    # Loud skip when required config is absent (runtime-gated, P9-06)
+    if not api_service_name:
+        duration_ms = int((time.monotonic() - t0) * 1000)
+        return CheckResult(
+            check_id="web.otel_trace",
+            status="skip",
+            duration_ms=duration_ms,
+            message=(
+                "web.otel_trace: OTEL_SERVICE_NAME not set — cannot assert the api "
+                "service span. Set OTEL_SERVICE_NAME=<project>-api (matches docker-compose "
+                "OTEL_SERVICE_NAME) to enable this check. Jaeger URL: "
+                f"JAEGER_QUERY_BASE_URL (default {jaeger_base_url})."
+            ),
+        )
+
+    # ── Generate per-run UUID for the trace correlation marker ────────────────
+    trace_test_id = str(uuid.uuid4())
+
+    # ── Ensure Playwright/Chromium is available ───────────────────────────────
+    install_result = proc_run(
+        ["pnpm", "exec", "playwright", "install", "--with-deps", "chromium"],
+        cwd=cwd / "web",
+        env=clean_env(),
+        timeout=300.0,
+    )
+    if install_result.returncode != 0:
+        duration_ms = int((time.monotonic() - t0) * 1000)
+        return CheckResult(
+            check_id="web.otel_trace",
             status="fail",
             duration_ms=duration_ms,
-            error=envelopes[0],  # first diff; D-W03 git add in fix_command
+            error=ErrorEnvelope(
+                code="web.otel_trace.chromium.unavailable",
+                message="Playwright Chromium install failed; cannot drive the real-browser trace",
+                hint=(
+                    "Run `cd web && pnpm exec playwright install chromium` "
+                    "or ensure the Playwright Docker image is available"
+                ),
+                fix_command="cd web && pnpm exec playwright install chromium",
+                docs_url="https://playwright.dev/docs/browsers",
+            ),
+        )
+
+    # ── Drive the real-browser click via trace-demo.spec.ts ──────────────────
+    # Pass the per-run UUID via PLAYWRIGHT_TRACE_TEST_ID env so the spec can
+    # use it if needed (the spec also generates its own UUID via the URL param).
+    spec_env = {
+        **clean_env(),
+        "CI": "1",
+        "PLAYWRIGHT_TRACE_TEST_ID": trace_test_id,
+        # Enable the browser OTel SDK: point it at Jaeger OTLP-HTTP :4318
+        "VITE_OTEL_EXPORTER_OTLP_ENDPOINT": os.environ.get(
+            "VITE_OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4318/v1/traces"
+        ),
+    }
+    playwright_result = proc_run(
+        ["pnpm", "exec", "playwright", "test", "trace-demo.spec.ts"],
+        cwd=cwd / "web",
+        env=spec_env,
+        timeout=120.0,
+    )
+
+    # Read back the trace_test_id written by the spec (the spec generates its own UUID)
+    trace_id_file = cwd / ".verify" / "web" / "trace_test_id.json"
+    effective_trace_test_id = trace_test_id
+    if trace_id_file.exists():
+        try:
+            data = json.loads(trace_id_file.read_text())
+            effective_trace_test_id = data.get("trace_test_id", trace_test_id)
+        except (json.JSONDecodeError, KeyError):
+            pass
+
+    if playwright_result.returncode != 0:
+        duration_ms = int((time.monotonic() - t0) * 1000)
+        diag = (
+            f"trace_test_id={effective_trace_test_id!r} | "
+            f"Jaeger query URL: {jaeger_base_url}/api/traces | "
+            f"api_service={api_service_name!r} web_service={web_service_name!r}"
+        )
+        return CheckResult(
+            check_id="web.otel_trace",
+            status="fail",
+            duration_ms=duration_ms,
+            error=ErrorEnvelope(
+                code="web.otel_trace.driver.failed",
+                message=(
+                    f"Playwright trace-demo.spec.ts exited {playwright_result.returncode}. "
+                    f"{diag}"
+                ),
+                hint=(
+                    "Ensure the dev stack is running (`just trace-up`), "
+                    "VITE_OTEL_EXPORTER_OTLP_ENDPOINT points at Jaeger :4318, "
+                    "and OTEL_SERVICE_NAME matches the api service"
+                ),
+                fix_command="just trace-up",
+                docs_url="https://opentelemetry.io/docs/",
+            ),
+        )
+
+    # ── Poll Jaeger for the trace by tag ──────────────────────────────────────
+    # Import at function scope — no module-level app/ dependency (F-05)
+    from harness.jaeger import poll_trace_by_tag  # noqa: PLC0415
+
+    # Jaeger's /api/traces REQUIRES a `service` param (omitting it → HTTP 400).
+    # Query by the browser/web service, which carries the per-run trace_test_id
+    # tag (BL-5); Jaeger returns the FULL matching trace (web + api + db spans),
+    # so the connectivity assertion below still sees every service.
+    jaeger_result = poll_trace_by_tag(
+        effective_trace_test_id,
+        service=web_service_name,
+        require_services={web_service_name, api_service_name},
+        timeout=20.0,
+        poll_interval=1.5,
+    )
+
+    duration_ms = int((time.monotonic() - t0) * 1000)
+
+    diag_suffix = (
+        f"trace_test_id={effective_trace_test_id!r} | "
+        f"query_url={jaeger_result.query_url or jaeger_base_url + '/api/traces'!r} | "
+        f"api_service={api_service_name!r} web_service={web_service_name!r} | "
+        f"query_errors={jaeger_result.query_errors!r}"
+    )
+
+    # Jaeger unreachable → skip (infra absent, not a trace failure, F5)
+    if jaeger_result.status == "unreachable":
+        return CheckResult(
+            check_id="web.otel_trace",
+            status="skip",
+            duration_ms=duration_ms,
+            message=(
+                f"web.otel_trace: Jaeger query endpoint unreachable at "
+                f"{jaeger_base_url}. Start the stack with `just trace-up`. | {diag_suffix}"
+            ),
+        )
+
+    # Trace not found within timeout → fail with diagnostics (D-11)
+    if jaeger_result.status == "not_found":
+        return CheckResult(
+            check_id="web.otel_trace",
+            status="fail",
+            duration_ms=duration_ms,
+            error=ErrorEnvelope(
+                code="web.otel_trace.trace.not_found",
+                message=(
+                    f"No trace found in Jaeger for trace_test_id={effective_trace_test_id!r} "
+                    f"within timeout. The browser or api span may not have exported. "
+                    f"{diag_suffix}"
+                ),
+                hint=(
+                    "Check that VITE_OTEL_EXPORTER_OTLP_ENDPOINT is set to Jaeger :4318 "
+                    "at build time, and OTEL_EXPORTER_OTLP_ENDPOINT is set for FastAPI. "
+                    "Run `just trace-up` to start the stack."
+                ),
+                fix_command="just trace-up",
+                docs_url="https://www.jaegertracing.io/docs/",
+            ),
+        )
+
+    # ── Connectivity assertion (D-04, BL-5) ───────────────────────────────────
+    traces = jaeger_result.traces
+    all_spans: list[dict] = []
+    for tr in traces:
+        all_spans.extend(tr.get("spans") or [])
+
+    # Helper: get service name from a span (spans carry processID; processes map is in trace)
+    def _service_of_span(span: dict, trace_dict: dict) -> str:
+        proc_id = span.get("processID", "")
+        processes = trace_dict.get("processes") or {}
+        proc = processes.get(proc_id) or {}
+        svc = proc.get("serviceName", "")
+        if svc:
+            return svc
+        # Fallback: check span.process inline (some Jaeger versions)
+        return (span.get("process") or {}).get("serviceName", "")
+
+    # Build service→spans mapping from all traces
+    service_spans: dict[str, list[dict]] = {}
+    for tr in traces:
+        for span in tr.get("spans") or []:
+            svc = _service_of_span(span, tr)
+            service_spans.setdefault(svc, []).append(span)
+
+    distinct_services = set(service_spans.keys()) - {""}
+
+    # Assert WEB_SERVICE_NAME browser span present (BL-5)
+    web_service_present = web_service_name in distinct_services
+    if not web_service_present:
+        return CheckResult(
+            check_id="web.otel_trace",
+            status="fail",
+            duration_ms=duration_ms,
+            error=ErrorEnvelope(
+                code="web.otel_trace.browser_span.missing",
+                message=(
+                    f"No WEB_SERVICE_NAME={web_service_name!r} browser span found in trace. "
+                    f"Found services: {sorted(distinct_services)!r}. "
+                    f"A backend-only trace cannot pass this check (BL-5). {diag_suffix}"
+                ),
+                hint=(
+                    "Ensure the browser OTel SDK is active (VITE_OTEL_EXPORTER_OTLP_ENDPOINT "
+                    "set at build time, pointing at Jaeger :4318). "
+                    f"Expected service.name={web_service_name!r} in a browser fetch span."
+                ),
+                fix_command="just trace-up",
+                docs_url="https://opentelemetry.io/docs/",
+            ),
+        )
+
+    # Assert api service span present
+    api_service_present = api_service_name in distinct_services
+    if not api_service_present:
+        return CheckResult(
+            check_id="web.otel_trace",
+            status="fail",
+            duration_ms=duration_ms,
+            error=ErrorEnvelope(
+                code="web.otel_trace.api_span.missing",
+                message=(
+                    f"No api service={api_service_name!r} span found in trace. "
+                    f"Found services: {sorted(distinct_services)!r}. {diag_suffix}"
+                ),
+                hint=(
+                    "Ensure OTEL_SERVICE_NAME and OTEL_EXPORTER_OTLP_ENDPOINT are set "
+                    "for the FastAPI process. Check docker-compose.yml service config."
+                ),
+                fix_command="just trace-up",
+                docs_url="https://opentelemetry.io/docs/",
+            ),
+        )
+
+    # Assert >=1 DB span (tolerant regex matching SQLAlchemy SELECT queries)
+    # WR-01: only assert the DB span in DB-enabled scaffolds. In has_db=false
+    # renders, /trace-demo returns {"db": false} and emits no SQLAlchemy span —
+    # asserting one would produce false failures on legitimate no-DB stacks.
+    # Browser and API service span assertions above remain unconditional (BL-5).
+{% if has_db %}
+    import re
+
+    _DB_SPAN_RE = re.compile(
+        r"SELECT|sqlalchemy|db\.|database|postgres|sqlite|mysql",
+        re.IGNORECASE,
+    )
+    db_span_found = any(
+        _DB_SPAN_RE.search(span.get("operationName", ""))
+        for span in all_spans
+    )
+    if not db_span_found:
+        return CheckResult(
+            check_id="web.otel_trace",
+            status="fail",
+            duration_ms=duration_ms,
+            error=ErrorEnvelope(
+                code="web.otel_trace.db_span.missing",
+                message=(
+                    f"No DB span found in trace (regex: SELECT|sqlalchemy|db.|database|...). "
+                    f"Span operations: {[s.get('operationName') for s in all_spans]!r}. "
+                    f"{diag_suffix}"
+                ),
+                hint=(
+                    "Ensure SQLAlchemy instrumentation is active and the DB is reachable. "
+                    "Check that OTEL_EXPORTER_OTLP_ENDPOINT is set for FastAPI."
+                ),
+                fix_command="just trace-up",
+                docs_url="https://opentelemetry.io/docs/",
+            ),
+        )
+{% endif %}
+
+    # Assert all spans share ONE traceID (cross-service propagation check)
+    trace_ids = {tr.get("traceID") for tr in traces if tr.get("traceID")}
+    if len(trace_ids) > 1:
+        return CheckResult(
+            check_id="web.otel_trace",
+            status="fail",
+            duration_ms=duration_ms,
+            error=ErrorEnvelope(
+                code="web.otel_trace.trace_id.fragmented",
+                message=(
+                    f"Spans from different services have different traceIDs: {trace_ids!r}. "
+                    f"Expected all services to share ONE traceID (W3C traceparent propagation). "
+                    f"{diag_suffix}"
+                ),
+                hint=(
+                    "Ensure FetchInstrumentation propagates the W3C traceparent header "
+                    "and FastAPI/OTel propagates it through to the DB. "
+                    "Check CORS expose_headers includes 'traceparent'."
+                ),
+                fix_command="just trace-up",
+                docs_url="https://opentelemetry.io/docs/",
+            ),
         )
 
     return CheckResult(
-        check_id="web.lost_pixel",
+        check_id="web.otel_trace",
         status="pass",
         duration_ms=duration_ms,
     )

@@ -24,7 +24,7 @@ class Settings(BaseSettings):
     PROFILE_ENABLED: bool = Field(default=True, description="dev-only pyinstrument toggle")
 {% if has_web %}
     CORS_ALLOW_ORIGINS: list[str] = Field(
-        default=["http://localhost:5173", "http://localhost:3000"],
+        default=["http://localhost:5173", "http://localhost:3000", "http://localhost:4173"],
         description="Allowed CORS origins. In production, restrict to your actual frontend URL.",
     )
 

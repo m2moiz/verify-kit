@@ -1142,7 +1142,7 @@ def test_web_harness_registry_smoke(tmp_path: Path) -> None:
 
     Assertions:
       1. Registry smoke: python -c 'from harness.registry import list_checks;...'
-         returns all 5 web.* check IDs.
+         returns all 6 web.* check IDs.
       2. scaffold pytest tests/web/ passes (4 adapter + registry tests).
       3. Forbidden-kwarg guard: web.py has zero severity=/tags=/readOnlyHint= etc.
       4. ErrorEnvelope(fixable=) guard: no adapters pass fixable= to ErrorEnvelope.
@@ -1179,7 +1179,7 @@ def test_web_harness_registry_smoke(tmp_path: Path) -> None:
                 "from harness.registry import list_checks; "
                 "ids = sorted(c.check_id for c in list_checks()); "
                 "expected = ['web.axe', 'web.lighthouse', 'web.lost_pixel', "
-                "            'web.playwright', 'web.vitest']; "
+                "            'web.otel_trace', 'web.playwright', 'web.vitest']; "
                 "missing = [x for x in expected if x not in ids]; "
                 "assert not missing, f'Missing web checks: {missing}'"
             ),
