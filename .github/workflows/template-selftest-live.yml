@@ -391,6 +391,10 @@ jobs:
         run: |
           LP_VERSION=$(pnpm exec lost-pixel --version 2>/dev/null | tail -1 | tr -d '[:space:]')
           LP_VERSION=${LP_VERSION:-3.22.0}
+          # Update mode exits 1 to signal "baselines were added/changed" (the
+          # expected outcome on first seed); only >1 is a real crash (e.g. 125).
+          # Mirror the web.lost_pixel check's `returncode not in (0, 1)` rule.
+          set +e
           docker run --rm \
             --add-host host.docker.internal:host-gateway \
             -v "$PWD:$PWD" \
@@ -399,7 +403,13 @@ jobs:
             -e LOST_PIXEL_DISABLE_TELEMETRY=1 \
             -e LOST_PIXEL_MODE=update \
             "lostpixel/lost-pixel:v$LP_VERSION"
-          echo "Baselines generated:"
+          rc=$?
+          set -e
+          if [ "$rc" -ne 0 ] && [ "$rc" -ne 1 ]; then
+            echo "Lost Pixel baseline generation crashed (exit $rc)" >&2
+            exit "$rc"
+          fi
+          echo "Baselines generated (update mode exit $rc):"
           ls -la .lost-pixel/baseline/
 
       # ── Run verify --full --require=web.lost_pixel,web.otel_trace ──────────
