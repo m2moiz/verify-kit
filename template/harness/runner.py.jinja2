@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import time
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -31,7 +31,7 @@ from harness.cache import (
     make_cache_key,
 )
 from harness.logging import log
-from harness.models import CheckResult, CheckSpec, ErrorEnvelope, REQUIRED_CHECK_MODE
+from harness.models import REQUIRED_CHECK_MODE, CheckResult, CheckSpec, ErrorEnvelope
 from harness.observability import tracer
 
 # ── Per-process run identity ───────────────────────────────────────────────────
@@ -124,7 +124,7 @@ def run_check(
         # CR-02: set REQUIRED_CHECK_MODE contextvar so check functions (e.g.
         # check_web_lost_pixel) can read the required flag without a signature
         # change. Reset in finally so async/generator callers don't leak state.
-        fn_start_ts = datetime.now(tz=timezone.utc)
+        fn_start_ts = datetime.now(tz=UTC)
         _required_token = REQUIRED_CHECK_MODE.set(is_required)
         try:
             result = spec.fn(cwd=cwd)
