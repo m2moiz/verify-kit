@@ -2,165 +2,102 @@
 
 CONTRACT CONFORMANCE TEST — REVIEW-CHECKLIST §4 API-surface drift guard.
 
+Lost Pixel OSS signals comparison results via the process EXIT CODE, not a
+results file. On a differing run it writes one PNG per differing snapshot to
+web/.lost-pixel/difference/<name>.png. The adapter turns those PNGs into
+ErrorEnvelopes; the check (web.py) owns the exit-code interpretation.
+
 D-W01: baselines live in-git under web/.lost-pixel/baseline/
 D-W03: fix_command is `git add web/.lost-pixel/baseline/<file>` (literal string)
        This command surfaces via the zero-arg MCP fix_propose() tool.
 
 Verified shapes:
   ErrorEnvelope: NO "fixable" field (per-check fixability on @register)
-  code format: web.lost_pixel.diff.<name> | web.lost_pixel.new.<name>
-              | web.lost_pixel.deleted.<name>
-  fix_command: starts with "git add web/.lost-pixel/baseline/" for diffs and new
+  code format: web.lost_pixel.diff.<name>
+  fix_command: "git add web/.lost-pixel/baseline/<name>.png"
   file: diff PNG path (for MCP fix_propose() consumer rendering)
 """
 from __future__ import annotations
 
-import json
 import re
 from pathlib import Path
 
-from harness.web.lostpixel_adapter import parse_lostpixel_output
+from harness.web.lostpixel_adapter import main, parse_lostpixel_output
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
 
-def _write_results(tmp_path: Path, items: list[dict]) -> Path:
-    """Write comparison-results.json to a mock .lost-pixel/ dir."""
+
+def _make_diff(tmp_path: Path, *names: str) -> Path:
+    """Create a .lost-pixel/ dir with one difference/<name>.png per name."""
     lp_dir = tmp_path / ".lost-pixel"
-    lp_dir.mkdir(parents=True, exist_ok=True)
-    (lp_dir / "comparison-results.json").write_text(
-        json.dumps(items), encoding="utf-8"
-    )
+    difference = lp_dir / "difference"
+    difference.mkdir(parents=True, exist_ok=True)
+    for name in names:
+        (difference / f"{name}.png").write_bytes(b"\x89PNG\r\n")  # minimal stub
     return lp_dir
 
 
-# ── Tests ─────────────────────────────────────────────────────────────────────
+# ── Tests: parse_lostpixel_output ───────────────────────────────────────────────
 
 
-def test_parse_lostpixel_diff_exceeds_threshold(tmp_path: Path) -> None:
-    """2.3% diff at 1% threshold → envelope with diff code + fix_command."""
-    items = [
-        {
-            "name": "gallery-full",
-            "diffPercentage": 2.3,
-            "threshold": 1.0,
-            "isNew": False,
-            "isUpdated": True,
-            "isDeleted": False,
-            "baselinePath": "web/.lost-pixel/baseline/gallery-full.png",
-            "currentPath": "web/.lost-pixel/current/gallery-full.png",
-            "diffPath": "web/.lost-pixel/difference/gallery-full.png",
-        }
-    ]
-    lp_dir = _write_results(tmp_path, items)
+def test_parse_lostpixel_diff_emits_envelope(tmp_path: Path) -> None:
+    """A difference PNG → one envelope with the diff code."""
+    lp_dir = _make_diff(tmp_path, "gallery-full")
     envelopes = parse_lostpixel_output(lp_dir)
 
     assert len(envelopes) == 1
-    env = envelopes[0]
-    assert env.code == "web.lost_pixel.diff.gallery-full", (
-        f"Expected code 'web.lost_pixel.diff.gallery-full', got {env.code!r}"
+    assert envelopes[0].code == "web.lost_pixel.diff.gallery-full", (
+        f"Expected code 'web.lost_pixel.diff.gallery-full', got {envelopes[0].code!r}"
     )
 
 
 def test_parse_lostpixel_fix_command_is_git_add(tmp_path: Path) -> None:
-    """D-W03: fix_command starts with 'git add web/.lost-pixel/baseline/'."""
-    items = [
-        {
-            "name": "gallery-full",
-            "diffPercentage": 2.3,
-            "threshold": 1.0,
-            "isNew": False,
-            "isUpdated": True,
-            "isDeleted": False,
-            "baselinePath": "web/.lost-pixel/baseline/gallery-full.png",
-            "currentPath": "web/.lost-pixel/current/gallery-full.png",
-            "diffPath": "web/.lost-pixel/difference/gallery-full.png",
-        }
-    ]
-    lp_dir = _write_results(tmp_path, items)
+    """D-W03: fix_command is 'git add web/.lost-pixel/baseline/<name>.png'."""
+    lp_dir = _make_diff(tmp_path, "gallery-full")
     envelopes = parse_lostpixel_output(lp_dir)
 
-    assert envelopes[0].fix_command is not None
-    assert envelopes[0].fix_command.startswith("git add web/.lost-pixel/baseline/"), (
-        f"D-W03 violation: fix_command must start with 'git add web/.lost-pixel/baseline/', "
-        f"got: {envelopes[0].fix_command!r}"
+    assert envelopes[0].fix_command == "git add web/.lost-pixel/baseline/gallery-full.png", (
+        f"D-W03 violation: got {envelopes[0].fix_command!r}"
     )
 
 
-def test_parse_lostpixel_file_contains_diff_png(tmp_path: Path) -> None:
-    """file field contains the diff PNG path for MCP fix_propose() rendering."""
-    items = [
-        {
-            "name": "gallery-full",
-            "diffPercentage": 2.3,
-            "threshold": 1.0,
-            "isNew": False,
-            "isUpdated": True,
-            "isDeleted": False,
-            "baselinePath": "web/.lost-pixel/baseline/gallery-full.png",
-            "currentPath": "web/.lost-pixel/current/gallery-full.png",
-            "diffPath": "web/.lost-pixel/difference/gallery-full.png",
-        }
-    ]
-    lp_dir = _write_results(tmp_path, items)
+def test_parse_lostpixel_file_is_diff_png(tmp_path: Path) -> None:
+    """file field is the diff PNG path for MCP fix_propose() rendering."""
+    lp_dir = _make_diff(tmp_path, "gallery-full")
     envelopes = parse_lostpixel_output(lp_dir)
 
     assert envelopes[0].file is not None
-    assert ".png" in envelopes[0].file.lower() or "difference" in envelopes[0].file.lower(), (
+    assert envelopes[0].file.endswith("difference/gallery-full.png"), (
         f"file field should be the diff PNG path, got: {envelopes[0].file!r}"
     )
 
 
-def test_parse_lostpixel_no_diff_returns_empty(tmp_path: Path) -> None:
-    """Snapshot within threshold → empty list (no envelope emitted)."""
-    items = [
-        {
-            "name": "gallery-full",
-            "diffPercentage": 0.5,
-            "threshold": 1.0,
-            "isNew": False,
-            "isUpdated": False,
-            "isDeleted": False,
-            "baselinePath": "web/.lost-pixel/baseline/gallery-full.png",
-            "currentPath": "web/.lost-pixel/current/gallery-full.png",
-            "diffPath": None,
-        }
-    ]
-    lp_dir = _write_results(tmp_path, items)
-    envelopes = parse_lostpixel_output(lp_dir)
-    assert envelopes == []
-
-
-def test_parse_lostpixel_new_snapshot(tmp_path: Path) -> None:
-    """New snapshot (no baseline) → new code + fix_command is still git add."""
-    items = [
-        {
-            "name": "new-component",
-            "diffPercentage": 0.0,
-            "threshold": 1.0,
-            "isNew": True,
-            "isUpdated": False,
-            "isDeleted": False,
-            "baselinePath": "web/.lost-pixel/baseline/new-component.png",
-            "currentPath": "web/.lost-pixel/current/new-component.png",
-            "diffPath": None,
-        }
-    ]
-    lp_dir = _write_results(tmp_path, items)
+def test_parse_lostpixel_multiple_diffs_sorted(tmp_path: Path) -> None:
+    """Multiple difference PNGs → one envelope each, sorted by name."""
+    lp_dir = _make_diff(tmp_path, "zeta", "alpha")
     envelopes = parse_lostpixel_output(lp_dir)
 
-    assert len(envelopes) == 1
-    env = envelopes[0]
-    assert env.code == "web.lost_pixel.new.new-component"
-    assert env.fix_command is not None and env.fix_command.startswith("git add")
+    assert [e.code for e in envelopes] == [
+        "web.lost_pixel.diff.alpha",
+        "web.lost_pixel.diff.zeta",
+    ]
 
 
-def test_parse_lostpixel_missing_file_returns_empty(tmp_path: Path) -> None:
-    """Missing comparison-results.json → empty list (not an error)."""
+def test_parse_lostpixel_no_difference_dir_returns_empty(tmp_path: Path) -> None:
+    """No difference/ dir (clean run) → empty list (not an error)."""
     lp_dir = tmp_path / ".lost-pixel"
     lp_dir.mkdir()
-    # No comparison-results.json
-    envelopes = parse_lostpixel_output(lp_dir)
-    assert envelopes == []
+    assert parse_lostpixel_output(lp_dir) == []
+
+
+def test_parse_lostpixel_empty_difference_dir_returns_empty(tmp_path: Path) -> None:
+    """An empty difference/ dir (no PNGs) → empty list."""
+    lp_dir = tmp_path / ".lost-pixel"
+    (lp_dir / "difference").mkdir(parents=True)
+    assert parse_lostpixel_output(lp_dir) == []
+
+
+# ── Tests: REVIEW-CHECKLIST §4 contract guards ──────────────────────────────────
 
 
 def test_parse_lostpixel_no_fixable_kwarg_in_adapter() -> None:
@@ -177,24 +114,31 @@ def test_parse_lostpixel_no_fixable_kwarg_in_adapter() -> None:
 
 def test_parse_lostpixel_envelopes_have_no_fixable_attr(tmp_path: Path) -> None:
     """Resulting envelopes have no 'fixable' attribute."""
-    items = [
-        {
-            "name": "gallery-full",
-            "diffPercentage": 2.3,
-            "threshold": 1.0,
-            "isNew": False,
-            "isUpdated": True,
-            "isDeleted": False,
-            "baselinePath": "web/.lost-pixel/baseline/gallery-full.png",
-            "currentPath": "web/.lost-pixel/current/gallery-full.png",
-            "diffPath": "web/.lost-pixel/difference/gallery-full.png",
-        }
-    ]
-    lp_dir = _write_results(tmp_path, items)
-    envelopes = parse_lostpixel_output(lp_dir)
-
-    for env in envelopes:
+    lp_dir = _make_diff(tmp_path, "gallery-full")
+    for env in parse_lostpixel_output(lp_dir):
         assert not hasattr(env, "fixable"), (
             "ErrorEnvelope has a 'fixable' attribute — model changed. "
             "Read REVIEW-CHECKLIST §4."
         )
+
+
+# ── Tests: lost-pixel-approve CLI shim (VIZ-03) ─────────────────────────────────
+
+
+def test_approve_shim_dry_run_lists_baselines(tmp_path: Path, capsys) -> None:
+    """Dry-run (default) lists `git add` for each differing snapshot's baseline."""
+    lp_dir = _make_diff(tmp_path, "gallery-full")
+    rc = main(["--lostpixel-dir", str(lp_dir), "--repo-root", str(tmp_path)])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "git add web/.lost-pixel/baseline/gallery-full.png" in out
+
+
+def test_approve_shim_clean_run_nothing_to_approve(tmp_path: Path, capsys) -> None:
+    """No difference PNGs → 'nothing to approve' message, exit 0."""
+    lp_dir = tmp_path / ".lost-pixel"
+    lp_dir.mkdir()
+    rc = main(["--lostpixel-dir", str(lp_dir), "--repo-root", str(tmp_path)])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "clean" in out.lower() or "no baselines" in out.lower()

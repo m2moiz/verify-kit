@@ -33,7 +33,7 @@ import subprocess
 import time
 from pathlib import Path
 
-from harness.models import REQUIRED_CHECK_MODE, CheckResult, CheckStatus, ErrorEnvelope
+from harness.models import CheckResult, CheckStatus, ErrorEnvelope
 from harness.proc import run as proc_run
 from harness.registry import register
 from harness.web._env import clean_env
@@ -393,10 +393,6 @@ def check_web_lost_pixel(cwd: Path) -> CheckResult:
     import os
 
     t0 = time.monotonic()
-    # CR-02: wall-clock start time for freshness check of comparison-results.json.
-    # Captured before the Lost Pixel subprocess so the artifact mtime can be
-    # compared to this timestamp (stale = mtime < lp_run_start).
-    lp_run_start = time.time()
 
     # Detect Docker availability
     inside_docker = Path("/.dockerenv").exists()
@@ -544,29 +540,47 @@ def check_web_lost_pixel(cwd: Path) -> CheckResult:
             ),
         )
 
-    # Parse diff output (CR-02: pass run_start_time + required so the adapter
-    # enforces freshness in --require mode; REQUIRED_CHECK_MODE is set by the
-    # runner around spec.fn and resets in a finally — no import cycle because
-    # web.py already imports from harness.models which is the leaf module).
+    # Lost Pixel OSS signals comparison results via the EXIT CODE, not a results
+    # file (it never writes comparison-results.json — that is a SaaS artifact):
+    #   exit 0 → no differences → pass
+    #   exit 1 → diffs found; one PNG per differing snapshot under difference/
+    # (exit >1 was handled above as a crash.) --require freshness is enforced
+    # generically by the runner via run_id (a cache-replay keeps a stale run_id
+    # and fails) — the check always runs lost-pixel, so its exit code is fresh.
     lostpixel_dir = cwd / "web" / ".lost-pixel"
-    envelopes = parse_lostpixel_output(
-        lostpixel_dir,
-        run_start_time=lp_run_start,
-        required=REQUIRED_CHECK_MODE.get(),
-    )
 
-    if envelopes:
+    if result.returncode == 0:
         return CheckResult(
             check_id="web.lost_pixel",
-            status="fail",
+            status="pass",
             duration_ms=duration_ms,
-            error=envelopes[0],  # first diff; D-W03 git add in fix_command
         )
 
+    # returncode == 1 → differences found. parse_lostpixel_output turns each
+    # difference PNG into an ErrorEnvelope (D-W03 git-add approval verb).
+    envelopes = parse_lostpixel_output(lostpixel_dir)
+    if not envelopes:
+        # Exit 1 but no difference PNG on disk — unexpected. Surface the run
+        # output rather than reporting a phantom pass.
+        diag = (result.stdout or "").strip() or (result.stderr or "").strip()
+        envelopes = [
+            ErrorEnvelope(
+                code="web.lost_pixel.diff.unknown",
+                message=(
+                    "Lost Pixel reported differences (exit 1) but wrote no diff PNG "
+                    f"under {lostpixel_dir / 'difference'}. Output: "
+                    f"{diag[-400:] if diag else '(none)'}"
+                ),
+                hint="Run `just web-baseline` in Docker to inspect the comparison.",
+                fix_command="just web-baseline",
+                docs_url="https://lost-pixel.com/docs",
+            )
+        ]
     return CheckResult(
         check_id="web.lost_pixel",
-        status="pass",
+        status="fail",
         duration_ms=duration_ms,
+        error=envelopes[0],  # first diff; D-W03 git add in fix_command
     )
 
 
