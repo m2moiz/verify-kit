@@ -1,0 +1,287 @@
+"""Check-level routing tests for harness.checks.web.
+
+These exercise the CHECK functions (not just the adapters), mocking the
+subprocess + network layer so no real lhci / Docker / vite is launched.
+
+Covers two regressions:
+
+verify-kit-ir1 — Lighthouse names the failing audit on a NON-ZERO exit.
+  lhci exits non-zero when an error-severity assertion (e.g. LCP budget)
+  fails. The rich parser parse_lighthouse_output() must run on that exact
+  failure path so the envelope names the breaching audit
+  (web.lighthouse.budget.<metric>) instead of the generic
+  web.lighthouse.run.failed. A genuine collect failure (no parseable lhr)
+  still yields the generic code.
+
+verify-kit-b49 — preview-serving checks rebuild web/dist before serving and
+  declare web/src as a cache input.
+  check_web_lost_pixel must run `pnpm --dir web build` before serving so a
+  stale dist cannot false-green a real source change (same false-green class
+  as the v0.2 visual-regression incident). The full Lost-Pixel Docker visual
+  diff is tier=slow / CI-deferred; this proves the build-before-serve
+  MECHANISM and the widened @register inputs.
+"""
+
+from __future__ import annotations
+
+import json
+import subprocess
+import urllib.error
+from pathlib import Path
+
+import pytest
+
+import harness.checks.web as web_mod
+from harness.checks.web import (
+    _WEB_BUILD_INPUTS,
+    check_web_lighthouse,
+    check_web_lost_pixel,
+)
+from harness.registry import get_check
+
+# ── Helpers ─────────────────────────────────────────────────────────────────
+
+
+def _completed(returncode: int = 0, stdout: str = "", stderr: str = "") -> subprocess.CompletedProcess:
+    """A subprocess.CompletedProcess stand-in for a mocked proc_run."""
+    return subprocess.CompletedProcess(
+        args=["mock"], returncode=returncode, stdout=stdout, stderr=stderr
+    )
+
+
+def _budget_breach_lhr(lcp_ms: float = 3200.0) -> dict:
+    """Minimal LHR JSON representing an LCP budget breach (score < 0.5)."""
+    return {
+        "categories": {
+            "performance": {
+                "score": 0.3,
+                "auditRefs": [
+                    {"id": "largest-contentful-paint"},
+                    {"id": "total-byte-weight"},
+                ],
+            }
+        },
+        "audits": {
+            "largest-contentful-paint": {
+                "id": "largest-contentful-paint",
+                "score": 0.3,
+                "numericValue": lcp_ms,
+                "displayValue": f"{lcp_ms / 1000:.1f} s",
+            },
+            "total-byte-weight": {
+                "id": "total-byte-weight",
+                "score": 0.9,
+                "numericValue": 200000.0,
+                "displayValue": "200 KB",
+            },
+            "performance-budget": {"id": "performance-budget", "details": {"items": []}},
+        },
+    }
+
+
+def _write_lhci_report(cwd: Path, lhr: dict) -> None:
+    """Write a manifest.json + lhr report where LHCI actually writes them.
+
+    LHCI's outputDir `./.verify/web/lighthouse` is relative to the subprocess
+    cwd (cwd/"web"), so the real location is web/.verify/web/lighthouse — NOT
+    repo-root .verify. The check must read from THAT directory (ir1 fix). This
+    fixture mirrors the path observed in a live LHCI run.
+    """
+    lh_dir = cwd / "web" / ".verify" / "web" / "lighthouse"
+    lh_dir.mkdir(parents=True, exist_ok=True)
+    (lh_dir / "lhr-0.report.json").write_text(json.dumps(lhr), encoding="utf-8")
+    manifest = [
+        {
+            "url": "http://localhost:4173/",
+            "isRepresentativeRun": True,
+            "jsonPath": "lhr-0.report.json",
+        }
+    ]
+    (lh_dir / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+
+
+@pytest.fixture(autouse=True)
+def _reset_build_guard():
+    """Reset the process-scoped build-once fingerprint between tests."""
+    web_mod._LAST_WEB_BUILD_FINGERPRINT = None
+    yield
+    web_mod._LAST_WEB_BUILD_FINGERPRINT = None
+
+
+def _no_server(*_args, **_kwargs):
+    """Stand-in for urllib.request.urlopen — server not running (PERF-04 falls through)."""
+    raise urllib.error.URLError("connection refused (no preview server in test)")
+
+
+# ── verify-kit-ir1: Lighthouse routes non-zero exit through the rich parser ──
+
+
+def test_lighthouse_nonzero_exit_names_failing_audit(tmp_path: Path, monkeypatch) -> None:
+    """lhci exit 1 (assertion breach) → NAMED budget envelope, not the generic code."""
+    _write_lhci_report(tmp_path, _budget_breach_lhr(lcp_ms=3200.0))
+
+    # Build succeeds; lhci autorun exits 1 (error-severity assertion failed).
+    def _fake_proc(args, **_kwargs):
+        if "build" in args:
+            return _completed(returncode=0)
+        return _completed(returncode=1, stderr="Assertion failed: largest-contentful-paint")
+
+    monkeypatch.setattr(web_mod, "proc_run", _fake_proc)
+    monkeypatch.setattr("urllib.request.urlopen", _no_server)
+
+    result = check_web_lighthouse(tmp_path)
+
+    assert result.status == "fail"
+    assert result.error is not None
+    # Routed through parse_lighthouse_output → NAMED audit, not the generic code.
+    assert result.error.code.startswith("web.lighthouse.budget."), (
+        f"Expected a NAMED budget code on the non-zero-exit path (ir1), "
+        f"got {result.error.code!r}"
+    )
+    assert result.error.code != "web.lighthouse.run.failed"
+    assert "lcp" in result.error.code
+
+
+def test_lighthouse_genuine_collect_failure_uses_generic_code(tmp_path: Path, monkeypatch) -> None:
+    """lhci exit 1 with NO parseable report (collect failure) → generic code + tail."""
+    # Note: no _write_lhci_report → lighthouse_dir has no manifest.json →
+    # parse_lighthouse_output raises FileNotFoundError → empty → generic fallback.
+    def _fake_proc(args, **_kwargs):
+        if "build" in args:
+            return _completed(returncode=0)
+        return _completed(returncode=1, stderr="Chrome failed to launch: collect step crashed")
+
+    monkeypatch.setattr(web_mod, "proc_run", _fake_proc)
+    monkeypatch.setattr("urllib.request.urlopen", _no_server)
+
+    result = check_web_lighthouse(tmp_path)
+
+    assert result.status == "fail"
+    assert result.error is not None
+    assert result.error.code == "web.lighthouse.run.failed", (
+        f"A genuine collect failure (no parseable lhr) must use the generic code, "
+        f"got {result.error.code!r}"
+    )
+    # The lhci stderr/stdout tail is surfaced so the bare exit code is not the
+    # only diagnostic.
+    assert "Chrome failed to launch" in result.error.message
+
+
+def test_lighthouse_clean_run_passes(tmp_path: Path, monkeypatch) -> None:
+    """lhci exit 0 + clean report → pass (no false-fail on the happy path)."""
+    clean = _budget_breach_lhr(lcp_ms=1500.0)
+    clean["audits"]["largest-contentful-paint"]["score"] = 0.95
+    clean["categories"]["performance"]["score"] = 0.97
+    _write_lhci_report(tmp_path, clean)
+
+    def _fake_proc(args, **_kwargs):
+        return _completed(returncode=0)
+
+    monkeypatch.setattr(web_mod, "proc_run", _fake_proc)
+    monkeypatch.setattr("urllib.request.urlopen", _no_server)
+
+    result = check_web_lighthouse(tmp_path)
+    assert result.status == "pass", (
+        f"clean lhci run should pass, got {result.status} / "
+        f"{result.error.code if result.error else None}"
+    )
+
+
+def test_lighthouse_build_failure_short_circuits(tmp_path: Path, monkeypatch) -> None:
+    """A build failure before LHCI → build.failed (never runs lhci on stale dist)."""
+    lhci_called = {"v": False}
+
+    def _fake_proc(args, **_kwargs):
+        if "build" in args:
+            return _completed(returncode=1, stdout="error TS2304: Cannot find name 'Foo'")
+        lhci_called["v"] = True
+        return _completed(returncode=0)
+
+    monkeypatch.setattr(web_mod, "proc_run", _fake_proc)
+    monkeypatch.setattr("urllib.request.urlopen", _no_server)
+
+    result = check_web_lighthouse(tmp_path)
+    assert result.status == "fail"
+    assert result.error is not None
+    assert result.error.code == "web.lighthouse.build.failed"
+    assert "error TS2304" in result.error.message
+    assert lhci_called["v"] is False, "lhci must not run after a failed build"
+
+
+# ── verify-kit-b49: lost_pixel builds before serving + widened cache inputs ──
+
+
+def test_lost_pixel_builds_before_serving(tmp_path: Path, monkeypatch) -> None:
+    """check_web_lost_pixel runs `pnpm --dir web build` BEFORE serving (mechanism).
+
+    We make Docker 'available' (so the outside-Docker serving branch is taken),
+    make the build FAIL, and assert the check fails with build.failed WITHOUT
+    ever launching the vite preview server or the docker run. This proves the
+    rebuild happens before serving — the false-green guard (b49).
+    """
+    served = {"preview": False, "docker": False}
+
+    # Force the "Docker present, not inside Docker" branch.
+    monkeypatch.setattr(web_mod.shutil, "which", lambda _name: "/usr/bin/docker")
+    monkeypatch.setattr(web_mod.Path, "exists", lambda self: False, raising=False)
+
+    def _fake_proc(args, **_kwargs):
+        if "build" in args:
+            return _completed(returncode=1, stdout="vite build failed: ParseError")
+        # Any other proc_run (e.g. lost-pixel --version / docker run) means the
+        # check kept going past a failed build — a regression.
+        served["docker"] = True
+        return _completed(returncode=0)
+
+    class _NeverStartedPopen:
+        """Records that vite preview started, then behaves enough like Popen
+        that the check's `finally` cleanup does not raise — so the RED is a
+        clean assertion on `served["preview"]`, not an AttributeError."""
+
+        def __init__(self, *_a, **_k):
+            served["preview"] = True
+
+        def terminate(self) -> None:  # pragma: no cover - cleanup path
+            pass
+
+        def wait(self, timeout=None) -> int:  # pragma: no cover - cleanup path
+            return 0
+
+        def kill(self) -> None:  # pragma: no cover - cleanup path
+            pass
+
+    monkeypatch.setattr(web_mod, "proc_run", _fake_proc)
+    monkeypatch.setattr(web_mod.subprocess, "Popen", _NeverStartedPopen)
+
+    result = check_web_lost_pixel(tmp_path)
+
+    assert result.status == "fail"
+    assert result.error is not None
+    assert result.error.code == "web.lost_pixel.build.failed", (
+        f"Expected build.failed (rebuild-before-serve, b49), got {result.error.code!r}"
+    )
+    assert "vite build failed" in result.error.message
+    assert served["preview"] is False, "vite preview must not start after a failed build"
+    assert served["docker"] is False, "docker run must not start after a failed build"
+
+
+def test_lost_pixel_inputs_include_web_src() -> None:
+    """b49: @register inputs for web.lost_pixel include web/src so a source change
+    invalidates the cached run_id (no false-green from a stale run replay)."""
+    spec = get_check("web.lost_pixel")
+    assert spec is not None
+    assert any(i.startswith("web/src") for i in spec.inputs), (
+        f"web.lost_pixel inputs must include web/src (b49), got {spec.inputs!r}"
+    )
+    # The shared build-input set is the source of truth.
+    for inp in _WEB_BUILD_INPUTS:
+        assert inp in spec.inputs, f"missing build input {inp!r} in web.lost_pixel inputs"
+
+
+def test_lighthouse_inputs_include_web_src() -> None:
+    """b49: @register inputs for web.lighthouse include web/src (preview serves dist)."""
+    spec = get_check("web.lighthouse")
+    assert spec is not None
+    assert any(i.startswith("web/src") for i in spec.inputs), (
+        f"web.lighthouse inputs must include web/src (b49), got {spec.inputs!r}"
+    )

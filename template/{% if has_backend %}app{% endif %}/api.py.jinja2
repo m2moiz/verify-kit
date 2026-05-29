@@ -137,6 +137,10 @@ class SummarizeRequest(BaseModel):
     @classmethod
     def _strip_and_check(cls, v: str) -> str:
         v = _CONTROL_CHARS.sub("", v)
+        # Lone surrogates are not UTF-8 encodable; Starlette's JSONResponse does
+        # .encode("utf-8") and 500s on render. Drop them so the only 5xx left is
+        # a genuine failure (matches the /echo + global-handler idiom).
+        v = v.encode("utf-8", "ignore").decode("utf-8")
         for marker in _INJECTION_MARKERS:
             if marker.search(v):
                 raise ValueError("input contains a disallowed pattern")

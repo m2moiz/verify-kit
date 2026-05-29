@@ -23,7 +23,11 @@ class HealthResponse(BaseModel):
 #   1. Length cap (Field max_length=5000) — bounds memory pressure (T-06-11).
 #   2. Control-char strip — removes zero-width / null bytes that could smuggle
 #      markers through downstream log parsers (T-06-12).
-#   3. Content-Type enforcement — Pydantic-typed request param means FastAPI
+#   3. Lone-surrogate strip — a schema-valid string can still contain a lone
+#      surrogate (e.g. "\ud800"), which is not UTF-8 encodable; Starlette's
+#      JSONResponse does .encode("utf-8") and 500s on render. .encode(..,
+#      "ignore") drops it so the only 5xx left is a genuine failure.
+#   4. Content-Type enforcement — Pydantic-typed request param means FastAPI
 #      returns 422 for non-JSON Content-Type by default.
 _CONTROL_CHARS_ECHO = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 
@@ -34,7 +38,8 @@ class EchoRequest(BaseModel):
     @field_validator("message")
     @classmethod
     def _strip_control(cls, v: str) -> str:
-        return _CONTROL_CHARS_ECHO.sub("", v)
+        v = _CONTROL_CHARS_ECHO.sub("", v)
+        return v.encode("utf-8", "ignore").decode("utf-8")
 
 
 class EchoResponse(BaseModel):

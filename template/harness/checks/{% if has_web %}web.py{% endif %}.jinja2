@@ -44,6 +44,76 @@ from harness.web.lostpixel_adapter import parse_lostpixel_output
 # Docker image pinned for Lost Pixel (D-W02 — prevents cross-platform font drift)
 _DOCKER_IMAGE = "mcr.microsoft.com/playwright:v1.60.0-jammy"
 
+# Source globs whose contents determine the production build. Used both as the
+# @register cache `inputs` for the preview-serving checks (web.lighthouse,
+# web.lost_pixel) AND as the fingerprint for the build-once guard below.
+# verify-kit-b49: a stale web/dist must NOT false-green a real source change.
+# The cache key (run_id) must invalidate when web/src changes; the check itself
+# must rebuild web/dist before serving so the comparison/audit is never stale.
+_WEB_BUILD_INPUTS = [
+    "web/src/**",
+    "web/index.html",
+    "web/vite.config.ts",
+    "web/tsconfig.json",
+    "web/package.json",
+]
+
+# Build-once guard (process-scoped). When both web.lighthouse and web.lost_pixel
+# run in a single `just verify` process, they would each rebuild web/dist from
+# the same sources — wasteful. We record the fingerprint of the last SUCCESSFUL
+# build keyed by source-hash so the second check skips the redundant rebuild.
+_LAST_WEB_BUILD_FINGERPRINT: str | None = None
+
+
+def _ensure_web_build(cwd: Path) -> tuple[bool, str]:
+    """Build web/dist from source before a preview-serving check runs.
+
+    verify-kit-b49 (false-green class): web.lighthouse and web.lost_pixel both
+    serve `vite preview` (directly, or via LHCI startServerCommand) against
+    web/dist. If `just verify` did not rebuild, they compare/audit a STALE build
+    and a real source change goes undetected — the same false-green class as the
+    v0.2 visual-regression incident. So we always (re)build here.
+
+    Returns ``(ok, output_tail)``: ``ok`` is True on a clean build (returncode 0);
+    ``output_tail`` is the last ~800 chars of combined stdout/stderr (the build
+    error, surfaced by the caller in an ErrorEnvelope on failure).
+
+    Build-once: when the source fingerprint matches the last successful build in
+    THIS process and web/dist already exists, the rebuild is skipped so two
+    preview-serving checks in one run do not double-build identical sources.
+    """
+    global _LAST_WEB_BUILD_FINGERPRINT
+
+    from harness.cache import hash_inputs  # noqa: PLC0415 — avoid import cycle
+
+    # Fingerprint the build inputs (sorted file hashes → deterministic string).
+    file_hashes = hash_inputs(_WEB_BUILD_INPUTS, cwd)
+    fingerprint = "\n".join(f"{p}={h}" for p, h in sorted(file_hashes.items()))
+
+    dist_dir = cwd / "web" / "dist"
+    if (
+        _LAST_WEB_BUILD_FINGERPRINT is not None
+        and _LAST_WEB_BUILD_FINGERPRINT == fingerprint
+        and dist_dir.exists()
+    ):
+        # Identical sources already built in this process — skip the rebuild.
+        return True, ""
+
+    build_result = proc_run(
+        ["pnpm", "--dir", "web", "build"],
+        cwd=cwd,
+        env=clean_env(),
+        timeout=300.0,
+    )
+    combined = ((build_result.stdout or "") + (build_result.stderr or "")).strip()
+    output_tail = combined[-800:] if combined else "(no build output captured)"
+
+    if build_result.returncode != 0:
+        return False, output_tail
+
+    _LAST_WEB_BUILD_FINGERPRINT = fingerprint
+    return True, output_tail
+
 
 # ── web.vitest ────────────────────────────────────────────────────────────────
 
@@ -172,7 +242,10 @@ def check_web_playwright(cwd: Path) -> CheckResult:
     tier="slow",
     category="perf",
     description="Lighthouse CI median-of-5 budgets (LCP/CLS/INP)",
-    inputs=["web/dist/**", "web/lighthouserc.json"],
+    # verify-kit-b49: web/src + build config are inputs so a source change
+    # invalidates the cached run_id. Declaring only web/dist would let a cache
+    # replay keep a stale run_id when web/dist was not rebuilt (false-green).
+    inputs=[*_WEB_BUILD_INPUTS, "web/lighthouserc.json"],
     fixable=False,
     tool="lhci",
     skip_if_unavailable=True,
@@ -184,6 +257,10 @@ def check_web_lighthouse(cwd: Path) -> CheckResult:
     code='lighthouse.target.invalid' if HMR markers are detected
     (i.e. running against vite dev instead of vite preview).
 
+    verify-kit-b49: rebuild web/dist BEFORE LHCI serves `vite preview` against
+    it (via lighthouserc.json startServerCommand). Without the rebuild, LHCI
+    audits a STALE build and a real regression goes undetected (false-green).
+
     Timeout: 300s — 5 Lighthouse runs can hit 90s total; LHCI is tagged
     tier="slow" so it is excluded from `just verify` by default.
     """
@@ -192,6 +269,23 @@ def check_web_lighthouse(cwd: Path) -> CheckResult:
 
     t0 = time.monotonic()
     target_url = "http://localhost:4173/"
+
+    # ── verify-kit-b49: rebuild web/dist before LHCI serves it ────────────────
+    build_ok, build_tail = _ensure_web_build(cwd)
+    if not build_ok:
+        duration_ms = int((time.monotonic() - t0) * 1000)
+        return CheckResult(
+            check_id="web.lighthouse",
+            status="fail",
+            duration_ms=duration_ms,
+            error=ErrorEnvelope(
+                code="web.lighthouse.build.failed",
+                message=f"`pnpm --dir web build` failed before Lighthouse run: {build_tail}",
+                hint="Fix the build error above; run `cd web && pnpm build` to iterate",
+                fix_command="pnpm --dir web build",
+                docs_url="https://vitejs.dev/guide/build.html",
+            ),
+        )
 
     # PERF-04: precondition — refuse if target looks like vite dev (HMR markers)
     try:
@@ -229,14 +323,48 @@ def check_web_lighthouse(cwd: Path) -> CheckResult:
     )
     duration_ms = int((time.monotonic() - t0) * 1000)
 
+    # LHCI writes manifest.json + lhr-*.report.json under the `outputDir` from
+    # lighthouserc.json (`./.verify/web/lighthouse`), resolved RELATIVE TO the
+    # subprocess cwd (cwd/"web") — so the actual location is web/.verify/web/
+    # lighthouse, NOT the repo-root .verify (verified against a real LHCI run in
+    # the dogfood fixture). The lhr JSON is written even on an assertion failure
+    # (upload.target=filesystem runs regardless of the assert step's exit code).
+    lighthouse_dir = cwd / "web" / ".verify" / "web" / "lighthouse"
+
+    # verify-kit-ir1: a non-zero exit is the EXACT case parse_lighthouse_output
+    # was written for (lhci exits 1 on an error-severity assertion breach). Try
+    # the rich parser FIRST so the failure names the breaching audit
+    # (web.lighthouse.budget.<metric> with actual-vs-budget) instead of a generic
+    # `web.lighthouse.run.failed`. Only when the parser is empty/raises AND the
+    # exit is non-zero is this a genuine collect failure → generic fallback.
     if result.returncode != 0:
+        try:
+            named_envelopes = parse_lighthouse_output(lighthouse_dir)
+        except Exception:
+            named_envelopes = []
+
+        if named_envelopes:
+            return CheckResult(
+                check_id="web.lighthouse",
+                status="fail",
+                duration_ms=duration_ms,
+                error=named_envelopes[0],  # named breach; full list in LHCI report
+            )
+
+        # Genuine collect failure (no parseable lhr) — surface the lhci tail so
+        # the bare exit code is not the only diagnostic.
+        diag = (result.stderr or "").strip() or (result.stdout or "").strip()
+        diag_tail = diag[-800:] if diag else "(no lhci output captured)"
         return CheckResult(
             check_id="web.lighthouse",
             status="fail",
             duration_ms=duration_ms,
             error=ErrorEnvelope(
                 code="web.lighthouse.run.failed",
-                message=f"lhci autorun exited {result.returncode}",
+                message=(
+                    f"lhci autorun exited {result.returncode} "
+                    f"(no parseable report): {diag_tail}"
+                ),
                 hint=(
                     "Check web/lighthouserc.json assertions and run "
                     "`cd web && pnpm exec lhci autorun`"
@@ -246,11 +374,11 @@ def check_web_lighthouse(cwd: Path) -> CheckResult:
             ),
         )
 
-    # Parse budget failures from LHCI output dir
-    lighthouse_dir = cwd / ".verify" / "web" / "lighthouse"
+    # returncode == 0 — still parse budget failures (warn-severity assertions or
+    # a defensive re-parse). A clean run yields an empty envelope list → pass.
     try:
         envelopes = parse_lighthouse_output(lighthouse_dir)
-    except (FileNotFoundError, Exception):
+    except Exception:
         envelopes = []
 
     if envelopes:
@@ -367,7 +495,15 @@ def check_web_axe(cwd: Path) -> CheckResult:
         "Lost Pixel visual regression "
         "(Docker-pinned mcr.microsoft.com/playwright:v1.60.0-jammy per D-W02)"
     ),
-    inputs=["web/.lost-pixel/baseline/**", "web/lostpixel.config.cjs"],
+    # verify-kit-b49: web/src + build config are inputs so a source change
+    # invalidates the cached run_id. Declaring only baseline + config let a cache
+    # replay keep a stale run_id when web/dist was not rebuilt — a real source
+    # change went undetected (false-green, same class as the v0.2 incident).
+    inputs=[
+        "web/.lost-pixel/baseline/**",
+        "web/lostpixel.config.cjs",
+        *_WEB_BUILD_INPUTS,
+    ],
     fixable=True,
     tool="lost-pixel",
     skip_if_unavailable=True,
@@ -439,22 +575,28 @@ def check_web_lost_pixel(cwd: Path) -> CheckResult:
         # Lost Pixel pageShots mode does NOT serve static files — it connects to
         # the baseUrl (host.docker.internal:3000) from inside the container.
         # We must serve web/dist/ on the host first so the container can reach it.
-        dist_dir = cwd / "web" / "dist"
-        if not dist_dir.exists():
+        #
+        # verify-kit-b49: ALWAYS rebuild web/dist before serving. The previous
+        # `if not dist_dir.exists()` guard only caught a MISSING build — it served
+        # whatever STALE dist existed, so a real source change went undetected
+        # (false-green, same class as the v0.2 incident). Rebuilding makes the
+        # visual comparison reflect the current source.
+        build_ok, build_tail = _ensure_web_build(cwd)
+        if not build_ok:
             duration_ms = int((time.monotonic() - t0) * 1000)
             return CheckResult(
                 check_id="web.lost_pixel",
                 status="fail",
                 duration_ms=duration_ms,
                 error=ErrorEnvelope(
-                    code="web.lost_pixel.dist_missing",
+                    code="web.lost_pixel.build.failed",
                     message=(
-                        "web/dist/ not found — run `pnpm --dir web build` first "
-                        "so Lost Pixel can screenshot the production build."
+                        "`pnpm --dir web build` failed before Lost Pixel could "
+                        f"screenshot the production build: {build_tail}"
                     ),
-                    hint="Run `cd web && pnpm build` then re-run this check",
+                    hint="Fix the build error above; run `cd web && pnpm build` to iterate",
                     fix_command="pnpm --dir web build",
-                    docs_url="https://lost-pixel.com/docs",
+                    docs_url="https://vitejs.dev/guide/build.html",
                 ),
             )
 

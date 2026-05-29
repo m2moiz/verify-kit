@@ -39,8 +39,8 @@ _EXCLUDED_SCHEMATHESIS_CHECKS = (
 )
 
 
-def _docker_reachable(timeout_s: float = 3.0) -> bool:
-    """Probe whether the Docker daemon answers within `timeout_s`.
+def _docker_reachable(timeout_s: float = 10.0) -> bool:
+    """Probe whether the Docker daemon answers within `timeout_s`, retrying once.
 
     Backend integration tests use Testcontainers-Postgres which requires a
     reachable Docker daemon. When Docker is not running, Testcontainers hangs
@@ -48,12 +48,23 @@ def _docker_reachable(timeout_s: float = 3.0) -> bool:
     harness's 600s pytest timeout. Probing `docker info` upfront lets us skip
     cleanly with a clear hint, matching the offline-first / graceful-degradation
     pattern the rest of the harness uses (biome skip when missing, etc.).
+
+    The default timeout is 10s (was 3s): under daemon load — concurrent builds,
+    image pulls, a cold Docker Desktop just after launch — `docker info` can
+    legitimately take several seconds to answer. A 3s budget false-skips the
+    backend slice even when Docker is up, and disagreed with the conftest probe
+    (tests/backend/conftest.py uses 30s). A single TimeoutExpired is treated as
+    "daemon busy, not absent": we sleep ~1s and probe once more before giving
+    up, so a transient stall no longer reads as unreachable. A missing `docker`
+    binary still returns False immediately (the fast path) — no point retrying
+    a command that does not exist.
     """
     import shutil
 
     if shutil.which("docker") is None:
         return False
-    try:
+
+    def _probe() -> bool:
         r = subprocess.run(
             ["docker", "info", "--format", "{% raw %}{{.ServerVersion}}{% endraw %}"],
             capture_output=True,
@@ -61,7 +72,17 @@ def _docker_reachable(timeout_s: float = 3.0) -> bool:
             timeout=timeout_s,
         )
         return r.returncode == 0 and r.stdout.strip() != ""
-    except (subprocess.TimeoutExpired, OSError):
+
+    try:
+        return _probe()
+    except subprocess.TimeoutExpired:
+        # Daemon was busy, not absent — back off briefly and probe once more.
+        time.sleep(1.0)
+        try:
+            return _probe()
+        except (subprocess.TimeoutExpired, OSError):
+            return False
+    except OSError:
         return False
 
 

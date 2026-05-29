@@ -58,7 +58,7 @@ jobs:
         run: mkdir -p .verify
 
       - name: Run promptfoo eval
-        run: pnpm dlx promptfoo eval -c eval/promptfoo.config.yaml -o .verify/eval-results.json --max-concurrency 2
+        run: pnpm dlx promptfoo@0.121.13 eval -c eval/promptfoo.config.yaml -o .verify/eval-results.json --max-concurrency 2
 
       - uses: actions/upload-artifact@v4
         with:

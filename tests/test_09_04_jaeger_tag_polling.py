@@ -16,9 +16,6 @@ from __future__ import annotations
 
 import json
 import sys
-import time
-from pathlib import Path
-from typing import Any
 from unittest import mock
 
 import pytest
@@ -209,7 +206,7 @@ def test_poll_trace_by_tag_uses_json_dumps_for_tags(jaeger_mod):
         return FoundResp()
 
     with mock.patch.object(httpx, "get", side_effect=capture_get):
-        result = jaeger.poll_trace_by_tag("test-uuid-123", timeout=5.0)
+        jaeger.poll_trace_by_tag("test-uuid-123", timeout=5.0)
 
     assert captured_calls, "httpx.get should have been called"
     call = captured_calls[0]
