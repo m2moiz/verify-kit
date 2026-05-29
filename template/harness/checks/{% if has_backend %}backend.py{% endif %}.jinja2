@@ -16,6 +16,28 @@ from harness.models import CheckResult, ErrorEnvelope
 from harness.proc import run as proc_run
 from harness.registry import register
 
+# Adversarial schemathesis checks that encode an auth/validation policy the
+# scaffold does NOT adopt. verify-kit ships an intentionally-minimal OPTIONAL
+# auth scaffold (Phase 6 / 06-02), not a lock-everything-down model — endpoints
+# are open by design in the dev scaffold. schemathesis 4.x's `ignored_auth`,
+# `negative_data_rejection`, `missing_required_header`, and
+# `positive_data_acceptance` checks assert policies the scaffold intentionally
+# leaves to the consumer, so they produce false failures here.
+#
+# CRITICAL — live↔in-process consistency (verify-kit-gm3): this list MUST match
+# the `excluded_check_names` in harness/checks/backend_inprocess_fuzz.py. The
+# two fuzz paths (live over-network when the app is up; in-process via
+# ASGITransport otherwise) must agree on which checks run — otherwise the same
+# scaffold passes the in-process path and fails the live path (the live-full CI
+# job), which is exactly the gap this branch exists to close. If you change one
+# list, change the other.
+_EXCLUDED_SCHEMATHESIS_CHECKS = (
+    "negative_data_rejection",
+    "positive_data_acceptance",
+    "missing_required_header",
+    "ignored_auth",
+)
+
 
 def _docker_reachable(timeout_s: float = 3.0) -> bool:
     """Probe whether the Docker daemon answers within `timeout_s`.
@@ -123,6 +145,11 @@ def run(cwd: Path) -> CheckResult:
         # Over-network path: schemathesis against the LIVE running app.
         # 300s is a legitimate override — schemathesis with max-examples=20
         # across the full route surface can genuinely take 2-4 minutes.
+        #
+        # Run all checks EXCEPT the adversarial auth/validation ones the scaffold
+        # does not adopt (see _EXCLUDED_SCHEMATHESIS_CHECKS). schemathesis 4.x
+        # exposes `--exclude-checks <comma-list>`; mirroring the in-process
+        # path's exclusions keeps the two fuzz paths consistent (verify-kit-gm3).
         r2 = proc_run(
             [
                 "uv",
@@ -132,6 +159,8 @@ def run(cwd: Path) -> CheckResult:
                 "http://localhost:8000/openapi.json",
                 "--checks",
                 "all",
+                "--exclude-checks",
+                ",".join(_EXCLUDED_SCHEMATHESIS_CHECKS),
                 "--max-examples",
                 "20",
                 "--max-response-time",
@@ -144,16 +173,17 @@ def run(cwd: Path) -> CheckResult:
             return CheckResult(
                 check_id="backend",
                 status="fail",
-                message=f"schemathesis (live) found schema/auth issues:\n{r2.stdout}\n{r2.stderr}",
+                message=f"schemathesis (live) found schema issues:\n{r2.stdout}\n{r2.stderr}",
                 duration_ms=int((time.monotonic() - start) * 1000),
                 error=ErrorEnvelope(
                     code="backend.schemathesis-live-fail",
                     message=(
-                        f"schemathesis (live) found schema/auth issues:\n{r2.stdout}\n{r2.stderr}"
+                        f"schemathesis (live) found schema issues:\n{r2.stdout}\n{r2.stderr}"
                     ),
                     fix_command=(
                         f"cd {cwd} && uv run schemathesis run "
-                        "http://localhost:8000/openapi.json --checks all"
+                        "http://localhost:8000/openapi.json --checks all "
+                        f"--exclude-checks {','.join(_EXCLUDED_SCHEMATHESIS_CHECKS)}"
                     ),
                     docs_url="https://schemathesis.readthedocs.io/",
                 ),
@@ -183,13 +213,13 @@ def run(cwd: Path) -> CheckResult:
                 check_id="backend",
                 status="fail",
                 message=(
-                    f"schemathesis (in-process) found schema/auth issues:\n{r2.stdout}\n{r2.stderr}"
+                    f"schemathesis (in-process) found schema issues:\n{r2.stdout}\n{r2.stderr}"
                 ),
                 duration_ms=int((time.monotonic() - start) * 1000),
                 error=ErrorEnvelope(
                     code="backend.schemathesis-inprocess-fail",
                     message=(
-                        f"schemathesis (in-process) found schema/auth issues:\n"
+                        f"schemathesis (in-process) found schema issues:\n"
                         f"{r2.stdout}\n{r2.stderr}"
                     ),
                     fix_command=(

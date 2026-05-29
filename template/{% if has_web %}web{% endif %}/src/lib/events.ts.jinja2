@@ -5,6 +5,15 @@
  * events arrive with unpredictable delay or never flush through the proxy.
  * The absolute URL bypasses that buffering path entirely.
  *
+ * EVENT-NAME CONTRACT (verify-kit-usi): the /__debug/events endpoint
+ * (harness/debug_endpoints.py) emits NAMED events — `event: empty` (when no
+ * .verify/events.jsonl exists yet) and `event: verify-event` (one per logged
+ * line). The browser delivers NAMED events to addEventListener(<name>, ...) and
+ * NEVER to `onmessage` (which fires only for the default, unnamed `message`
+ * event). Subscribing via `onmessage` alone therefore receives nothing. We
+ * register a listener for each named event the endpoint actually sends, and
+ * keep `onmessage` as a fallback for any future default-typed events.
+ *
  * Production deploy note: behind a reverse proxy, configure:
  *   nginx: `proxy_buffering off;` for location /__debug/events
  *   Caddy: `flush_interval -1` on the reverse_proxy directive
@@ -12,6 +21,10 @@
  */
 export function subscribeDebugEvents(onEvent: (e: MessageEvent) => void): () => void {
   const source = new EventSource("http://localhost:8000/__debug/events");
+  // Named events emitted by /__debug/events (see harness/debug_endpoints.py).
+  source.addEventListener("verify-event", onEvent as EventListener);
+  source.addEventListener("empty", onEvent as EventListener);
+  // Fallback for any default-typed (unnamed) `message` event.
   source.onmessage = onEvent;
   return () => source.close();
 }
