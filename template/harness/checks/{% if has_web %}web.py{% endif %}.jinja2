@@ -28,7 +28,6 @@ from __future__ import annotations
 
 import json
 import os
-import re
 import shutil
 import subprocess
 import time
@@ -853,6 +852,8 @@ def check_web_otel_trace(cwd: Path) -> CheckResult:
     # asserting one would produce false failures on legitimate no-DB stacks.
     # Browser and API service span assertions above remain unconditional (BL-5).
 {% if has_db %}
+    import re
+
     _DB_SPAN_RE = re.compile(
         r"SELECT|sqlalchemy|db\.|database|postgres|sqlite|mysql",
         re.IGNORECASE,
