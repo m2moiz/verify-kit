@@ -31,7 +31,7 @@ from harness.cache import CacheCorruptError, CacheStore
 from harness.config import HarnessConfig, load_config
 from harness.didyoumean import suggest
 from harness.logging import log
-from harness.models import EXIT_BAD_INPUT, VerifyReport
+from harness.models import EXIT_BAD_INPUT, ErrorEnvelope, VerifyReport
 from harness.registry import list_checks as registry_list_checks
 from harness.runner import CURRENT_RUN_ID, run_phase
 
@@ -184,6 +184,32 @@ def verify(
                     "This indicates a cache-replay slipped through. "
                     "Run with --no-cache or re-run to force a fresh execution."
                 )
+            # A required check that SKIPPED executed fresh (run_id matches) but
+            # verified nothing — config absent, infra unreachable, or a missing
+            # artifact. For a --require'd id that is a FAILURE, not a pass: the
+            # whole point of --require is "this check must actually run AND
+            # verify". Without this, a silent skip exits 0 (green) and reopens
+            # the carve-out --require exists to close (e.g. the live-full CI job
+            # would pass while web.otel_trace never asserted the trace). Convert
+            # the fresh skip into a fail, preserving the original skip reason.
+            if result.status == "skip":
+                skip_reason = result.error.message if result.error else "(no reason given)"
+                idx = results.index(result)
+                results[idx] = result.model_copy(update={
+                    "status": "fail",
+                    "error": ErrorEnvelope(
+                        code=f"{rid}.required_but_skipped",
+                        message=(
+                            f"--require: check {rid!r} SKIPPED but was required. A "
+                            "required check must execute and pass; a skip means it "
+                            f"verified nothing. Skip reason: {skip_reason}"
+                        ),
+                        hint=(
+                            "Provide the config/infra the check needs (so it runs and "
+                            "passes), or drop it from --require if a skip is acceptable."
+                        ),
+                    ),
+                })
 
     report = VerifyReport.from_checks(results, total_duration_ms=total_ms)
 

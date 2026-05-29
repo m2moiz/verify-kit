@@ -241,3 +241,66 @@ def test_verify_require_post_run_assertion_with_direct_run(
     result = next(r for r in report.checks if r.check_id == "test.req.fresh")
     assert result.run_id is not None, "required check must carry run_id after execution"
     assert result.executed_at is not None
+
+
+# ── 7. A required check that SKIPS must FAIL (not silently pass) ─────────────
+
+
+def test_verify_require_fresh_skip_becomes_fail(
+    require_modules, tmp_path: Path
+) -> None:
+    """A required check that returns a fresh skip must be converted to a fail.
+
+    Guards the carve-out: a skip verifies nothing, so a --require'd id that skips
+    (config absent, infra unreachable, missing artifact) must fail the run — NOT
+    exit 0. Without this, the live-full CI job could go green while web.otel_trace
+    silently skipped and never asserted the browser->FastAPI->DB trace.
+    """
+    runner, registry, models, _, core_mod = require_modules
+    _reset_registry(registry)
+
+    @registry.register("test.req.skipper", tier="quick")
+    def _skipper(cwd: Path) -> models.CheckResult:
+        return models.CheckResult(
+            check_id="test.req.skipper",
+            status="skip",
+            error=models.ErrorEnvelope(
+                code="test.req.skipper.no_config",
+                message="config absent — nothing to verify",
+            ),
+        )
+
+    report = core_mod.verify(
+        cwd=tmp_path,
+        tier="standard",
+        required_ids={"test.req.skipper"},
+    )
+    result = next(r for r in report.checks if r.check_id == "test.req.skipper")
+    # The fresh skip must have been converted to a fail with a clear code,
+    # preserving the original skip reason, and the run must exit non-zero.
+    assert result.status == "fail", "a required check that skips must fail, not pass"
+    assert result.error is not None
+    assert result.error.code == "test.req.skipper.required_but_skipped"
+    assert "config absent" in result.error.message  # original reason preserved
+    assert report.exit_code != 0, "a required skip must drive a non-zero exit"
+
+
+def test_verify_unrequired_skip_still_passes(
+    require_modules, tmp_path: Path
+) -> None:
+    """A check that skips but is NOT required must still pass (exit 0).
+
+    Ensures the required-skip->fail rule is not over-broad: skip is a legitimate
+    outcome for non-required checks.
+    """
+    runner, registry, models, _, core_mod = require_modules
+    _reset_registry(registry)
+
+    @registry.register("test.unreq.skipper", tier="quick")
+    def _skipper(cwd: Path) -> models.CheckResult:
+        return models.CheckResult(check_id="test.unreq.skipper", status="skip")
+
+    report = core_mod.verify(cwd=tmp_path, tier="standard")  # no required_ids
+    result = next(r for r in report.checks if r.check_id == "test.unreq.skipper")
+    assert result.status == "skip", "non-required skip must remain a skip"
+    assert report.exit_code == 0, "a non-required skip must not fail the run"
