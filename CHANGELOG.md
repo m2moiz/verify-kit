@@ -8,6 +8,27 @@ release PR before merge (per repo convention D-11).
 
 See `CONTRIBUTING.md` for the commit-message contract that drives this file.
 
+## [0.2.0](https://github.com/m2moiz/verify-kit/compare/v0.1.0...v0.2.0) (2026-05-29)
+
+
+### Added
+
+* **verify:** Phase 9 — harden the verifier, close the v0.2 verification-coverage gap ([#30](https://github.com/m2moiz/verify-kit/issues/30)) ([8750f72](https://github.com/m2moiz/verify-kit/commit/8750f7275952ac9651c286aae9c802a2f464a343))
+* **web:** v0.2 web add-on (Vite + React + shadcn + Tailwind v4) ([#25](https://github.com/m2moiz/verify-kit/issues/25)) ([339fa7d](https://github.com/m2moiz/verify-kit/commit/339fa7d133d0a09e47f8abf1d400aa0e97d36bd2))
+
+
+### Fixed
+
+* **harness:** honest MCP roster + fix_command in SARIF (v0.2.0 gate) ([#32](https://github.com/m2moiz/verify-kit/issues/32)) ([417abf7](https://github.com/m2moiz/verify-kit/commit/417abf7b159fc42e9ef97be15646f61f9419d232))
+* v0.2 hardening — 6 dogfood beads (eval/backend/app/tests) ([#33](https://github.com/m2moiz/verify-kit/issues/33)) ([a49debf](https://github.com/m2moiz/verify-kit/commit/a49debfb7decc4644944aac8d847d785ba448d0e))
+* v0.2 postmortem small fixes (OTEL_SERVICE_NAME, Lost Pixel --add-host, backend cache inputs) ([#29](https://github.com/m2moiz/verify-kit/issues/29)) ([6988fb4](https://github.com/m2moiz/verify-kit/commit/6988fb417d6470bc5371ffb4396ec80dcc43b9db))
+* **web:** restore OTel tracing + Lost Pixel verification (Phase 8) ([#28](https://github.com/m2moiz/verify-kit/issues/28)) ([61a476f](https://github.com/m2moiz/verify-kit/commit/61a476f400a3b32e0c2a84d9292aaa8b849a484b))
+
+
+### Changed
+
+* **release:** bump minor (not patch) for features pre-1.0 ([#31](https://github.com/m2moiz/verify-kit/issues/31)) ([c1cc7d7](https://github.com/m2moiz/verify-kit/commit/c1cc7d7bd8f02475a531b8e6993c4612ea2d405e))
+
 ## 0.1.0 (2026-05-26)
 
 ### Added
