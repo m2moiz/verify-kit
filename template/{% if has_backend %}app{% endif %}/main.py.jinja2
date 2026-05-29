@@ -6,10 +6,12 @@ from pathlib import Path
 import secure
 from asgi_correlation_id import CorrelationIdMiddleware
 from fastapi import Depends, FastAPI, Request
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
 {% if has_web %}
 from fastapi.middleware.cors import CORSMiddleware
 {% endif %}
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 
 from app.api import router as api_router
 from app.auth import require_auth
@@ -17,6 +19,24 @@ from app.settings import load as load_settings
 from harness.debug_endpoints import make_debug_router
 from harness.logging import configure_logging, log
 from harness.trace_id import reset_trace_id, set_trace_id
+
+
+def _strip_surrogates(obj: object) -> object:
+    """Recursively replace lone surrogates so a value is UTF-8 serializable.
+
+    FastAPI's default RequestValidationError handler echoes the offending input
+    via jsonable_encoder(exc.errors()); Starlette's JSONResponse then does
+    .encode("utf-8"), which raises UnicodeEncodeError on a lone surrogate (a
+    schema-valid string a fuzzer can send), turning a 422 into an uncaught 500.
+    Sanitizing the echoed errors keeps the validation response a clean 422.
+    """
+    if isinstance(obj, str):
+        return obj.encode("utf-8", "replace").decode("utf-8")
+    if isinstance(obj, dict):
+        return {_strip_surrogates(k): _strip_surrogates(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_strip_surrogates(x) for x in obj]
+    return obj
 
 # Middleware order (outermost -> innermost — what we WANT at request time):
 #   1. secure (OWASP headers — outermost so it wraps every response incl. errors)
@@ -235,6 +255,23 @@ def create_app(cwd: Path | None = None) -> FastAPI:
     logfire.instrument_openai()
     {% endif %}
     {% endif %}
+
+    # Surrogate-safe 422 handler — see _strip_surrogates docstring. Without this,
+    # a fuzzer's lone-surrogate body turns a validation 422 into an uncaught 500
+    # during error-response serialization. Registered unconditionally: the
+    # default RequestValidationError handler is the same on every backend combo.
+    {% if has_db %}
+    # (DB note: Postgres text columns also reject NUL \x00; the per-field
+    # validators strip control chars + surrogates before any value reaches the
+    # DB, so the only surrogate path left at the error boundary is the echoed
+    # validation detail this handler sanitizes.)
+    {% endif %}
+    @app.exception_handler(RequestValidationError)
+    async def _safe_validation_handler(request: Request, exc: RequestValidationError):
+        return JSONResponse(
+            status_code=422,
+            content={"detail": _strip_surrogates(jsonable_encoder(exc.errors()))},
+        )
 
     # Routes
     app.include_router(api_router)
