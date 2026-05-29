@@ -75,14 +75,16 @@ jobs:
 
       - uses: ./.github/actions/setup-mise
 
-      # ── Node + pnpm setup ───────────────────────────────────────────────────
-      - name: Setup Node and pnpm
-        uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-
-      - name: Enable corepack / pnpm
-        run: corepack enable pnpm
+      # ── Node + pnpm via mise (NO corepack) ──────────────────────────────────
+      # setup-mise installs Node 24 + pnpm 9.15.0 (repo .mise.toml), matching the
+      # scaffold's own toolchain. We deliberately do NOT use actions/setup-node +
+      # `corepack enable`: corepack resolves the pnpm version from the CWD's
+      # package.json, but the harness builds with `pnpm --dir web build` from the
+      # scratch ROOT (no packageManager field there) — corepack then falls back to
+      # its default major (11.x) and refuses to switch to web/package.json's
+      # 9.15.0 pin ("pnpm does not switch versions under corepack"; verify-kit-49l).
+      # mise's pnpm is a fixed 9.15.0 regardless of CWD, so the root-cwd harness
+      # build resolves correctly — exactly as a real consumer's mise toolchain does.
 
       # ── pnpm store cache ────────────────────────────────────────────────────
       - name: Get pnpm store directory
