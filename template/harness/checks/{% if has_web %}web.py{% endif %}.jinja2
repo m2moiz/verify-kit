@@ -480,7 +480,12 @@ def check_web_lost_pixel(cwd: Path) -> CheckResult:
             # always exits 0 — making it useless as a CI gate.
             # The lostpixel/lost-pixel image already has pnpm + lost-pixel
             # installed; no host dep directory mount needed (verify-kit-c7k fix).
-            web_dir = cwd / "web"
+            # MUST be absolute: docker -v / WORKSPACE reject relative mount paths
+            # ("invalid mount path: 'web' must be absolute" → exit 125). The verify
+            # runner passes a relative cwd, so `cwd / "web"` is relative; the other
+            # web checks survive it (it's only a *subprocess* cwd) but docker's
+            # bind-mount flag does not. Resolve before building the docker args.
+            web_dir = (cwd / "web").resolve()
             version_result = proc_run(
                 ["pnpm", "exec", "lost-pixel", "--version"],
                 cwd=web_dir,
