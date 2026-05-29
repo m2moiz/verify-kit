@@ -221,10 +221,14 @@ def test_poll_trace_by_tag_uses_json_dumps_for_tags(jaeger_mod):
     # Must be a JSON string, not a plain string concatenation
     try:
         parsed = json.loads(tags_value)
-    except (json.JSONDecodeError, TypeError):
-        pytest.fail(
+    except (json.JSONDecodeError, TypeError) as exc:
+        # raise (not pytest.fail) so static analysis can prove `parsed` is bound
+        # below — CodeQL doesn't model pytest.fail() as NoReturn (py/uninitialized
+        # -local-variable, CodeQL alert #120). AssertionError reads identically in
+        # the pytest report.
+        raise AssertionError(
             f"tags param must be json.dumps(dict), got {tags_value!r} which is not valid JSON"
-        )
+        ) from exc
     assert "verify_kit.trace_test_id" in parsed, (
         f"json-encoded tags must contain 'verify_kit.trace_test_id', got {parsed!r}"
     )
