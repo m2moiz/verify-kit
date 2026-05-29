@@ -13,6 +13,7 @@ beyond a thin call-out.
 
 from __future__ import annotations
 
+from harness.mcp._roster import MCP_TOOLS
 from harness.models import (
     EXIT_BAD_INPUT,
     EXIT_CACHE_CORRUPT,
@@ -59,6 +60,9 @@ def describe_envelope() -> dict:
         "check_catalog_schema": CheckCatalogEntry.model_json_schema(mode="serialization"),
         "report_schema": VerifyReport.model_json_schema(mode="serialization"),
         "checks": [CheckCatalogEntry.from_spec(s).model_dump() for s in _registry_list_checks()],
+        # Machine-readable signal of which MCP tools are real vs. stub
+        # (verify-kit-dy4). Each entry: {name, implemented, note}.
+        "mcp_tools": [dict(t) for t in MCP_TOOLS],
         "jsonl_summary_marker": {
             "type": "summary",
             "fields": [

@@ -1,0 +1,71 @@
+"""harness.mcp._roster — single source of truth for the MCP tool roster.
+
+Imported by BOTH ``harness.mcp.tools`` (to define the registered tools and
+their stub payloads) and ``harness.mcp._describe`` (to expose a
+machine-readable ``mcp_tools`` signal of which tools are real vs. stub).
+
+Each entry is ``{"name", "implemented", "note"}``:
+    name         the MCP tool id (matches the registered FastMCP tool name).
+    implemented  True for tools that do real work; False for stubs.
+    note         human/agent-readable status string. For stubs this is the
+                 honest "not yet implemented" message also returned in the
+                 stub payload's ``note`` field.
+
+Honesty contract (verify-kit-dy4):
+    The 4 stubs (debug_state, debug_events, eval_run, eval_compare) are
+    ``implemented=false`` and their tool bodies return a payload whose
+    ``status == "not_implemented"``. The 8 real tools are ``implemented=true``
+    and must NOT return a ``status == "not_implemented"`` payload. A guard test
+    (``tests/test_mcp_roster_honesty.py``) enforces both directions.
+"""
+
+from __future__ import annotations
+
+# Tracking id for the not-yet-implemented stubs, surfaced in stub payloads so
+# an agent can find the planning context for when they land.
+STUB_TRACKING = "verify-kit-dy4"
+
+# Where the stub functionality is planned to land.
+STUB_PLAN = "v0.3 diagnose surface"
+
+
+def _stub_note(tool: str) -> str:
+    return f"{tool}: stub — not yet implemented; planned for the {STUB_PLAN}"
+
+
+# Canonical 13-tool roster (set equality with MCP-02 §2.2 / EXPECTED_TOOL_NAMES
+# in tests/test_mcp_server.py). Order is presentation-only.
+MCP_TOOLS: list[dict] = [
+    {"name": "verify", "implemented": True, "note": "Run the full check suite."},
+    {"name": "verify_check", "implemented": True, "note": "Run a single registered check."},
+    {"name": "list_checks", "implemented": True, "note": "List every registered check."},
+    {"name": "smoke", "implemented": True, "note": "Run the cheapest single quick check."},
+    {"name": "trace_last", "implemented": True, "note": "Fetch the most recent Jaeger trace."},
+    {"name": "describe", "implemented": True, "note": "Emit the introspection envelope."},
+    {"name": "ralph_status", "implemented": True, "note": "Return the last Ralph run state."},
+    {"name": "ralph_run", "implemented": True, "note": "Drive the Ralph loop."},
+    {"name": "fix_propose", "implemented": True, "note": "Return the latest SARIF envelope."},
+    {"name": "debug_state", "implemented": False, "note": _stub_note("debug_state")},
+    {"name": "debug_events", "implemented": False, "note": _stub_note("debug_events")},
+    {"name": "eval_run", "implemented": False, "note": _stub_note("eval_run")},
+    {"name": "eval_compare", "implemented": False, "note": _stub_note("eval_compare")},
+]
+
+
+def stub_payload(tool: str) -> dict:
+    """Return the honest stub payload for an unimplemented MCP tool.
+
+    Shape (verify-kit-dy4): ``{"status": "not_implemented", "note": ...,
+    "tracking": ...}``. Replaces the previous lying
+    ``{"status": "not_implemented", "available_in_phase": N}`` shape — phases 4
+    and 5 SHIPPED without filling these tools, so ``available_in_phase`` was
+    actively false.
+    """
+    return {
+        "status": "not_implemented",
+        "note": _stub_note(tool),
+        "tracking": STUB_TRACKING,
+    }
+
+
+__all__ = ["MCP_TOOLS", "STUB_TRACKING", "STUB_PLAN", "stub_payload"]

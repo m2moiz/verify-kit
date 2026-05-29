@@ -26,7 +26,12 @@ from tests._helpers import render_scratch_project
 def emit_modules(tmp_path_factory: pytest.TempPathFactory, monkeypatch_module):
     # Ensure OTel is disabled at import time for predictable otlp test
     monkeypatch_module.delenv("OTEL_EXPORTER_OTLP_ENDPOINT", raising=False)
-    scratch = render_scratch_project(tmp_path_factory.mktemp("reports-jso-scratch"))
+    # Render from HEAD (not the latest tag) so the rendered harness reflects
+    # current template code — the SARIF property-bag fix_command surfacing
+    # lives post-tag in template/harness/reports/sarif.py.jinja2.
+    scratch = render_scratch_project(
+        tmp_path_factory.mktemp("reports-jso-scratch"), _vcs_ref="HEAD"
+    )
     sys.path.insert(0, str(scratch))
     try:
         for mod in list(sys.modules):
@@ -81,6 +86,7 @@ def _mixed_report(models):
                 code="lint.eslint.E1",
                 message="bad code",
                 hint="run --fix",
+                fix_command="pnpm eslint --fix .",
                 docs_url="https://example.com/E1",
             ),
         ),
@@ -161,6 +167,33 @@ def test_sarif_results_omit_passes(emit_modules) -> None:
     levels = {r["ruleId"]: r["level"] for r in results}
     assert levels["lint.eslint"] == "error"
     assert levels["format.biome"] == "note"
+
+
+def test_sarif_result_carries_fix_command_in_properties(emit_modules) -> None:
+    """A failing CheckResult whose error.fix_command is set must surface it in
+    the SARIF result's `properties.fix_command` (SARIF 2.1.0 §3.8 property bag).
+
+    Pretty output already shows the human the fix command; SARIF / fix_propose
+    is the agent's channel, so the same command must reach it.
+    """
+    _junit, sarif, _otlp, models = emit_modules
+    report = _mixed_report(models)  # lint.eslint fail carries fix_command + hint
+    buf = io.StringIO()
+    sarif.emit(report, buf)
+    data = json.loads(buf.getvalue())
+    results = data["runs"][0]["results"]
+    by_rule = {r["ruleId"]: r for r in results}
+    eslint = by_rule["lint.eslint"]
+    assert "properties" in eslint, (
+        f"failing result with a fix_command must carry properties: {eslint!r}"
+    )
+    assert eslint["properties"]["fix_command"] == "pnpm eslint --fix ."
+    assert eslint["properties"]["hint"] == "run --fix"
+    # A non-pass result with no fix_command/hint must NOT grow an empty bag.
+    biome = by_rule["format.biome"]
+    assert "properties" not in biome, (
+        f"skip result with no fix metadata must not carry properties: {biome!r}"
+    )
 
 
 def test_otlp_disabled_writes_warning(emit_modules) -> None:

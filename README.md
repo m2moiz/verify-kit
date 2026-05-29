@@ -85,6 +85,8 @@ flowchart TD
 
 The Universal Foundation is always rendered. Solid arrows point to shipped add-on slots (Backend + LLM, v0.1). Dashed arrows point to deferred slots (Web/Audio/Game, v0.2). The `Backend -.composes.- LLM` edge captures that when both are enabled, the LLM add-on lands inside the FastAPI app rather than as a standalone CLI.
 
+The MCP server registers 13 tools as a fixed contract, but 4 — `debug_state`, `debug_events`, `eval_run`, `eval_compare` — are **not yet implemented** (planned for the v0.3 diagnose surface). They return `{"status": "not_implemented", ...}` and are marked `implemented: false` in the machine-readable `describe.mcp_tools` roster, so an agent can tell the real tools from the stubs before relying on them.
+
 ![VS Code Problems panel](docs/img/vscode-problems.png)
 
 *VS Code Problems panel showing clickable Ruff + pyright errors via verify-kit's custom problem matchers — the human side of the dual-audience contract.*

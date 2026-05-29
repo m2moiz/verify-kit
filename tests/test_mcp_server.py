@@ -93,7 +93,9 @@ def installed_scratch(tmp_path_factory: pytest.TempPathFactory) -> Path:
     if not _have_uv():
         pytest.skip("uv not available on PATH")
     root = tmp_path_factory.mktemp("mcp-scratch")
-    scratch = render_scratch_project(root)
+    # Render from HEAD (not the latest tag) so the MCP roster/annotations under
+    # test reflect current template code (honest stub roster, describe.mcp_tools).
+    scratch = render_scratch_project(root, _vcs_ref="HEAD")
     # Fresh 3.13 venv inside the scaffold, then install editable from root.
     subprocess.run(
         ["uv", "venv", "--python", "3.13", str(scratch / ".venv")],
