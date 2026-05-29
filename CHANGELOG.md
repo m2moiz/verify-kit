@@ -8,6 +8,13 @@ release PR before merge (per repo convention D-11).
 
 See `CONTRIBUTING.md` for the commit-message contract that drives this file.
 
+## [0.2.1](https://github.com/m2moiz/verify-kit/compare/v0.2.0...v0.2.1) (2026-05-29)
+
+
+### Fixed
+
+* v0.2.1 — provision pnpm via mise in CI, web-lane redo ([#34](https://github.com/m2moiz/verify-kit/issues/34)) ([3275c39](https://github.com/m2moiz/verify-kit/commit/3275c39d46ea9e57425ada01c9bc3175cd402a93))
+
 ## [0.2.0](https://github.com/m2moiz/verify-kit/compare/v0.1.0...v0.2.0) (2026-05-29)
 
 
