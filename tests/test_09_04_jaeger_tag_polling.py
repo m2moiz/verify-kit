@@ -110,6 +110,64 @@ def test_poll_trace_by_tag_not_found_returns_structured(jaeger_mod):
     )
 
 
+# ── cyo: a non-2xx HTTP response is reachable → not_found, NOT unreachable ────
+
+
+def test_poll_trace_by_tag_http_error_is_not_found_not_unreachable(jaeger_mod):
+    """A 4xx/5xx means Jaeger RESPONDED (reachable). It must map to not_found
+    (fail), never unreachable (skip) — else a bad query hides behind a skip."""
+    jaeger = jaeger_mod["jaeger"]
+    import httpx
+
+    req = httpx.Request("GET", "http://localhost:16686/api/traces")
+    resp = httpx.Response(400, text='{"errors":[{"code":400,"msg":"parameter \'service\' is required"}]}', request=req)
+
+    class Resp400:
+        def raise_for_status(self):
+            raise httpx.HTTPStatusError("Bad Request", request=req, response=resp)
+
+        def json(self):
+            return {}
+
+    with mock.patch.object(httpx, "get", return_value=Resp400()):
+        result = jaeger.poll_trace_by_tag("uuid", timeout=0.1)
+    assert result.status == "not_found", (
+        f"A non-2xx response must be not_found (reachable), got {result.status!r}"
+    )
+
+
+# ── cyo: require_services waits for ALL services before declaring found ──────
+
+
+def test_poll_trace_by_tag_require_services_gates_found(jaeger_mod):
+    """With require_services set, a trace missing a required service must NOT
+    count as found (server/DB spans lag the browser span)."""
+    jaeger = jaeger_mod["jaeger"]
+    import httpx
+
+    def _resp(services):
+        class R:
+            def raise_for_status(self):
+                pass
+
+            def json(self):
+                return {
+                    "data": [{"traceID": "t1", "processes": {f"p{i}": {"serviceName": s} for i, s in enumerate(services)}}],
+                    "errors": None,
+                }
+        return R()
+
+    # web-only trace + require {web, api} → not satisfied → not_found within timeout
+    with mock.patch.object(httpx, "get", return_value=_resp(["web"])):
+        r = jaeger.poll_trace_by_tag("uuid", require_services={"web", "api"}, timeout=0.1)
+    assert r.status == "not_found", f"web-only must not satisfy require_services, got {r.status!r}"
+
+    # trace with both → found
+    with mock.patch.object(httpx, "get", return_value=_resp(["web", "api"])):
+        r = jaeger.poll_trace_by_tag("uuid", require_services={"web", "api"}, timeout=0.1)
+    assert r.status == "found", f"web+api must satisfy require_services, got {r.status!r}"
+
+
 # ── D-02: uses json.dumps for tags, never hand-concatenated ──────────────────
 
 

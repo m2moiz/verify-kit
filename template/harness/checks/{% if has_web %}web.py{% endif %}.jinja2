@@ -719,8 +719,14 @@ def check_web_otel_trace(cwd: Path) -> CheckResult:
     # Import at function scope — no module-level app/ dependency (F-05)
     from harness.jaeger import poll_trace_by_tag  # noqa: PLC0415
 
+    # Jaeger's /api/traces REQUIRES a `service` param (omitting it → HTTP 400).
+    # Query by the browser/web service, which carries the per-run trace_test_id
+    # tag (BL-5); Jaeger returns the FULL matching trace (web + api + db spans),
+    # so the connectivity assertion below still sees every service.
     jaeger_result = poll_trace_by_tag(
         effective_trace_test_id,
+        service=web_service_name,
+        require_services={web_service_name, api_service_name},
         timeout=20.0,
         poll_interval=1.5,
     )

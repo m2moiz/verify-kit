@@ -58,9 +58,11 @@ class TraceResult:
                       ``traces`` carries the raw Jaeger trace dicts.
       "not_found"   — Jaeger was reachable but no matching trace appeared
                       within the polling timeout. Caller should treat as fail.
-      "unreachable" — Jaeger query endpoint could not be reached
-                      (httpx.RequestError / non-2xx). Caller should treat
-                      as skip (infrastructure absent, not a trace failure).
+      "unreachable" — Jaeger query endpoint could not be reached at the
+                      connection level (httpx.RequestError: DNS/connect/timeout).
+                      Caller should treat as skip (infrastructure absent).
+                      A non-2xx HTTP response is NOT unreachable (Jaeger
+                      responded) — that maps to "not_found" so it fails loudly.
     """
 
     status: TraceResultStatus
@@ -77,6 +79,7 @@ def poll_trace_by_tag(
     timeout: float = 15.0,
     poll_interval: float = 1.0,
     service: str | None = None,
+    require_services: set[str] | None = None,
 ) -> TraceResult:
     """Poll Jaeger for a trace tagged with verify_kit.trace_test_id=<uuid>.
 
@@ -92,6 +95,12 @@ def poll_trace_by_tag(
         poll_interval:  Seconds between polls.
         service:        Optional Jaeger service filter.  When omitted, the
                         tag filter alone narrows results (cross-service lookup).
+        require_services: When set, a trace counts as "found" only once spans
+                        from ALL these service names are present. The browser
+                        span force-flushes immediately but server/DB spans
+                        arrive ~5s later (BatchSpanProcessor); without this the
+                        first (browser-only) snapshot returns and the caller's
+                        connectivity assertion fails on an incomplete trace.
 
     Returns:
         TraceResult with status "found", "not_found", or "unreachable".
@@ -114,11 +123,27 @@ def poll_trace_by_tag(
         try:
             resp = httpx.get(traces_url, params=params, timeout=5.0)
             resp.raise_for_status()
-        except (httpx.RequestError, httpx.HTTPStatusError):
-            # Jaeger query endpoint not reachable — caller maps to skip.
+        except httpx.RequestError:
+            # Connection-level failure — the Jaeger query endpoint is truly not
+            # reachable (DNS/connect/timeout). Caller maps "unreachable" → skip.
             return TraceResult(
                 status="unreachable",
                 query_url=traces_url,
+            )
+        except httpx.HTTPStatusError as exc:
+            # Jaeger RESPONDED with a non-2xx (e.g. 400 bad query params, 5xx).
+            # It IS reachable — classifying this as "unreachable" would hide a
+            # real query bug behind a skip (the F5 carve-out). Treat as
+            # not_found-class so the caller FAILS, surfacing the HTTP error.
+            return TraceResult(
+                status="not_found",
+                query_url=traces_url,
+                query_errors=[
+                    {
+                        "http_status": exc.response.status_code,
+                        "body": exc.response.text[:200],
+                    }
+                ],
             )
 
         body = resp.json()
@@ -127,12 +152,21 @@ def poll_trace_by_tag(
         last_query_url = str(getattr(resp, "url", traces_url))
 
         if data:
-            return TraceResult(
-                status="found",
-                traces=data,
-                query_errors=last_errors,
-                query_url=last_query_url,
-            )
+            present_services = {
+                p.get("serviceName")
+                for tr in data
+                for p in tr.get("processes", {}).values()
+            }
+            # With require_services set, only return once ALL required services'
+            # spans have appeared (server/DB spans lag the browser span by the
+            # BatchSpanProcessor delay). Otherwise keep polling until the deadline.
+            if not require_services or require_services.issubset(present_services):
+                return TraceResult(
+                    status="found",
+                    traces=data,
+                    query_errors=last_errors,
+                    query_url=last_query_url,
+                )
 
         if time.monotonic() >= deadline:
             break
