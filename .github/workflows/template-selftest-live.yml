@@ -376,6 +376,32 @@ jobs:
           sleep 2
           curl -s -o /dev/null -w "vite :3000 -> %{http_code}\n" http://127.0.0.1:3000/
 
+      # ── Seed the Lost Pixel baseline in-job ─────────────────────────────────
+      # A freshly-rendered scratch ships NO baseline PNGs (only .gitkeep), and a
+      # committed baseline could not be pixel-correct for a fresh Linux render
+      # anyway (font/AA differences vs the author's machine). Generate the
+      # baseline here against the running :3000 preview, so the comparison run
+      # below diffs the same render against it (identical → pass). This exercises
+      # the full Lost Pixel pipeline end-to-end — the point of the live-full job
+      # (verify-kit-ail) — rather than guarding the demo UI against regressions.
+      # Mirrors the web.lost_pixel docker run + LOST_PIXEL_MODE=update, with an
+      # absolute -v mount ($PWD; the relative-path 125 fix).
+      - name: Seed Lost Pixel baseline (LOST_PIXEL_MODE=update)
+        working-directory: /tmp/scratch-live/web
+        run: |
+          LP_VERSION=$(pnpm exec lost-pixel --version 2>/dev/null | tail -1 | tr -d '[:space:]')
+          LP_VERSION=${LP_VERSION:-3.22.0}
+          docker run --rm \
+            --add-host host.docker.internal:host-gateway \
+            -v "$PWD:$PWD" \
+            -e WORKSPACE="$PWD" \
+            -e DOCKER=1 \
+            -e LOST_PIXEL_DISABLE_TELEMETRY=1 \
+            -e LOST_PIXEL_MODE=update \
+            "lostpixel/lost-pixel:v$LP_VERSION"
+          echo "Baselines generated:"
+          ls -la .lost-pixel/baseline/
+
       # ── Run verify --full --require=web.lost_pixel,web.otel_trace ──────────
       # Tier-based (--full includes slow-tier checks). NOT verify-web* recipes (F8).
       # --require makes a skip/cache-replay/no-op fail (09-03 semantics).
