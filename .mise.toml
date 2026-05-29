@@ -9,12 +9,23 @@
 # selftest workflow + run repo-level tests against scratch renders. Match
 # template/.mise.toml.jinja2 pins for python/node so the parent-vs-child venv
 # uses identical interpreter versions.
+#
+# pnpm is pinned to the SAME exact version as template/.mise.toml.jinja2 and
+# web/package.json's `packageManager` field. The web-polarity tests (run by the
+# `coverage` workflow) and the harness web build (run by `live-full`) both shell
+# out to a bare `pnpm` resolved from PATH. Without this pin, verify-kit's own CI
+# either finds no pnpm at all (coverage: FileNotFoundError) or, under corepack,
+# a default major (11.x) that refuses to switch to the 9.15.0 the scaffold pins
+# (live-full: "pnpm does not switch versions under corepack"). Provisioning pnpm
+# via mise here makes verify-kit's own CI mirror exactly what a real consumer's
+# toolchain does (verify-kit-49l) — no corepack anywhere in verify-kit's CI.
 
 [tools]
 python = "3.13"
 node = "24"
 uv = "latest"
 just = "latest"
+pnpm = "9.15.0"
 
 [env]
 PYTHONDONTWRITEBYTECODE = "1"

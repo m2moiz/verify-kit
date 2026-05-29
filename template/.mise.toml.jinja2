@@ -7,16 +7,19 @@
 # - uv handles all Python deps (uv sync / uv run); do NOT install Python deps
 #   via pip directly — uv enforces venv discipline via uv.lock.
 # - pnpm handles Node deps when JS/TS files are present; otherwise unused.
+#   pnpm is pinned to an EXACT version that MUST match web/package.json's
+#   `packageManager` field (corepack refuses to switch versions: a `latest`
+#   here installs a newer major than the pin, and any corepack-mediated `pnpm`
+#   call — including the harness web build subprocess — then errors with
+#   "pnpm does not switch versions under corepack". Keep these two pins
+#   identical and aligned with web/pnpm-lock.yaml's lockfileVersion.
 
 [tools]
 python = "3.13"
 node = "24"
 uv = "latest"
 just = "latest"
-pnpm = "latest"
-{% if has_web %}
-"npm:corepack" = "latest"
-{% endif %}
+pnpm = "9.15.0"
 {% if has_web and has_backend %}
 "npm:mprocs" = "latest"
 {% endif %}

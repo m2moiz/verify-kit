@@ -46,7 +46,14 @@ ALL_AGENTS_DATA = {
 
 
 def _render(template_root: Path, dest: Path, extra_data: dict | None = None) -> Path:
-    """Run copier.run_copy with COMMON_DATA merged with extra_data."""
+    """Run copier.run_copy with COMMON_DATA merged with extra_data.
+
+    Renders from ``vcs_ref="HEAD"`` (not the latest tag) so the assertions test
+    the working-tree template — matching the Phase 7+ pattern documented in
+    ``tests/_helpers.render_scratch_project``. Without this, Copier defaults to
+    the latest git tag and post-tag template changes (e.g. the setup-mise
+    composite action, c22) would never be exercised.
+    """
     import copier
 
     data = {**COMMON_DATA, **(extra_data or {})}
@@ -57,6 +64,7 @@ def _render(template_root: Path, dest: Path, extra_data: dict | None = None) -> 
         defaults=True,
         unsafe=True,
         overwrite=True,
+        vcs_ref="HEAD",
     )
     return dest
 
@@ -131,8 +139,9 @@ def test_ci_yml_is_valid_workflow_yaml(template_root: Path, tmp_path: Path) -> N
     assert steps, "verify job should have at least one step"
 
     uses_values = [s.get("uses", "") for s in steps]
-    assert any("jdx/mise-action@v2" in u for u in uses_values), (
-        "ci.yml must use jdx/mise-action@v2 (mise is the single toolchain source)"
+    assert any("./.github/actions/setup-mise" in u for u in uses_values), (
+        "ci.yml must use the ./.github/actions/setup-mise composite action "
+        "(mise is the single toolchain source, centralised in one action)"
     )
 
     run_values = [s.get("run", "") for s in steps if "run" in s]
