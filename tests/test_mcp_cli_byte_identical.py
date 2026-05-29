@@ -90,6 +90,11 @@ _VOLATILE_KEYS = {
     # CheckResult-level timing
     "started",
     "finished",
+    # Phase-9 CheckResult provenance: set fresh per execution. The CLI run and
+    # the MCP run execute verify independently, so this timestamp differs
+    # whenever the second run is not a pure cache replay (e.g. CI cache-miss).
+    # It is non-semantic for the MCP↔CLI parity contract — strip it like run_id.
+    "executed_at",
     # SQLite cache hit/miss is non-deterministic between two consecutive
     # invocations (CLI primes, MCP re-reads from cache).
     "cached",
