@@ -126,21 +126,29 @@ line-length = 100
 target-version = "py313"
 
 [tool.ruff.lint]
-# D = docstring presence + pydocstyle-google content (public API; v0.3 strictness gate).
-# PGH = ban blanket type:ignore/noqa (the escape hatch must carry a rule code).
-# ASYNC = async correctness. SIM/RET/S (bandit) tracked as a separate ruleset-expansion follow-up.
-select = ["E", "F", "I", "UP", "B", "D", "ASYNC", "PGH"]
-# FastAPI Depends/Query and Typer Option/Argument require call-in-default by design.
-extend-ignore = ["B008"]
+# D = docstrings (public API). PGH = ban blanket type:ignore/noqa. ASYNC = async correctness.
+# S = bandit security (subprocess/bind/etc.; legitimate harness calls carry a justified noqa).
+# SIM = control-flow simplification. C90 = mccabe complexity. T20 = no stray print().
+# RET deliberately NOT enabled (pure style; fights the explicit `result = ...; return result` pattern).
+select = ["E", "F", "I", "UP", "B", "D", "ASYNC", "PGH", "S", "SIM", "C90", "T20"]
+# B008: FastAPI Depends/Query and Typer Option/Argument require call-in-default by design.
+# S607: the harness invokes dev tools (uv/just/ruff/pnpm/docker/git) by PATH name via mise —
+# a uniform, intentional pattern; S603 (untrusted-input subprocess) stays enforced per-call.
+extend-ignore = ["B008", "S607"]
 
 [tool.ruff.lint.pydocstyle]
 # Google convention auto-disables the conflicting D203/D211 and D212/D213 pairs.
 convention = "google"
 
+[tool.ruff.lint.mccabe]
+# Default ceiling of 10; the harness's own orchestrators (verify/load_config/
+# register_tools/...) carry an explicit `# noqa: C901`. Consumer code is held to 10.
+max-complexity = 10
+
 [tool.ruff.lint.per-file-ignores]
-# Test files: blind-exception asserts, intentional name-bindings, long parametrize
-# lines, and docstring-presence are idiomatic; tests document via test names.
-"tests/*" = ["B017", "F841", "E501", "E402", "D"]
+# Test files: blind-exception asserts (S101), intentional name-bindings, long
+# parametrize lines, subprocess (S) and docstring-presence are idiomatic in tests.
+"tests/*" = ["B017", "F841", "E501", "E402", "D", "S"]
 {% if has_db %}
 # Alembic auto-generated migrations and the env.py bootstrap have their own
 # conventions (sys.path manipulation before imports; long revision strings).
@@ -152,6 +160,9 @@ convention = "google"
 "harness/cli.py" = ["E501"]
 "harness/cache.py" = ["E501"]
 "harness/mcp/tools.py" = ["E501"]
+# Standalone runner/adapter scripts write progress to stdout by design.
+"harness/checks/backend_inprocess_fuzz.py" = ["T201"]
+"harness/web/lostpixel_adapter.py" = ["T201"]
 # Files that compose imports across conditional template blocks: the rendered
 # output can present multiple separate import blocks that ruff would otherwise
 # want to merge. Re-sorting across the conditional boundary would change file

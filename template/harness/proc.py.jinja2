@@ -47,7 +47,7 @@ def run(
     a bug first.
     """
     effective_timeout = DEFAULT_TIMEOUT_S if timeout is None else timeout
-    return subprocess.run(
+    return subprocess.run(  # noqa: S603
         args,
         cwd=cwd,
         capture_output=capture_output,

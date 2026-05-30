@@ -111,7 +111,7 @@ def parse_lostpixel_output(lostpixel_dir: Path) -> list[ErrorEnvelope]:
     return envelopes
 
 
-def main(argv: list[str] | None = None) -> int:
+def main(argv: list[str] | None = None) -> int:  # noqa: C901
     """CLI entry point for lost-pixel-approve (VIZ-03 — standalone CLI shim).
 
     Enumerates snapshots that differed (difference/<name>.png) and either previews
@@ -216,7 +216,7 @@ def main(argv: list[str] | None = None) -> int:
     # --confirm: stage each baseline via git add with an explicit cwd.
     errors: list[str] = []
     for path in to_approve:
-        result = subprocess.run(  # noqa: S603
+        result = subprocess.run(  # noqa: S603, S607
             ["git", "add", path],
             cwd=repo_root,
             capture_output=True,

@@ -31,7 +31,7 @@ def _build_rules() -> list[dict]:
     return rules
 
 
-def _build_results(report: VerifyReport) -> list[dict]:
+def _build_results(report: VerifyReport) -> list[dict]:  # noqa: C901
     results: list[dict] = []
     for check in report.checks:
         if check.status == "pass":

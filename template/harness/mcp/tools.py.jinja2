@@ -46,7 +46,7 @@ from mcp.types import ToolAnnotations
 _DEFAULT_CHECK_ID = "mise.toml.valid"
 
 
-def register_tools(mcp: FastMCP, *, cwd: Path) -> None:
+def register_tools(mcp: FastMCP, *, cwd: Path) -> None:  # noqa: C901
     """Register the 13 verify-kit tools on ``mcp``.
 
     Args:

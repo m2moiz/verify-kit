@@ -62,7 +62,7 @@ def check_lint_ruff(cwd: Path) -> CheckResult:
     """Run ruff check and parse JSON output."""
     start = time.monotonic()
     try:
-        proc = subprocess.run(
+        proc = subprocess.run(  # noqa: S607
             ["uv", "run", "ruff", "check", "--output-format=json", "."],
             capture_output=True,
             text=True,
@@ -167,7 +167,7 @@ def check_lint_biome(cwd: Path) -> CheckResult:
         )
 
     try:
-        proc = subprocess.run(
+        proc = subprocess.run(  # noqa: S603
             [str(biome), "check", "--reporter=json", "."],
             capture_output=True,
             text=True,

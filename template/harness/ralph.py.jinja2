@@ -56,7 +56,7 @@ def _default_executor(cmd: list[str], cwd: Path) -> dict:
     iteration with at least the keys ``cost_usd`` (float) and ``done`` (bool).
     A missing key defaults to a conservative stub (0.001 USD, done=False).
     """
-    proc = subprocess.run(
+    proc = subprocess.run(  # noqa: S603
         cmd,
         cwd=cwd,
         capture_output=True,

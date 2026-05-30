@@ -51,7 +51,7 @@ def check_format_ruff(cwd: Path) -> CheckResult:
     """Run `uv run ruff format --check .`."""
     start = time.monotonic()
     try:
-        proc = subprocess.run(
+        proc = subprocess.run(  # noqa: S607
             ["uv", "run", "ruff", "format", "--check", "."],
             capture_output=True,
             text=True,
@@ -130,7 +130,7 @@ def check_format_biome(cwd: Path) -> CheckResult:
         )
 
     try:
-        proc = subprocess.run(
+        proc = subprocess.run(  # noqa: S603
             [str(biome), "format", "--check", "."],
             capture_output=True,
             text=True,
