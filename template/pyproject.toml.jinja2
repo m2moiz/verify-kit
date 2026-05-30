@@ -89,7 +89,11 @@ dev = [
     # mode). pyright bundles its own Node via nodejs-wheel — no Node dep on a
     # pure-Python scaffold.
     "pyright>=1.1.405",
+    # Dependency-hygiene check (`deps.unused`): flags unused/undeclared deps.
+    "deptry>=0.23,<1",
 {% if has_backend %}
+    # Import-boundary contract (`arch.imports`): harness core must not import app.
+    "import-linter>=2.3",
     "pytest-asyncio>=0.24",
     "httpx>=0.27",
     "respx>=0.21",
@@ -179,3 +183,62 @@ typeCheckingMode = "{{ 'strict' if strict_mode else 'standard' }}"
 pythonVersion = "3.13"
 venvPath = "."
 venv = ".venv"
+
+# ── deptry (deps.unused check) ────────────────────────────────────────────────
+# deptry auto-treats [dependency-groups] entries as DEV dependencies, so test
+# tools (pytest/ruff/pyright/...) are never flagged as unused — no config needed
+# for those. This template is multi-variant, though: a regular dependency used
+# only at runtime / via a lazy import can look "unused" on a minimal render. Such
+# deps are allow-listed per rule below so a base scaffold stays green.
+[tool.deptry]
+# The `deps.unused` check's contract is undeclared (DEP001) + unused (DEP002).
+# DEP003 (imported-but-transitive, e.g. click via typer) and DEP004 (misplaced
+# dev dependency, e.g. a test-only lib declared as a runtime dep) are deptry's
+# stricter rules and out of this check's scope. Tests + migration dirs are scanned
+# (NOT excluded) so test-only and migration-only imports count as "used".
+ignore = ["DEP003", "DEP004"]
+
+[tool.deptry.per_rule_ignores]
+# DEP002 = declared-but-not-statically-imported. This is a TEMPLATE: it
+# intentionally ships add-on dependencies for the consumer to build on, plus
+# runtime/plugin deps loaded by NAME (a DB driver via the connection URL, litellm
+# callbacks) that never appear as a static `import`. deptry's "every regular dep
+# must be imported in source" model does not fit a scaffold, so these are
+# allow-listed per add-on. A dep NOT on this list that becomes unused still reds
+# the check, and DEP001 (a genuinely missing import) is always enforced.
+DEP002 = [
+{% if has_backend %}
+    "anyio",         # async runtime, used transitively by FastAPI/Starlette
+    "polyfactory",   # pydantic test-data factories (shipped for the consumer; used in backend tests)
+    "dirty-equals",  # expressive test assertions (used in backend tests)
+{% endif %}
+{% if has_backend and has_db %}
+    "asyncpg",       # async DB driver — loaded via the connection URL, not imported
+{% endif %}
+{% if has_llm %}
+    "pydantic-ai-slim",  # typed LLM agent lib — shipped for the consumer; demonstrated in tests
+    "instructor",        # structured-output lib — shipped for the consumer; demonstrated in tests
+    "tokencost",         # token-cost accounting — used via litellm at runtime
+    "autoevals",         # offline LLM eval scorers — used by the eval tests
+    "langfuse",          # LLM observability — loaded via litellm callbacks by name
+{% endif %}
+]
+{% if has_backend %}
+
+# ── import-linter (arch.imports check) ────────────────────────────────────────
+# One contract: harness core must not import the consumer's app/ package. The
+# fuzz harness legitimately imports app at runtime to exercise the live ASGI app
+# — that edge is the sole whitelisted exception.
+[tool.importlinter]
+root_packages = ["harness", "app"]
+
+[[tool.importlinter.contracts]]
+name = "harness core must not import app"
+type = "forbidden"
+source_modules = ["harness"]
+forbidden_modules = ["app"]
+ignore_imports = [
+    "harness.checks.backend_inprocess_fuzz -> app.main",
+    "harness.checks.backend_inprocess_fuzz -> app.auth",
+]
+{% endif %}

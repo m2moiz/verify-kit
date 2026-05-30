@@ -1,0 +1,137 @@
+"""harness.checks.deps — dependency-hygiene check via deptry (always-on).
+
+Detects unused declared dependencies (DEP002) and undeclared-but-imported
+modules (DEP001) — a maintainability signal, not a correctness one. A dependency
+that is declared but never imported is dead weight; a module imported but not
+declared is a latent ImportError waiting for a fresh install.
+
+Runs `uv run deptry . --json-output <tmp>` and parses the structured JSON array
+deptry writes (each item: `{error:{code,message}, module, location:{file,line}}`).
+The exit code is the primary signal — 0 = clean, non-zero = issues found
+(REVIEW-CHECKLIST §9). Offline-first: deptry is a pinned dev dependency.
+
+Conditional-dependency note: verify-kit is a multi-variant template, so a
+dependency declared for one add-on can look "unused" on a minimal render. The
+allow-list of legitimately-conditional deps lives in `[tool.deptry]` in
+pyproject.toml (per-rule ignores), NOT in this module — keep the check generic and
+let the config carry the project-specific knowledge.
+
+Decision references: Decision 1.2 (dotted codes), 3.2 (@register), 4.1
+(tier="standard"), carryover-cwd (cwd kwarg; subprocess rooted at cwd).
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import tempfile
+import time
+from pathlib import Path
+
+from harness.models import CheckResult, ErrorEnvelope
+from harness.proc import run as proc_run
+from harness.registry import register
+
+_DOCS_URL = "https://deptry.com/"
+
+
+def _parse_issues(path: Path) -> list[dict] | None:
+    """Read deptry's --json-output file; return the issue list or None on parse error."""
+    try:
+        data = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return None
+    return data if isinstance(data, list) else None
+
+
+@register(
+    "deps.unused",
+    tier="standard",
+    category="deps",
+    description="Detect unused (DEP002) and undeclared (DEP001) dependencies via deptry",
+    inputs=["**/*.py", "pyproject.toml"],
+    fixable=False,
+    tool="deptry",
+)
+def check_deps_unused(cwd: Path) -> CheckResult:
+    """Run deptry and surface the first dependency-hygiene issue (unused/undeclared)."""
+    start = time.monotonic()
+    fd, tmp_name = tempfile.mkstemp(suffix=".json", prefix="deptry-")
+    os.close(fd)
+    tmp_path = Path(tmp_name)
+    try:
+        try:
+            proc = proc_run(
+                ["uv", "run", "deptry", ".", "--json-output", str(tmp_path)],
+                cwd=cwd,
+                timeout=120,
+            )
+        except FileNotFoundError:
+            return CheckResult(
+                check_id="deps.unused",
+                status="fail",
+                message="uv not found on PATH",
+                duration_ms=int((time.monotonic() - start) * 1000),
+                error=ErrorEnvelope(
+                    code="deps.unused.tool-missing",
+                    message="uv binary not found",
+                    hint="Install uv (https://docs.astral.sh/uv/) or via mise, then run `uv sync`",
+                    docs_url=_DOCS_URL,
+                ),
+            )
+
+        duration_ms = int((time.monotonic() - start) * 1000)
+
+        if proc.returncode == 0:
+            return CheckResult(
+                check_id="deps.unused",
+                status="pass",
+                message="deptry: no unused or undeclared dependencies",
+                duration_ms=duration_ms,
+            )
+
+        issues = _parse_issues(tmp_path)
+        if not issues:
+            # Non-zero exit but no parseable issues → deptry itself errored
+            # (bad config, unsynced venv). Surface honestly.
+            return CheckResult(
+                check_id="deps.unused",
+                status="fail",
+                message="deptry did not produce a parseable report — is the venv synced?",
+                duration_ms=duration_ms,
+                error=ErrorEnvelope(
+                    code="deps.unused.tool-error",
+                    message=(proc.stderr.strip() or proc.stdout.strip() or "no output")[:200],
+                    hint="Run `uv sync` then `uv run deptry .` to see the full error",
+                    docs_url=_DOCS_URL,
+                ),
+            )
+
+        first = issues[0]
+        code = str(first.get("error", {}).get("code") or "DEP")
+        module = str(first.get("module") or "?")
+        loc = first.get("location") or {}
+        file_path = loc.get("file")
+        raw_line = loc.get("line")
+        line = int(raw_line) if isinstance(raw_line, int) else None
+        msg = str(first.get("error", {}).get("message") or "dependency issue")
+        return CheckResult(
+            check_id="deps.unused",
+            status="fail",
+            message=f"deptry found {len(issues)} dependency issue(s); first: {code} {module}",
+            duration_ms=duration_ms,
+            error=ErrorEnvelope(
+                code=f"deps.unused.{code}",
+                message=msg[:200],
+                hint=(
+                    "Remove an unused dependency (DEP002) from pyproject.toml, or declare "
+                    "a missing one (DEP001). If a dep is only used by an add-on, allow-list "
+                    "it under [tool.deptry] per-rule ignores rather than deleting it."
+                ),
+                docs_url=_DOCS_URL,
+                file=str(file_path) if file_path else None,
+                line=line,
+            ),
+        )
+    finally:
+        tmp_path.unlink(missing_ok=True)

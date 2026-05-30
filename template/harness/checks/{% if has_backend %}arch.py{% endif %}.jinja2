@@ -1,0 +1,120 @@
+"""harness.checks.arch — import-boundary enforcement via import-linter (has_backend).
+
+Ships ONE contract in v1: **harness core must not import `app`**. The harness is
+the universal verification layer; the `app/` package is the consumer's backend
+slice. A stray `from app... import ...` inside harness core couples the two and
+breaks the "harness works on any project" guarantee. The one legitimate exception
+is `harness.checks.backend_inprocess_fuzz`, which imports `app.main`/`app.auth` at
+runtime to fuzz the live ASGI app — that edge is whitelisted in the contract's
+`ignore_imports` (in pyproject `[tool.importlinter]`), not in this module.
+
+Runs `uv run lint-imports`, which reads the `[tool.importlinter]` contracts from
+pyproject.toml and exits 0 (all kept) or 1 (one or more broken). The exit code is
+the primary signal (REVIEW-CHECKLIST §9). Offline-first: import-linter is a pinned
+dev dependency (`uv sync` installs it); the check never auto-fetches.
+
+Gated `has_backend` — the app-boundary contract is only meaningful when an `app/`
+package exists. The aspirational "checks-independence" contract is deferred.
+
+Decision references: Decision 1.2 (dotted codes), 3.2 (@register), 4.1
+(tier="standard"), carryover-cwd (cwd kwarg; subprocess rooted at cwd).
+"""
+
+from __future__ import annotations
+
+import re
+import time
+from pathlib import Path
+
+from harness.models import CheckResult, ErrorEnvelope
+from harness.proc import run as proc_run
+from harness.registry import register
+
+_DOCS_URL = "https://import-linter.readthedocs.io/"
+
+#: Matches an illegal-import edge line in import-linter's broken-contract output,
+#: e.g. "-   harness -> app (l.1)".
+_EDGE_RE = re.compile(r"^-\s+(\S+\s*->\s*\S+)", re.MULTILINE)
+#: Matches the "Contracts: N kept, M broken." summary line.
+_SUMMARY_RE = re.compile(r"Contracts:\s*\d+\s*kept,\s*(\d+)\s*broken")
+
+
+@register(
+    "arch.imports",
+    tier="standard",
+    category="arch",
+    description="Enforce import boundaries via import-linter (harness core must not import app)",
+    inputs=["harness/**", "app/**", "pyproject.toml"],
+    fixable=False,
+    tool="import-linter",
+)
+def check_arch_imports(cwd: Path) -> CheckResult:
+    """Run `uv run lint-imports` and surface the first broken import contract."""
+    start = time.monotonic()
+    try:
+        proc = proc_run(["uv", "run", "lint-imports"], cwd=cwd, timeout=120)
+    except FileNotFoundError:
+        return CheckResult(
+            check_id="arch.imports",
+            status="fail",
+            message="uv not found on PATH",
+            duration_ms=int((time.monotonic() - start) * 1000),
+            error=ErrorEnvelope(
+                code="arch.imports.tool-missing",
+                message="uv binary not found",
+                hint="Install uv (https://docs.astral.sh/uv/) or via mise, then run `uv sync`",
+                docs_url=_DOCS_URL,
+            ),
+        )
+
+    duration_ms = int((time.monotonic() - start) * 1000)
+    output = f"{proc.stdout}\n{proc.stderr}"
+
+    if proc.returncode == 0:
+        return CheckResult(
+            check_id="arch.imports",
+            status="pass",
+            message="import-linter: all import contracts kept",
+            duration_ms=duration_ms,
+        )
+
+    summary = _SUMMARY_RE.search(output)
+    if summary is None:
+        # No "N kept, M broken" line → import-linter could not run (missing
+        # contracts/config, unsynced venv). Surface honestly, don't pass silently.
+        return CheckResult(
+            check_id="arch.imports",
+            status="fail",
+            message=(
+                "import-linter did not run cleanly — is the venv synced and "
+                "[tool.importlinter] present in pyproject?"
+            ),
+            duration_ms=duration_ms,
+            error=ErrorEnvelope(
+                code="arch.imports.tool-error",
+                message=(proc.stderr.strip() or proc.stdout.strip() or "no contract summary")[:200],
+                hint="Run `uv sync` and `uv run lint-imports` to see the full error",
+                docs_url=_DOCS_URL,
+            ),
+        )
+
+    edge = _EDGE_RE.search(output)
+    illegal = edge.group(1).strip() if edge else "an illegal import"
+    broken = summary.group(1)
+    return CheckResult(
+        check_id="arch.imports",
+        status="fail",
+        message=f"{broken} import contract(s) broken; first illegal edge: {illegal}",
+        duration_ms=duration_ms,
+        error=ErrorEnvelope(
+            code="arch.imports.broken",
+            message=f"forbidden import: {illegal}"[:200],
+            hint=(
+                "Harness core must not import app/. Remove the import, or — if it is "
+                "a deliberate runtime edge like the fuzz harness — whitelist it under "
+                "`ignore_imports` in [tool.importlinter] in pyproject.toml."
+            ),
+            fix_command="uv run lint-imports",
+            docs_url=_DOCS_URL,
+        ),
+    )
