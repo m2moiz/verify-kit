@@ -41,6 +41,27 @@ class Settings(BaseSettings):
         description="X-VerifyKit-Token header value; unset enables dev fallback when ENV='dev'",
     )
 
+    def assert_deploy_ready(self) -> None:
+        """Raise if this configuration is unsafe to ship to production.
+
+        Deploy-readiness guard — fail closed. This is deliberately NOT a
+        construction-time validator: normal ``Settings()`` stays boot-tolerant
+        so ``/healthz`` keeps answering even in a misconfigured prod (the auth
+        dependency returns 503 at request time — see app/auth.py). This method
+        is the explicit *pre-deploy* check: a production environment MUST set
+        VERIFYKIT_AUTH_TOKEN, otherwise every authenticated route falls back to
+        a 503 and the API is effectively unusable once shipped.
+
+        The ``deploy.config`` harness check calls this against a synthetic
+        prod/no-token configuration and asserts it raises. Remove or weaken this
+        guard and ``deploy.config`` goes red (fail-open detected).
+        """
+        if self.ENV in {"prod", "production"} and not self.VERIFYKIT_AUTH_TOKEN:
+            raise ValueError(
+                "ENV=prod requires VERIFYKIT_AUTH_TOKEN to be set — refusing to "
+                "certify a production deploy with authentication unconfigured."
+            )
+
 
 def load(cwd: Path) -> Settings:
     """Load Settings, reading .env relative to the explicit cwd argument.

@@ -23,6 +23,9 @@ from harness.checks import typecheck as _typecheck  # noqa: F401
 # Backend slice check — imported for @register side-effect.
 from harness.checks import backend as _backend  # noqa: F401
 
+# Deploy-readiness checks (deploy.config + deploy.image_boots) — @register side-effect.
+from harness.checks import deploy as _deploy  # noqa: F401
+
 {% endif %}
 {% if has_llm %}
 # Optional eval check — imported for @register side-effect.
