@@ -22,6 +22,7 @@ Two autouse function-scope fixtures:
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 
 import httpx
@@ -45,7 +46,6 @@ def _litellm_vcr_httpx_session(request):
         yield
         return
 
-    import asyncio
     import litellm
 
     previous_aclient_session = getattr(litellm, "aclient_session", None)
