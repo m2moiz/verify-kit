@@ -1,7 +1,8 @@
 """harness.checks.web — web add-on verifier registrations.
 
-Eight checks: web.vitest, web.playwright, web.lighthouse, web.axe,
-web.lost_pixel, web.otel_trace, web.typecheck, web.console.
+Nine checks: web.vitest, web.playwright, web.lighthouse, web.axe,
+web.lost_pixel, web.otel_trace, web.typecheck, web.console, web.lint
+(plus web.api_client_fresh — a 10th, registered only when has_backend).
 
 FROZEN API contract: @register kwargs are `tier, category, description, inputs,
 fixable, tool, skip_if_unavailable`. NO `severity=`, NO `tags=`, NO MCP-level
@@ -1339,3 +1340,346 @@ def check_web_typecheck(cwd: Path) -> CheckResult:
             column=int(match.group("col")),
         ),
     )
+
+
+# ── web.lint ──────────────────────────────────────────────────────────────────
+
+# oxlint --format json emits a single JSON envelope:
+#   {"diagnostics": [{message, code, severity, url, help, filename,
+#                     labels: [{label?, span: {offset, length, line, column}}]}], ...}
+# The `code` field is `plugin(rule)`, e.g. `react-hooks(rules-of-hooks)` — parse
+# it to the bare rule so the envelope code is `web.lint.<rule>` (clickable).
+_OXLINT_CODE_RE = _re.compile(r"^(?P<plugin>[a-z-]+)\((?P<rule>[a-z0-9-]+)\)$")
+
+
+@register(
+    "web.lint",
+    tier="standard",
+    category="lint",
+    description=(
+        "JS/TS lint for web/ via oxlint "
+        "(rules-of-hooks, exhaustive-deps, no-explicit-any, ban-ts-comment)"
+    ),
+    inputs=[
+        "web/src/**/*.ts",
+        "web/src/**/*.tsx",
+        "web/.oxlintrc.json",
+        "web/package.json",
+    ],
+    fixable=True,
+    tool="oxlint",
+    skip_if_unavailable=True,  # oxlint may not be installed offline (no node_modules)
+)
+def check_web_lint(cwd: Path) -> CheckResult:
+    """Run oxlint over web/src to catch JS/TS lint defects tsc is blind to.
+
+    web.typecheck (`tsc --noEmit`) catches TYPE errors but is silent on React
+    rules-of-hooks, exhaustive-deps, `any` escape hatches, and `@ts-ignore`
+    suppressions. oxlint (a single Rust binary, +1 npm devDep) closes that gap.
+
+    Offline-first (subprocess discipline): oxlint is a Node tool, so we resolve
+    the LOCAL binary at web/node_modules/.bin/oxlint first. When it is absent
+    (offline, no `pnpm install`), the check returns status="skip" — never
+    auto-fetches and never fails a Docker-less / offline run (D8-A local-check
+    degradation; skip_if_unavailable=True). cwd=cwd/"web" + clean_env() mirror
+    the sibling web checks so pnpm/node resolve against the scaffold's own
+    toolchain.
+
+    On a non-zero oxlint exit, the FIRST `diagnostics[]` entry is parsed into a
+    clickable ErrorEnvelope (code="web.lint.<rule>", file/line/column from
+    labels[0].span). The `react-hooks` rules only fire because
+    .oxlintrc.json declares `"plugins": ["react", ...]` — without that array
+    they are SILENTLY off (the self-test's planted conditional hook catches a
+    regression here).
+    """
+    t0 = time.monotonic()
+
+    # Offline-first: skip when the LOCAL oxlint binary is not installed (no
+    # node_modules). We gate on the project-local bin only — `pnpm exec oxlint`
+    # resolves the scaffold's own oxlint against web/node_modules, so a global
+    # oxlint on PATH is not a usable substitute. NEVER auto-fetch — a missing
+    # toolchain is a skip, not a fail (same posture as web.typecheck's
+    # tsc_bin.exists() guard; skip_if_unavailable=True).
+    oxlint_bin = cwd / "web" / "node_modules" / ".bin" / "oxlint"
+    if not oxlint_bin.exists():
+        duration_ms = int((time.monotonic() - t0) * 1000)
+        return CheckResult(
+            check_id="web.lint",
+            status="skip",
+            duration_ms=duration_ms,
+            message=(
+                "web.lint: oxlint not found at web/node_modules/.bin/oxlint — "
+                "run `cd web && pnpm install` to enable the JS/TS lint gate "
+                "(offline-first: never auto-fetched)."
+            ),
+        )
+
+    result = proc_run(
+        ["pnpm", "exec", "oxlint", "-c", ".oxlintrc.json", "--format", "json", "src"],
+        cwd=cwd / "web",
+        env=clean_env(),
+        timeout=120.0,
+    )
+    duration_ms = int((time.monotonic() - t0) * 1000)
+
+    if result.returncode == 0:
+        return CheckResult(
+            check_id="web.lint",
+            status="pass",
+            duration_ms=duration_ms,
+        )
+
+    # Non-zero exit → lint findings (or an oxlint invocation error). oxlint
+    # writes the JSON envelope to stdout; parse the FIRST diagnostic.
+    try:
+        data = json.loads(result.stdout or "")
+        diag = (data.get("diagnostics") or [])[0]
+    except (json.JSONDecodeError, IndexError, TypeError):
+        # oxlint exited non-zero but emitted no parseable diagnostic (config
+        # error, crash, or empty envelope). Surface the output tail rather than
+        # a phantom pass.
+        diag_out = (result.stdout or "").strip() or (result.stderr or "").strip()
+        diag_tail = diag_out[-800:] if diag_out else "(no oxlint output captured)"
+        return CheckResult(
+            check_id="web.lint",
+            status="fail",
+            duration_ms=duration_ms,
+            error=ErrorEnvelope(
+                code="web.lint.run.failed",
+                message=(
+                    f"oxlint exited {result.returncode} "
+                    f"(no parseable diagnostic): {diag_tail}"
+                ),
+                hint="Run `cd web && pnpm exec oxlint -c .oxlintrc.json src` to see all findings",
+                fix_command="cd web && pnpm exec oxlint -c .oxlintrc.json --fix src",
+                docs_url="https://oxc.rs/docs/guide/usage/linter.html",
+            ),
+        )
+
+    # Parse the `plugin(rule)` code into the bare rule for the envelope suffix.
+    raw_code = str(diag.get("code") or "")
+    code_match = _OXLINT_CODE_RE.match(raw_code)
+    rule = code_match.group("rule") if code_match else (raw_code or "unknown")
+
+    labels = diag.get("labels") or []
+    span = (labels[0].get("span") if labels else None) or {}
+    return CheckResult(
+        check_id="web.lint",
+        status="fail",
+        duration_ms=duration_ms,
+        error=ErrorEnvelope(
+            code=f"web.lint.{rule}",
+            message=str(diag.get("message") or "oxlint reported a lint violation"),
+            hint=diag.get("help")
+            or "Fix the lint violation, or run `cd web && pnpm exec oxlint --fix src`",
+            fix_command="cd web && pnpm exec oxlint -c .oxlintrc.json --fix src",
+            docs_url=diag.get("url") or "https://oxc.rs/docs/guide/usage/linter.html",
+            file=diag.get("filename"),
+            line=span.get("line"),
+            column=span.get("column"),
+        ),
+    )
+{% if has_backend %}
+
+# ── web.api_client_fresh ────────────────────────────────────────────────────────
+
+#: Probe executed via ``uv run python -c`` inside the scaffold. It imports the
+#: scaffold's own FastAPI factory and dumps the OpenAPI schema as canonical JSON
+#: (sort_keys=True for a stable byte order). create_app().openapi() is a PURE
+#: call: the DB connect / OTel provider live ONLY in the ASGI ``lifespan`` ctx
+#: manager (runs on server startup), NOT on .openapi() — so no server, DB, or
+#: event loop is needed. The committed golden api-types.ts MUST be generated from
+#: this EXACT probe or the diff false-stales forever.
+_OPENAPI_DUMP_PROBE = (
+    "import json, sys\n"
+    "try:\n"
+    "    from app.main import create_app\n"
+    "except Exception:\n"
+    "    print('IMPORT_ERROR'); sys.exit(0)\n"
+    "schema = create_app().openapi()\n"
+    "sys.stdout.write(json.dumps(schema, sort_keys=True))\n"
+)
+
+
+@register(
+    "web.api_client_fresh",
+    tier="standard",
+    category="contract",
+    description="OpenAPI->TS client types are in sync (regenerate-and-diff api-types.ts)",
+    inputs=["app/**/*.py", "web/src/lib/api-types.ts"],
+    fixable=True,
+    tool="openapi-typescript",
+    skip_if_unavailable=True,  # openapi-typescript may not be installed offline
+)
+def check_web_api_client_fresh(cwd: Path) -> CheckResult:
+    """Fail when the committed TS API types have drifted from the FastAPI schema.
+
+    An agent that edits a Pydantic model but forgets to regenerate the TypeScript
+    client types ships a silent contract break — the frontend's typed API client
+    no longer matches the backend. This oracle catches it: dump the app's OpenAPI
+    schema OFFLINE, regenerate TS types into a temp file via the local
+    openapi-typescript binary, and diff against the committed
+    web/src/lib/api-types.ts. A non-empty diff = FAIL (web.api_client_fresh.stale).
+
+    Offline-first (subprocess discipline): openapi-typescript is a Node tool, so
+    we resolve the LOCAL binary at web/node_modules/.bin/openapi-typescript first.
+    When absent (offline, no `pnpm install`), the check returns status="skip" —
+    never auto-fetches (skip_if_unavailable=True). The dump runs at cwd; the
+    codegen runs at cwd/"web" + clean_env() so pnpm/node resolve against the
+    scaffold's own toolchain (REVIEW-CHECKLIST §1 cwd discipline).
+
+    Verdicts: schema dump reports IMPORT_ERROR (app not installed) → skip; local
+    bin absent → skip; codegen fails → fail (codegen_failed); no committed
+    baseline yet → skip (run `just regen-api-types` to activate the gate; the
+    template ships none because the generated TS varies per add-on combo);
+    regen != committed → fail (stale); identical → pass.
+    """
+    # Function-scoped (PLC0415): these are only used here, so importing them at
+    # module top would be an unused import in a has_web-only (no-backend) render
+    # where this whole block is jinja-excluded (rendered-scaffold ruff F401).
+    import contextlib  # noqa: PLC0415
+    import difflib  # noqa: PLC0415
+    import tempfile  # noqa: PLC0415
+
+    t0 = time.monotonic()
+
+    # Offline-first: skip when the LOCAL openapi-typescript binary is not present.
+    codegen_bin = cwd / "web" / "node_modules" / ".bin" / "openapi-typescript"
+    if not codegen_bin.exists():
+        return CheckResult(
+            check_id="web.api_client_fresh",
+            status="skip",
+            duration_ms=int((time.monotonic() - t0) * 1000),
+            message=(
+                "web.api_client_fresh: openapi-typescript not found at "
+                "web/node_modules/.bin/openapi-typescript — run `cd web && pnpm install` "
+                "to enable the OpenAPI->TS drift gate (offline-first: never auto-fetched)."
+            ),
+        )
+
+    # ── 1. Dump the OpenAPI schema OFFLINE (pure create_app().openapi() call) ──
+    try:
+        dump = proc_run(
+            ["uv", "run", "python", "-c", _OPENAPI_DUMP_PROBE],
+            cwd=cwd,
+            timeout=120.0,
+        )
+    except FileNotFoundError:
+        return CheckResult(
+            check_id="web.api_client_fresh",
+            status="skip",
+            duration_ms=int((time.monotonic() - t0) * 1000),
+            message="web.api_client_fresh: uv not found on PATH; run `uv sync` then retry.",
+        )
+
+    schema_json = (dump.stdout or "").strip()
+    if schema_json == "IMPORT_ERROR" or dump.returncode != 0 or not schema_json:
+        # app package not importable (no `uv pip install -e .`) → skip, never fail.
+        return CheckResult(
+            check_id="web.api_client_fresh",
+            status="skip",
+            duration_ms=int((time.monotonic() - t0) * 1000),
+            message=(
+                "web.api_client_fresh: app package not importable; run "
+                "`uv pip install -e .` (or `uv sync`) so the OpenAPI dump can "
+                "import app.main.create_app."
+            ),
+        )
+
+    # ── 2. Regenerate TS types into a temp file via the local Node binary ─────
+    # mkstemp returns a path with no open Python handle (avoids SIM115 and a
+    # locked-handle race with the openapi-typescript subprocess that writes it).
+    schema_fd, schema_path = tempfile.mkstemp(suffix=".json")
+    regen_fd, regen_path = tempfile.mkstemp(suffix=".ts")
+    os.close(schema_fd)
+    os.close(regen_fd)
+    try:
+        Path(schema_path).write_text(schema_json, encoding="utf-8")
+
+        codegen = proc_run(
+            ["pnpm", "exec", "openapi-typescript", schema_path, "-o", regen_path],
+            cwd=cwd / "web",
+            env=clean_env(),
+            timeout=120.0,
+        )
+        regen_ts = Path(regen_path).read_text(encoding="utf-8")
+        duration_ms = int((time.monotonic() - t0) * 1000)
+
+        if codegen.returncode != 0 or not regen_ts.strip():
+            diag = (codegen.stderr or "").strip() or (codegen.stdout or "").strip()
+            diag_tail = diag[-800:] if diag else "(no codegen output captured)"
+            return CheckResult(
+                check_id="web.api_client_fresh",
+                status="fail",
+                duration_ms=duration_ms,
+                error=ErrorEnvelope(
+                    code="web.api_client_fresh.codegen_failed",
+                    message=(
+                        f"openapi-typescript exited {codegen.returncode} "
+                        f"(no usable TS output): {diag_tail}"
+                    ),
+                    hint="Run `just regen-api-types` to regenerate web/src/lib/api-types.ts",
+                    fix_command="just regen-api-types",
+                    docs_url="https://openapi-ts.dev/",
+                ),
+            )
+
+        # ── 3. Read the committed golden + diff ───────────────────────────────
+        # No committed baseline yet → skip (day-1 green). The generated TS varies
+        # by add-on combo (has_db / has_llm / ... each inject routes into the
+        # OpenAPI schema), so the template ships no static baseline that could
+        # match every combo. The consumer commits a combo-correct baseline once
+        # via `just regen-api-types`, which activates the drift gate from then on.
+        committed_path = cwd / "web" / "src" / "lib" / "api-types.ts"
+        if not committed_path.exists():
+            return CheckResult(
+                check_id="web.api_client_fresh",
+                status="skip",
+                duration_ms=duration_ms,
+                message=(
+                    "web.api_client_fresh: no committed web/src/lib/api-types.ts "
+                    "baseline yet — run `just regen-api-types` to generate and "
+                    "commit it for this scaffold's add-on combo, which activates "
+                    "the OpenAPI->TS drift gate."
+                ),
+            )
+
+        committed_ts = committed_path.read_text(encoding="utf-8")
+        diff = list(
+            difflib.unified_diff(
+                committed_ts.splitlines(keepends=True),
+                regen_ts.splitlines(keepends=True),
+                fromfile="web/src/lib/api-types.ts (committed)",
+                tofile="web/src/lib/api-types.ts (regenerated)",
+            )
+        )
+
+        if diff:
+            diff_tail = "".join(diff)[-600:]
+            return CheckResult(
+                check_id="web.api_client_fresh",
+                status="fail",
+                duration_ms=duration_ms,
+                error=ErrorEnvelope(
+                    code="web.api_client_fresh.stale",
+                    message=(
+                        "OpenAPI->TS types drifted; api-types.ts is stale (a Pydantic "
+                        f"model changed but the TS client was not regenerated):\n{diff_tail}"
+                    ),
+                    hint="Regenerate then commit web/src/lib/api-types.ts",
+                    fix_command="just regen-api-types",
+                    docs_url="https://openapi-ts.dev/",
+                    file="web/src/lib/api-types.ts",
+                ),
+            )
+
+        return CheckResult(
+            check_id="web.api_client_fresh",
+            status="pass",
+            duration_ms=duration_ms,
+        )
+    finally:
+        for path in (schema_path, regen_path):
+            with contextlib.suppress(OSError):
+                os.unlink(path)
+{% endif %}

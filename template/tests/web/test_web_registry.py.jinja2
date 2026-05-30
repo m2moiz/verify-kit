@@ -3,9 +3,10 @@
 CONTRACT CONFORMANCE TEST — REVIEW-CHECKLIST §4 API-surface drift guard.
 
 This is the FROZEN API conformance check. It asserts:
-  1. Exactly 8 web.* checks registered (web.vitest, web.playwright,
-     web.lighthouse, web.axe, web.lost_pixel, web.otel_trace, web.typecheck,
-     web.console)
+  1. Exactly {% if has_backend %}10{% else %}9{% endif %} web.* checks registered
+     (web.vitest, web.playwright, web.lighthouse, web.axe, web.lost_pixel,
+     web.otel_trace, web.typecheck, web.console, web.lint{% if has_backend %},
+     web.api_client_fresh{% endif %})
   2. Per-check tier/category/fixable match the 07-RESEARCH.md table
   3. No @register calls in web.py use forbidden kwargs
   4. ErrorEnvelope has no 'fixable' field (regression guard)
@@ -38,7 +39,9 @@ _EXPECTED_CHECKS = {
     "web.otel_trace":  {"tier": "slow",     "category": "otel",     "fixable": False},
     "web.typecheck":   {"tier": "standard", "category": "typecheck", "fixable": False},
     "web.console":     {"tier": "standard", "category": "runtime",   "fixable": False},
-}
+    "web.lint":        {"tier": "standard", "category": "lint",      "fixable": True},
+{% if has_backend %}    "web.api_client_fresh": {"tier": "standard", "category": "contract", "fixable": True},
+{% endif %}}
 
 
 def _web_checks() -> dict:
@@ -47,15 +50,15 @@ def _web_checks() -> dict:
 
 
 def test_web_checks_registered_count() -> None:
-    """Exactly 8 web.* checks are registered after importing harness.checks."""
+    """Exactly {% if has_backend %}10{% else %}9{% endif %} web.* checks are registered after importing harness.checks."""
     web = _web_checks()
-    assert len(web) == 8, (
-        f"Expected exactly 8 web.* checks, got {len(web)}: {sorted(web.keys())}"
+    assert len(web) == {% if has_backend %}10{% else %}9{% endif %}, (
+        f"Expected exactly {% if has_backend %}10{% else %}9{% endif %} web.* checks, got {len(web)}: {sorted(web.keys())}"
     )
 
 
 def test_web_check_ids_all_present() -> None:
-    """All 8 expected check IDs are present in the registry."""
+    """All expected check IDs are present in the registry."""
     web = _web_checks()
     for check_id in _EXPECTED_CHECKS:
         assert check_id in web, (
