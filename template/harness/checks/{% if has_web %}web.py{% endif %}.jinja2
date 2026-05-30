@@ -1529,9 +1529,10 @@ def check_web_api_client_fresh(cwd: Path) -> CheckResult:
     scaffold's own toolchain (REVIEW-CHECKLIST §1 cwd discipline).
 
     Verdicts: schema dump reports IMPORT_ERROR (app not installed) → skip; local
-    bin absent → skip; codegen fails → fail (codegen_failed); committed file
-    missing → fail (missing_committed); regen != committed → fail (stale);
-    identical → pass.
+    bin absent → skip; codegen fails → fail (codegen_failed); no committed
+    baseline yet → skip (run `just regen-api-types` to activate the gate; the
+    template ships none because the generated TS varies per add-on combo);
+    regen != committed → fail (stale); identical → pass.
     """
     # Function-scoped (PLC0415): these are only used here, so importing them at
     # module top would be an unused import in a has_web-only (no-backend) render
@@ -1624,25 +1625,22 @@ def check_web_api_client_fresh(cwd: Path) -> CheckResult:
             )
 
         # ── 3. Read the committed golden + diff ───────────────────────────────
+        # No committed baseline yet → skip (day-1 green). The generated TS varies
+        # by add-on combo (has_db / has_llm / ... each inject routes into the
+        # OpenAPI schema), so the template ships no static baseline that could
+        # match every combo. The consumer commits a combo-correct baseline once
+        # via `just regen-api-types`, which activates the drift gate from then on.
         committed_path = cwd / "web" / "src" / "lib" / "api-types.ts"
         if not committed_path.exists():
             return CheckResult(
                 check_id="web.api_client_fresh",
-                status="fail",
+                status="skip",
                 duration_ms=duration_ms,
-                error=ErrorEnvelope(
-                    code="web.api_client_fresh.missing_committed",
-                    message=(
-                        "web/src/lib/api-types.ts is missing — the committed TS API "
-                        "types baseline does not exist"
-                    ),
-                    hint=(
-                        "Run `just regen-api-types` to generate and commit "
-                        "web/src/lib/api-types.ts"
-                    ),
-                    fix_command="just regen-api-types",
-                    docs_url="https://openapi-ts.dev/",
-                    file="web/src/lib/api-types.ts",
+                message=(
+                    "web.api_client_fresh: no committed web/src/lib/api-types.ts "
+                    "baseline yet — run `just regen-api-types` to generate and "
+                    "commit it for this scaffold's add-on combo, which activates "
+                    "the OpenAPI->TS drift gate."
                 ),
             )
 

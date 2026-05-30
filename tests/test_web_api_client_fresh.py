@@ -15,7 +15,8 @@ canned stdout / writes canned TS):
 - skip when the dump reports IMPORT_ERROR (app not installed)
 - skip when the local openapi-typescript bin is absent (offline-first)
 - fail (codegen_failed) when openapi-typescript exits non-zero
-- fail (missing_committed) when web/src/lib/api-types.ts is absent
+- skip when web/src/lib/api-types.ts is absent (no baseline yet; the template
+  ships none because the generated TS varies per add-on combo)
 
 The real end-to-end forcing function (render a has_web+has_backend scaffold →
 mutate a Pydantic field → web.api_client_fresh goes RED → regen → GREEN) is
@@ -230,19 +231,21 @@ def test_codegen_failure_is_flagged(
     assert result.error.code == "web.api_client_fresh.codegen_failed"
 
 
-def test_missing_committed_golden_is_flagged(
+def test_missing_committed_baseline_skips(
     api_client_modules, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     registry, web_mod = api_client_modules
     spec = registry.get_check("web.api_client_fresh")
     _install_bin(tmp_path)
-    # No _committed_golden call → web/src/lib/api-types.ts is absent.
+    # No _committed_golden call → web/src/lib/api-types.ts is absent → skip
+    # (day-1 green; the template ships no static baseline because the generated
+    # TS varies per add-on combo; the consumer activates the gate via
+    # `just regen-api-types`).
     monkeypatch.setattr(
         web_mod,
         "proc_run",
         _fake_proc_factory(dump_stdout=_SCHEMA, regen_ts=_GOLDEN_TS),
     )
     result = spec.fn(cwd=tmp_path)
-    assert result.status == "fail"
-    assert result.error is not None
-    assert result.error.code == "web.api_client_fresh.missing_committed"
+    assert result.status == "skip"
+    assert result.error is None
