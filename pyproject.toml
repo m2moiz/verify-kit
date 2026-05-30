@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "verify-kit"
-version = "0.2.1"
+version = "0.3.0"
 description = "Reusable Copier-based scaffold template with self-verifiable agentic-coding harness"
 readme = "README.md"
 license = { text = "MIT" }
