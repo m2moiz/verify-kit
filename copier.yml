@@ -35,6 +35,7 @@ _exclude:
   - "{% if not has_backend %}docker-compose.yml{% endif %}"
   - "{% if not has_backend %}.dockerignore{% endif %}"
   - "{% if not has_backend %}harness/checks/arch.py{% endif %}"
+  - "{% if not has_backend %}harness/checks/deploy.py{% endif %}"
   - "{% if not has_db %}alembic{% endif %}"
   - "{% if not has_db %}alembic/**{% endif %}"
   - "{% if not has_db %}alembic.ini{% endif %}"
