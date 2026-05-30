@@ -29,8 +29,6 @@ from __future__ import annotations
 import tomllib
 from pathlib import Path
 
-import pytest
-
 from tests._helpers import render_scratch_project
 
 _BASE: dict[str, object] = {
