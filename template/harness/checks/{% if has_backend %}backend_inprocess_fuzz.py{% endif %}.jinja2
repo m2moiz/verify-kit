@@ -132,7 +132,10 @@ def main() -> int:
     # 100 examples per operation regardless of the CLI flag, and the success
     # banner below misreports honored count. Phase 4 04-VALIDATION.md GAP-06.
     schema.config.generation.update(max_examples=args.max_examples)
-    engine = schemathesis.engine.from_schema(schema)
+    # `schemathesis.engine` is a valid runtime submodule (imported above); pyright
+    # cannot resolve it as an attribute of the top-level package (stub gap, not a
+    # bug). Coded suppression keeps `typecheck.python` green.
+    engine = schemathesis.engine.from_schema(schema)  # pyright: ignore[reportAttributeAccessIssue]
 
     # Iterate the engine event stream. Failures appear as SuiteFinished or
     # ScenarioFinished events with status=FAILURE or ERROR.

@@ -85,6 +85,10 @@ dev = [
     "ruff>=0.6",
     "hypothesis>=6.100",
     "jsonschema>=4.23",
+    # Static type checking surfaced by the `typecheck.python` check (standard
+    # mode). pyright bundles its own Node via nodejs-wheel — no Node dep on a
+    # pure-Python scaffold.
+    "pyright>=1.1.405",
 {% if has_backend %}
     "pytest-asyncio>=0.24",
     "httpx>=0.27",
@@ -147,3 +151,13 @@ extend-ignore = ["B008"]
 # semantics in the opposite polarity from the one currently rendered.
 "app/api.py" = ["I001"]
 "harness/checks/__init__.py" = ["I001"]
+
+[tool.pyright]
+# Surfaced by the `typecheck.python` check (standard mode). Scope to the
+# project's own code; the .venv, tests, and generated dirs are excluded by
+# default. Keep this aligned with the check's targets.
+include = ["harness"{% if has_backend %}, "app"{% endif %}]
+typeCheckingMode = "standard"
+pythonVersion = "3.13"
+venvPath = "."
+venv = ".venv"

@@ -17,6 +17,10 @@ format:
     uv run ruff format .
     @command -v pnpm >/dev/null 2>&1 && pnpm dlx @biomejs/biome format --write . || true
 
+# Static type-check (pyright standard mode) via the harness check
+typecheck:
+    uv run verify-kit verify --check=typecheck.python
+
 # Drop into a subshell with the mise-managed env activated
 shell:
     mise exec -- $SHELL
