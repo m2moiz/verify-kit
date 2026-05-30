@@ -150,13 +150,15 @@ def get_tool_version(tool: str | None) -> str:
             return version(tool)
         except PackageNotFoundError:
             pass
-    except Exception:
+    except Exception:  # noqa: S110
+        # best-effort version probe; failure -> 'unknown'
         pass
     try:
-        r = subprocess.run([tool, "--version"], capture_output=True, text=True, timeout=2)
+        r = subprocess.run([tool, "--version"], capture_output=True, text=True, timeout=2)  # noqa: S603
         if r.returncode == 0 and r.stdout.strip():
             return r.stdout.strip().split()[-1]
-    except Exception:
+    except Exception:  # noqa: S110
+        # best-effort version probe; failure -> 'unknown'
         pass
     return "unknown"
 

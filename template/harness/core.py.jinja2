@@ -41,7 +41,7 @@ def list_checks() -> list[str]:
     return [s.check_id for s in registry_list_checks()]
 
 
-def verify(
+def verify(  # noqa: C901
     check_ids: list[str] | None = None,
     fix: bool = False,
     tier: str = "standard",

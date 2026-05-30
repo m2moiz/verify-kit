@@ -40,9 +40,7 @@ def _should_use_json() -> bool:
         return True
     if os.environ.get("CI"):
         return True
-    if not sys.stderr.isatty():
-        return True
-    return False
+    return bool(not sys.stderr.isatty())
 
 
 def _add_trace_id(_logger: Any, _method: str, event_dict: dict[str, Any]) -> dict[str, Any]:

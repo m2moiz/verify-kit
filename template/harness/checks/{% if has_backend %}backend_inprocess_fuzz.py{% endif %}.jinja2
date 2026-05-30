@@ -21,7 +21,7 @@ import sys
 from pathlib import Path
 
 
-def main() -> int:
+def main() -> int:  # noqa: C901
     """Run schemathesis fuzz against the in-process FastAPI app and return an exit code."""
     parser = argparse.ArgumentParser(
         description="Run schemathesis fuzz against the FastAPI app in-process."
@@ -142,13 +142,12 @@ def main() -> int:
     # ScenarioFinished events with status=FAILURE or ERROR.
     suite_failures: list[str] = []
     for event in engine.execute():
-        if isinstance(event, ev.SuiteFinished):
-            if event.status in (Status.FAILURE, Status.ERROR):
-                # SuiteFinished exposes `phase` (PhaseName enum), not `label`.
-                # Scenario-level labels live on ScenarioFinished events.
-                suite_failures.append(
-                    f"Suite phase={event.phase.name} finished with status={event.status.name}"
-                )
+        if isinstance(event, ev.SuiteFinished) and event.status in (Status.FAILURE, Status.ERROR):
+            # SuiteFinished exposes `phase` (PhaseName enum), not `label`.
+            # Scenario-level labels live on ScenarioFinished events.
+            suite_failures.append(
+                f"Suite phase={event.phase.name} finished with status={event.status.name}"
+            )
         if isinstance(event, ev.EngineFinished):
             # Engine completed; stop_reason == COMPLETED means no early abort.
             pass

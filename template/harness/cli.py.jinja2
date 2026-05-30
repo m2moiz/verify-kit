@@ -148,7 +148,7 @@ def _write_disk_artifacts(report: VerifyReport, cwd: Path) -> Exception | None:
 
 
 @app.command()
-def verify(
+def verify(  # noqa: C901
     fix: bool = typer.Option(False, "--fix/--no-fix", help="Run fixers (Phase 2: metadata-only)."),
     quick: bool = typer.Option(False, "--quick", help="Run only tier='quick' specs."),
     full: bool = typer.Option(False, "--full", help="Run all specs (quick + standard + slow)."),

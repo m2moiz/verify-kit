@@ -77,7 +77,7 @@ def _is_source_path(path: str) -> bool:
 
 def _git_names(cwd: Path, diff_filter: str) -> list[str]:
     """Return `git diff HEAD --diff-filter=<f> --name-only` paths (may raise)."""
-    proc = subprocess.run(
+    proc = subprocess.run(  # noqa: S603, S607
         ["git", "-C", str(cwd), "diff", "HEAD", f"--diff-filter={diff_filter}", "--name-only"],
         capture_output=True,
         text=True,
@@ -109,7 +109,7 @@ def check_fixloop_oracle_preserved(cwd: Path) -> CheckResult:
     start = time.monotonic()
     try:
         # `git rev-parse --git-dir` is the cheap "is this a git repo?" probe.
-        probe = subprocess.run(
+        probe = subprocess.run(  # noqa: S603, S607
             ["git", "-C", str(cwd), "rev-parse", "--git-dir"],
             capture_output=True,
             text=True,

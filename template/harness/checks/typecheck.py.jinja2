@@ -22,6 +22,7 @@ Decision references: Decision 1.2 (dotted codes), 3.2 (@register), 4.1
 
 from __future__ import annotations
 
+import contextlib
 import json
 import subprocess
 import time
@@ -46,7 +47,7 @@ def check_typecheck_python(cwd: Path) -> CheckResult:
     """Run `uv run pyright --outputjson` and surface the first type error."""
     start = time.monotonic()
     try:
-        proc = subprocess.run(
+        proc = subprocess.run(  # noqa: S607
             ["uv", "run", "pyright", "--outputjson"],
             capture_output=True,
             text=True,
@@ -105,10 +106,8 @@ def check_typecheck_python(cwd: Path) -> CheckResult:
     first = errors[0]
     rng = first.get("range", {}).get("start", {})
     rel = first.get("file", "")
-    try:
+    with contextlib.suppress(ValueError):
         rel = str(Path(rel).relative_to(cwd))
-    except ValueError:
-        pass
     rule = first.get("rule") or "error"
     line = int(rng.get("line", 0)) + 1
     column = int(rng.get("character", 0)) + 1

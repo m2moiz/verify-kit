@@ -100,7 +100,7 @@ def _ensure_web_build(cwd: Path) -> tuple[bool, str]:
     dist_dir = cwd / "web" / "dist"
     if (
         _LAST_WEB_BUILD_FINGERPRINT is not None
-        and _LAST_WEB_BUILD_FINGERPRINT == fingerprint
+        and fingerprint == _LAST_WEB_BUILD_FINGERPRINT
         and dist_dir.exists()
     ):
         # Identical sources already built in this process — skip the rebuild.
@@ -296,8 +296,9 @@ def check_web_lighthouse(cwd: Path) -> CheckResult:
 
     # PERF-04: precondition — refuse if target looks like vite dev (HMR markers)
     try:
-        req = urllib.request.Request(target_url, method="HEAD")
-        with urllib.request.urlopen(req, timeout=5) as resp:
+        # target_url is a harness-controlled localhost preview URL
+        req = urllib.request.Request(target_url, method="HEAD")  # noqa: S310
+        with urllib.request.urlopen(req, timeout=5) as resp:  # noqa: S310
             server_hdr = resp.headers.get("Server", "")
             etag_hdr = resp.headers.get("ETag", "")
             if "Vite" in server_hdr or "vite" in etag_hdr.lower():
@@ -615,8 +616,18 @@ def check_web_lost_pixel(cwd: Path) -> CheckResult:
             # inside the lostpixel container can reach this preview server.
             # Without 0.0.0.0, vite only listens on 127.0.0.1 (loopback) which
             # is unreachable from Docker containers via host.docker.internal.
-            ["pnpm", "--dir", "web", "exec", "vite", "preview",
-             "--port", "3000", "--host", "0.0.0.0"],
+            [
+                "pnpm",
+                "--dir",
+                "web",
+                "exec",
+                "vite",
+                "preview",
+                "--port",
+                "3000",
+                "--host",
+                "0.0.0.0",  # noqa: S104
+            ],
             cwd=str(cwd),
             env={**clean_env(), "FORCE_COLOR": "0"},
             stdout=subprocess.DEVNULL,
@@ -756,7 +767,7 @@ def check_web_lost_pixel(cwd: Path) -> CheckResult:
     tool="playwright",
     skip_if_unavailable=True,
 )
-def check_web_otel_trace(cwd: Path) -> CheckResult:
+def check_web_otel_trace(cwd: Path) -> CheckResult:  # noqa: C901
     """Assert the browser→FastAPI→DB trace connected end-to-end.
 
     Runtime-gated (P9-06): registered unconditionally; returns a LOUD
