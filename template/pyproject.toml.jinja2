@@ -126,19 +126,26 @@ line-length = 100
 target-version = "py313"
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "UP", "B"]
+# D = docstring presence + pydocstyle-google content (public API; v0.3 strictness gate).
+# PGH = ban blanket type:ignore/noqa (the escape hatch must carry a rule code).
+# ASYNC = async correctness. SIM/RET/S (bandit) tracked as a separate ruleset-expansion follow-up.
+select = ["E", "F", "I", "UP", "B", "D", "ASYNC", "PGH"]
 # FastAPI Depends/Query and Typer Option/Argument require call-in-default by design.
 extend-ignore = ["B008"]
 
+[tool.ruff.lint.pydocstyle]
+# Google convention auto-disables the conflicting D203/D211 and D212/D213 pairs.
+convention = "google"
+
 [tool.ruff.lint.per-file-ignores]
-# Test files: blind-exception asserts, intentional name-bindings, and long
-# parametrize lines are idiomatic.
-"tests/*" = ["B017", "F841", "E501", "E402"]
+# Test files: blind-exception asserts, intentional name-bindings, long parametrize
+# lines, and docstring-presence are idiomatic; tests document via test names.
+"tests/*" = ["B017", "F841", "E501", "E402", "D"]
 {% if has_db %}
 # Alembic auto-generated migrations and the env.py bootstrap have their own
 # conventions (sys.path manipulation before imports; long revision strings).
-"alembic/env.py" = ["E402"]
-"alembic/versions/*" = ["E501"]
+"alembic/env.py" = ["E402", "D"]
+"alembic/versions/*" = ["E501", "D"]
 {% endif %}
 # CLI help strings, embedded SQL, and MCP tool docstrings are intentionally
 # long for readability at the call site.
