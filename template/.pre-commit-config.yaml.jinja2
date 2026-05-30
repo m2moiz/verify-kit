@@ -15,7 +15,7 @@ repos:
         args: [--maxkb=500]
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.6.9
+    rev: v0.15.15
     hooks:
       - id: ruff
         args: [--fix]
@@ -26,7 +26,7 @@ repos:
   # Full-repo type-check runs in .github/workflows/ci.yml via `just verify`.
   # Skip for a single commit: SKIP=pyright git commit
   - repo: https://github.com/RobertCraigie/pyright-python
-    rev: v1.1.385
+    rev: v1.1.409
     hooks:
       - id: pyright
         # Default behavior already targets staged files. We pin the

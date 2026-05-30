@@ -1184,7 +1184,7 @@ def test_web_harness_registry_smoke(tmp_path: Path) -> None:
             (
                 "from harness.registry import list_checks; "
                 "ids = sorted(c.check_id for c in list_checks()); "
-                "expected = ['web.axe', 'web.lighthouse', 'web.lost_pixel', "
+                "expected = ['web.axe', 'web.console', 'web.lighthouse', 'web.lost_pixel', "
                 "            'web.otel_trace', 'web.playwright', 'web.typecheck', 'web.vitest']; "
                 "missing = [x for x in expected if x not in ids]; "
                 "assert not missing, f'Missing web checks: {missing}'"
