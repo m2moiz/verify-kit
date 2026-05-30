@@ -57,6 +57,7 @@ Design notes:
 Lives at the repo top-level (NOT under tests/web/) per REVIEW-CHECKLIST §7 —
 tests/web/ is a harness pytest-invocation target and we must not recurse.
 """
+
 from __future__ import annotations
 
 import json
@@ -138,9 +139,7 @@ def test_web_polarity_directory_presence(tmp_path: Path, has_web: bool) -> None:
         assert (web_dir / ".gitkeep").is_file(), (
             "web/.gitkeep must exist when has_web=True"
         )
-        assert harness_web_dir.is_dir(), (
-            "harness/web/ must exist when has_web=True"
-        )
+        assert harness_web_dir.is_dir(), "harness/web/ must exist when has_web=True"
         assert (harness_web_dir / ".gitkeep").is_file(), (
             "harness/web/.gitkeep must exist when has_web=True"
         )
@@ -194,7 +193,9 @@ def test_web_false_no_dotfile_leaks(tmp_path: Path) -> None:
     leaked_harness_web_dotfiles_deep = list(scratch.rglob("harness/web/**/.*"))
     assert not leaked_harness_web_dotfiles_deep, (
         "Deep dotfiles leaked under harness/web/**/ when has_web=False:\n"
-        + "\n".join(f"  {p.relative_to(scratch)}" for p in leaked_harness_web_dotfiles_deep)
+        + "\n".join(
+            f"  {p.relative_to(scratch)}" for p in leaked_harness_web_dotfiles_deep
+        )
     )
 
 
@@ -409,7 +410,15 @@ def test_web_tailwind_shadcn_baseline(tmp_path: Path) -> None:
     ui_dir = web_dir / "src" / "components" / "ui"
     assert ui_dir.is_dir(), f"src/components/ui/ dir missing from scaffold at {ui_dir}"
     ui_files = {f.stem for f in ui_dir.iterdir() if f.suffix == ".tsx"}
-    expected_components = {"button", "card", "input", "label", "dialog", "sheet", "sonner"}
+    expected_components = {
+        "button",
+        "card",
+        "input",
+        "label",
+        "dialog",
+        "sheet",
+        "sonner",
+    }
     assert ui_files == expected_components, (
         f"Vendored component mismatch.\n"
         f"  Expected: {sorted(expected_components)}\n"
@@ -446,7 +455,9 @@ def test_web_tailwind_shadcn_baseline(tmp_path: Path) -> None:
         (True, True),
     ],
 )
-def test_web_backend_four_combos(tmp_path: Path, has_web: bool, has_backend: bool) -> None:
+def test_web_backend_four_combos(
+    tmp_path: Path, has_web: bool, has_backend: bool
+) -> None:
     """Plan 07-04: All 4 (has_web x has_backend) polarity combos render correctly.
 
     Asserts the following matrix of structural properties:
@@ -529,9 +540,9 @@ def test_web_backend_four_combos(tmp_path: Path, has_web: bool, has_backend: boo
             "src/lib/events.ts must exist when has_web=True and has_backend=True "
             "(SSE bypass-proxy subscriber; Pitfall §5)"
         )
-        assert "http://localhost:8000/__debug/events" in events_ts.read_text(encoding="utf-8"), (
-            "events.ts must use absolute URL to bypass Vite proxy buffering (Pitfall §5)"
-        )
+        assert "http://localhost:8000/__debug/events" in events_ts.read_text(
+            encoding="utf-8"
+        ), "events.ts must use absolute URL to bypass Vite proxy buffering (Pitfall §5)"
         assert sse_spec.is_file(), (
             "tests/e2e/sse.spec.ts must exist when has_web=True and has_backend=True "
             "(DEV-W03 / ROADMAP SC-2 SSE assertion; gated by same guard as events.ts)"
@@ -678,7 +689,9 @@ def test_web_vitest_and_playwright(tmp_path: Path) -> None:
     # ── Tier 2b: OTel-present assertions (TRACE-01 / TRACE-02 — Plan 07-08) ──
     # The production web package.json must contain the OTel SDK packages.
     pkg_json = web_dir / "package.json"
-    assert pkg_json.is_file(), f"package.json missing from rendered scaffold: {pkg_json}"
+    assert pkg_json.is_file(), (
+        f"package.json missing from rendered scaffold: {pkg_json}"
+    )
     pkg_text = pkg_json.read_text(encoding="utf-8")
     assert "@opentelemetry/sdk-trace-web" in pkg_text, (
         "Rendered web/package.json does not contain '@opentelemetry/sdk-trace-web'. "
@@ -719,7 +732,9 @@ def test_web_vitest_and_playwright(tmp_path: Path) -> None:
 
     # main.tsx must call initOtel() before createRoot.
     main_tsx = web_dir / "src" / "main.tsx"
-    assert main_tsx.is_file(), f"src/main.tsx missing from rendered scaffold: {main_tsx}"
+    assert main_tsx.is_file(), (
+        f"src/main.tsx missing from rendered scaffold: {main_tsx}"
+    )
     assert "initOtel" in main_tsx.read_text(encoding="utf-8"), (
         "src/main.tsx does not call initOtel(). "
         "OTel must be initialised before React mounts (Plan 07-08)."
@@ -807,8 +822,12 @@ def test_web_ci_matrix_shape() -> None:
     """
     import yaml
 
-    workflow_path = Path(__file__).parent.parent / ".github" / "workflows" / "template-selftest.yml"
-    assert workflow_path.is_file(), f"template-selftest.yml not found at {workflow_path}"
+    workflow_path = (
+        Path(__file__).parent.parent / ".github" / "workflows" / "template-selftest.yml"
+    )
+    assert workflow_path.is_file(), (
+        f"template-selftest.yml not found at {workflow_path}"
+    )
 
     with open(workflow_path, encoding="utf-8") as f:
         workflow = yaml.safe_load(f)
@@ -913,9 +932,16 @@ def test_web_preset_schema_coverage() -> None:
     assert presets_dir.is_dir(), f"presets/ directory not found at {presets_dir}"
 
     COPIER_INTERNAL_KEYS = {
-        "_subdirectory", "_jinja_extensions", "_answers_file",
-        "_templates_suffix", "_min_copier_version", "_envops",
-        "_exclude", "_tasks", "_message_before_copy", "_message_after_copy",
+        "_subdirectory",
+        "_jinja_extensions",
+        "_answers_file",
+        "_templates_suffix",
+        "_min_copier_version",
+        "_envops",
+        "_exclude",
+        "_tasks",
+        "_message_before_copy",
+        "_message_after_copy",
     }
     SCHEMA_VERSION = "0.2"
 
@@ -931,7 +957,9 @@ def test_web_preset_schema_coverage() -> None:
             continue
         prompt_keys.add(key)
 
-    assert prompt_keys, "No prompt keys found in copier.yml — check COPIER_INTERNAL_KEYS filter"
+    assert prompt_keys, (
+        "No prompt keys found in copier.yml — check COPIER_INTERNAL_KEYS filter"
+    )
 
     preset_files = sorted(presets_dir.glob("*.yml"))
     preset_files = [p for p in preset_files if not p.name.endswith(".local.yml")]
@@ -964,8 +992,8 @@ def test_web_preset_schema_coverage() -> None:
                 f"{preset_path.name}: surplus keys (typo?): {sorted(surplus_keys)}"
             )
 
-    assert not errors, (
-        "Preset schema check failed:\n" + "\n".join(f"  {e}" for e in errors)
+    assert not errors, "Preset schema check failed:\n" + "\n".join(
+        f"  {e}" for e in errors
     )
 
 
@@ -989,7 +1017,9 @@ def test_web_otel_bundle_budget(tmp_path: pytest.TempPathFactory) -> None:
     import gzip
 
     if os.environ.get("VERIFY_KIT_SKIP_BUNDLE_BUDGET") == "1":
-        pytest.skip("VERIFY_KIT_SKIP_BUNDLE_BUDGET=1 — skipping double-build OTel budget guard")
+        pytest.skip(
+            "VERIFY_KIT_SKIP_BUNDLE_BUDGET=1 — skipping double-build OTel budget guard"
+        )
 
     scratch = _render(tmp_path, has_web=True)
     web_dir = scratch / "web"
@@ -1025,7 +1055,10 @@ def test_web_otel_bundle_budget(tmp_path: pytest.TempPathFactory) -> None:
     size_a = _gzip_js_size(web_dir / "dist")
 
     # ── Build B: OTel active (exporter endpoint set) ──────────────────────────
-    otel_env = {**_CLEAN_ENV, "VITE_OTEL_EXPORTER_OTLP_ENDPOINT": "http://localhost:4318/v1/traces"}
+    otel_env = {
+        **_CLEAN_ENV,
+        "VITE_OTEL_EXPORTER_OTLP_ENDPOINT": "http://localhost:4318/v1/traces",
+    }
     subprocess.run(
         ["pnpm", "build"],
         cwd=str(web_dir),
@@ -1118,7 +1151,7 @@ def test_web_harness_registry_smoke(tmp_path: Path) -> None:
 
     Assertions:
       1. Registry smoke: python -c 'from harness.registry import list_checks;...'
-         returns all 6 web.* check IDs.
+         returns all 7 web.* check IDs.
       2. scaffold pytest tests/web/ passes (4 adapter + registry tests).
       3. Forbidden-kwarg guard: web.py has zero severity=/tags=/readOnlyHint= etc.
       4. ErrorEnvelope(fixable=) guard: no adapters pass fixable= to ErrorEnvelope.
@@ -1146,12 +1179,13 @@ def test_web_harness_registry_smoke(tmp_path: Path) -> None:
     # --- Assertion 1: Registry smoke ----------------------------------------
     registry_check = subprocess.run(
         [
-            "python", "-c",
+            "python",
+            "-c",
             (
                 "from harness.registry import list_checks; "
                 "ids = sorted(c.check_id for c in list_checks()); "
                 "expected = ['web.axe', 'web.lighthouse', 'web.lost_pixel', "
-                "            'web.otel_trace', 'web.playwright', 'web.vitest']; "
+                "            'web.otel_trace', 'web.playwright', 'web.typecheck', 'web.vitest']; "
                 "missing = [x for x in expected if x not in ids]; "
                 "assert not missing, f'Missing web checks: {missing}'"
             ),
@@ -1186,7 +1220,13 @@ def test_web_harness_registry_smoke(tmp_path: Path) -> None:
     assert web_py.is_file(), f"harness/checks/web.py not found in scaffold at {web_py}"
     web_py_text = web_py.read_text(encoding="utf-8")
 
-    forbidden_kwargs = ["severity=", "tags=", "readOnlyHint=", "destructiveHint=", "destructive="]
+    forbidden_kwargs = [
+        "severity=",
+        "tags=",
+        "readOnlyHint=",
+        "destructiveHint=",
+        "destructive=",
+    ]
     for kw in forbidden_kwargs:
         # Check only within actual @register call blocks (not docstring comments)
         register_calls = re.findall(r"@register\((.*?)\)", web_py_text, re.DOTALL)
@@ -1244,6 +1284,7 @@ def test_web_vscode_presence(tmp_path: Path) -> None:
 
     # Validate JSON and content
     import json as _json
+
     ext_data = _json.loads(extensions_json.read_text(encoding="utf-8"))
     recs = ext_data.get("recommendations", [])
     assert "bradlc.vscode-tailwindcss" in recs, (
@@ -1286,9 +1327,8 @@ def test_web_vscode_no_leak(tmp_path: Path) -> None:
     # .vscode/ ships for all scaffold types; we only care about web/.vscode/).
     web_dir = scratch / "web"
     leaked = list(web_dir.rglob(".vscode")) if web_dir.exists() else []
-    assert not leaked, (
-        "web/.vscode files leaked when has_web=False:\n"
-        + "\n".join(f"  {p.relative_to(scratch)}" for p in leaked)
+    assert not leaked, "web/.vscode files leaked when has_web=False:\n" + "\n".join(
+        f"  {p.relative_to(scratch)}" for p in leaked
     )
 
 
@@ -1388,8 +1428,12 @@ def test_web_preset_render_and_schedule() -> None:
     import yaml
 
     # Resolve workflow path from this test file — cwd-safe (REVIEW-CHECKLIST §1).
-    workflow_path = Path(__file__).parent.parent / ".github" / "workflows" / "template-selftest.yml"
-    assert workflow_path.is_file(), f"template-selftest.yml not found at {workflow_path}"
+    workflow_path = (
+        Path(__file__).parent.parent / ".github" / "workflows" / "template-selftest.yml"
+    )
+    assert workflow_path.is_file(), (
+        f"template-selftest.yml not found at {workflow_path}"
+    )
 
     with open(workflow_path, encoding="utf-8") as f:
         workflow = yaml.safe_load(f)

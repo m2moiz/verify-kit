@@ -7,6 +7,7 @@ Shared test helpers for Phase 2+ verify-kit tests.
 Every test that needs a rendered scaffold imports from this module rather
 than inventing its own `copier` invocation. See Plan 02-01, Task 0.
 """
+
 from __future__ import annotations
 
 import os
@@ -53,6 +54,8 @@ _KNOWN_DEFAULTS: dict[str, Any] = {
     "llm_backend": "none",
     # Phase 7 add-ons (v0.2+)
     "has_web": False,
+    # Tier C strict mode (opt-in; default off keeps standard render green)
+    "strict_mode": False,
 }
 
 

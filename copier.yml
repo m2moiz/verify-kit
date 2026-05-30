@@ -229,6 +229,11 @@ llm_backend:
 
 # ── Group: Optional ───────────────────────────────────────────────────────────
 
+strict_mode:
+  type: bool
+  help: "Enable strict enforcement (pyright `strict`). Default off keeps velocity — lint + format + typecheck-standard stay enforced regardless."
+  default: false
+
 has_devcontainer:
   type: bool
   help: "Include .devcontainer/devcontainer.json with mise Feature (opt-in only)."

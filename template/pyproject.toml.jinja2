@@ -157,7 +157,7 @@ extend-ignore = ["B008"]
 # project's own code; the .venv, tests, and generated dirs are excluded by
 # default. Keep this aligned with the check's targets.
 include = ["harness"{% if has_backend %}, "app"{% endif %}]
-typeCheckingMode = "standard"
+typeCheckingMode = "{{ 'strict' if strict_mode else 'standard' }}"
 pythonVersion = "3.13"
 venvPath = "."
 venv = ".venv"

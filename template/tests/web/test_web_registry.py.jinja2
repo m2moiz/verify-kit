@@ -3,8 +3,8 @@
 CONTRACT CONFORMANCE TEST — REVIEW-CHECKLIST §4 API-surface drift guard.
 
 This is the FROZEN API conformance check. It asserts:
-  1. Exactly 6 web.* checks registered (web.vitest, web.playwright,
-     web.lighthouse, web.axe, web.lost_pixel, web.otel_trace)
+  1. Exactly 7 web.* checks registered (web.vitest, web.playwright,
+     web.lighthouse, web.axe, web.lost_pixel, web.otel_trace, web.typecheck)
   2. Per-check tier/category/fixable match the 07-RESEARCH.md table
   3. No @register calls in web.py use forbidden kwargs
   4. ErrorEnvelope has no 'fixable' field (regression guard)
@@ -29,12 +29,13 @@ from harness.registry import list_checks
 # ── Expected per-check config table (07-RESEARCH.md §`harness/checks/web.py`) ─
 
 _EXPECTED_CHECKS = {
-    "web.vitest":      {"tier": "standard", "category": "test",   "fixable": False},
-    "web.playwright":  {"tier": "standard", "category": "test",   "fixable": False},
-    "web.lighthouse":  {"tier": "slow",     "category": "perf",   "fixable": False},
-    "web.axe":         {"tier": "standard", "category": "a11y",   "fixable": True},
-    "web.lost_pixel":  {"tier": "slow",     "category": "visual", "fixable": True},
-    "web.otel_trace":  {"tier": "slow",     "category": "otel",   "fixable": False},
+    "web.vitest":      {"tier": "standard", "category": "test",     "fixable": False},
+    "web.playwright":  {"tier": "standard", "category": "test",     "fixable": False},
+    "web.lighthouse":  {"tier": "slow",     "category": "perf",     "fixable": False},
+    "web.axe":         {"tier": "standard", "category": "a11y",     "fixable": True},
+    "web.lost_pixel":  {"tier": "slow",     "category": "visual",   "fixable": True},
+    "web.otel_trace":  {"tier": "slow",     "category": "otel",     "fixable": False},
+    "web.typecheck":   {"tier": "standard", "category": "typecheck", "fixable": False},
 }
 
 
@@ -44,15 +45,15 @@ def _web_checks() -> dict:
 
 
 def test_web_checks_registered_count() -> None:
-    """Exactly 6 web.* checks are registered after importing harness.checks."""
+    """Exactly 7 web.* checks are registered after importing harness.checks."""
     web = _web_checks()
-    assert len(web) == 6, (
-        f"Expected exactly 6 web.* checks, got {len(web)}: {sorted(web.keys())}"
+    assert len(web) == 7, (
+        f"Expected exactly 7 web.* checks, got {len(web)}: {sorted(web.keys())}"
     )
 
 
 def test_web_check_ids_all_present() -> None:
-    """All 6 expected check IDs are present in the registry."""
+    """All 7 expected check IDs are present in the registry."""
     web = _web_checks()
     for check_id in _EXPECTED_CHECKS:
         assert check_id in web, (
@@ -145,7 +146,7 @@ def test_web_checks_mcp_discoverable() -> None:
     """Web check IDs are discoverable via the static MCP verify_check() surface.
 
     Per 07-RESEARCH.md §MCP tools (static, NOT auto-generated per check):
-    The 5 web.* checks are reachable via the existing static MCP tool
+    The web.* checks are reachable via the existing static MCP tool
     verify_check(name=<id>). No per-check MCP tool auto-generation in v0.2
     (deferred to verify-kit-964 v0.3).
 
