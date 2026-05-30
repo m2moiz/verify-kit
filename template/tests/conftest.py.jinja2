@@ -60,13 +60,15 @@ def _structlog_reset() -> None:
 # token to disk. This fixture installs filter_headers + a before_record_request
 # callable so the scrub happens BEFORE the cassette file is written.
 #
-# record_mode precedence (pytest-recording documented behavior, CLI > fixture):
-#   - The default below is "none" — CI and any default `pytest tests/llm/` run
-#     refuses to record; missing cassettes raise (or are skipped by the
-#     autouse `_skip_when_no_cassette` fixture in tests/llm/conftest.py).
-#   - Developers re-record via the CLI flag `pytest --record-mode=once`, which
-#     OVERRIDES this fixture-level value. The `just refresh-cassettes` recipe
-#     invokes pytest with `--record-mode=once` for exactly this reason.
+# record_mode discipline:
+#   - pytest-recording's own record_mode fixture defaults to "none" — CI and
+#     any default `pytest tests/llm/` run refuses to record; missing cassettes
+#     raise (or are skipped by the autouse `_skip_when_no_cassette` fixture in
+#     tests/llm/conftest.py).
+#   - Developers re-record via the CLI flag `pytest --record-mode=once`. Do not
+#     set "record_mode" in vcr_config: pytest-recording gives vcr_config higher
+#     precedence than the CLI flag, which would make refresh-cassettes unable to
+#     write new cassette files.
 _LLM_SCRUB_HEADERS = (
     "authorization",
     "x-api-key",
@@ -88,8 +90,9 @@ def vcr_config() -> dict:
       2. ``before_record_request`` callable: a second pass that walks the
          request.headers mapping case-insensitively and overwrites any match.
 
-    record_mode="none" is the CI/default. The CLI flag --record-mode=once
-    OVERRIDES this value (used by `just refresh-cassettes` to re-record).
+    record_mode is intentionally omitted here. pytest-recording's record_mode
+    fixture defaults to "none", and the CLI flag --record-mode=once overrides
+    that fixture value when `just refresh-cassettes` re-records cassettes.
     """
 
     def _scrub(request):
@@ -104,8 +107,5 @@ def vcr_config() -> dict:
         "filter_headers": [(h, "REDACTED") for h in _LLM_SCRUB_HEADERS],
         "before_record_request": _scrub,
         "filter_query_parameters": [("api_key", "REDACTED")],
-        # CI default — override per-invocation with `pytest --record-mode=once`
-        # (the mechanism `just refresh-cassettes` uses to populate cassettes).
-        "record_mode": "none",
     }
 {% endif %}

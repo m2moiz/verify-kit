@@ -9,6 +9,7 @@ The `as _xxx` aliases prevent shadowing the builtin `format` name when the
 `format` submodule is added in Task 2.
 """
 
+from harness.checks import agents as _agents  # noqa: F401
 from harness.checks import copier as _copier  # noqa: F401
 from harness.checks import deps as _deps  # noqa: F401
 from harness.checks import fixloop as _fixloop  # noqa: F401
@@ -37,6 +38,9 @@ from harness.checks import deploy as _deploy  # noqa: F401
 # Returns status="skip" with a hint pointing at `just eval`; discoverable via
 # `verify-kit list-checks` but never runs in the umbrella `just verify`.
 from harness.checks import eval as _eval  # noqa: F401
+
+# Offline golden-regression gate (eval.golden_regression) — @register side-effect.
+from harness.checks import eval_golden as _eval_golden  # noqa: F401
 {% endif %}
 {% if has_web %}
 # Web add-on checks — imported for @register side-effect.

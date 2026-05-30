@@ -22,8 +22,10 @@ Two autouse function-scope fixtures:
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 
+import httpx
 import pytest
 
 from harness.llm import reset_cost_accumulator
@@ -34,6 +36,26 @@ def _reset_llm_cost():
     """Clear the per-process cost accumulator before each test."""
     reset_cost_accumulator()
     yield
+
+
+@pytest.fixture(autouse=True)
+def _litellm_vcr_httpx_session(request):
+    """Use a VCR-patchable async HTTP client for cassette-backed LiteLLM calls."""
+    marker = request.node.get_closest_marker("vcr")
+    if marker is None:
+        yield
+        return
+
+    import litellm
+
+    previous_aclient_session = getattr(litellm, "aclient_session", None)
+    client = httpx.AsyncClient(follow_redirects=True)
+    litellm.aclient_session = client
+    try:
+        yield
+    finally:
+        litellm.aclient_session = previous_aclient_session
+        asyncio.run(client.aclose())
 
 
 @pytest.fixture(autouse=True)
