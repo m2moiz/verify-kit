@@ -1,0 +1,136 @@
+"""harness.checks.precommit — validate the pre-commit config (always-on, offline).
+
+Two assertions, both pure YAML parsing — no child-process calls, no network:
+
+1. `.pre-commit-config.yaml` parses as valid YAML with the expected
+   `repos: [...]` structure. A malformed config silently disables every hook
+   (pre-commit errors out and the developer's commits stop being checked), so a
+   parse failure is a real defect this check surfaces.
+2. The **gitleaks** secret-scan hook is present. gitleaks is the one hook whose
+   absence is genuinely dangerous — without it a committed credential sails
+   through. `security.secrets` runs the same scan at verify time, but the
+   pre-commit hook is the first line of defence; this check guards that it stays
+   wired.
+
+Deliberately does NOT run `pre-commit run` / `pre-commit validate-config`: those
+hit the network on a cold cache (cloning hook repos), which violates the
+offline-first UX guarantee. A plain `yaml.safe_load` + structural assertion gives
+the same signal for the two failure modes that matter, without shelling out.
+
+Decision references: Decision 1.2 (dotted codes), 3.2 (@register), 4.1
+(tier="quick" — pure in-process file read), carryover-cwd (path rooted at cwd).
+"""
+
+from __future__ import annotations
+
+import time
+from pathlib import Path
+
+import yaml
+
+from harness.models import CheckResult, ErrorEnvelope
+from harness.registry import register
+
+_DOCS_URL = "https://github.com/m2moiz/verify-kit#precommit"
+
+#: The secret-scan hook id whose presence this check guards.
+_REQUIRED_HOOK = "gitleaks"
+
+
+def _hook_ids(config: dict) -> set[str]:
+    """Collect every hook id across all repos in a parsed pre-commit config."""
+    ids: set[str] = set()
+    for repo in config.get("repos") or []:
+        if not isinstance(repo, dict):
+            continue
+        for hook in repo.get("hooks") or []:
+            if isinstance(hook, dict) and hook.get("id"):
+                ids.add(str(hook["id"]))
+    return ids
+
+
+@register(
+    "precommit.config.valid",
+    tier="quick",
+    category="precommit",
+    description="Validate .pre-commit-config.yaml parses and the gitleaks hook is present",
+    inputs=[".pre-commit-config.yaml"],
+    fixable=False,
+)
+def check_precommit_config_valid(cwd: Path) -> CheckResult:
+    """Fail on malformed pre-commit YAML or a missing gitleaks secret-scan hook."""
+    start = time.monotonic()
+    path = cwd / ".pre-commit-config.yaml"
+
+    if not path.exists():
+        return CheckResult(
+            check_id="precommit.config.valid",
+            status="skip",
+            message="no .pre-commit-config.yaml at the project root",
+            duration_ms=int((time.monotonic() - start) * 1000),
+        )
+
+    try:
+        config = yaml.safe_load(path.read_text())
+    except yaml.YAMLError as exc:
+        return CheckResult(
+            check_id="precommit.config.valid",
+            status="fail",
+            message=(
+                "`.pre-commit-config.yaml` is not valid YAML — every hook is silently disabled"
+            ),
+            duration_ms=int((time.monotonic() - start) * 1000),
+            error=ErrorEnvelope(
+                code="precommit.config.valid.invalid-yaml",
+                message=str(exc)[:200],
+                hint="Fix the YAML syntax; `pre-commit` refuses to run on a malformed config.",
+                docs_url=_DOCS_URL,
+                file=".pre-commit-config.yaml",
+            ),
+        )
+
+    if not isinstance(config, dict) or not isinstance(config.get("repos"), list):
+        return CheckResult(
+            check_id="precommit.config.valid",
+            status="fail",
+            message=(
+                "`.pre-commit-config.yaml` has no `repos:` list — "
+                "the config is structurally invalid"
+            ),
+            duration_ms=int((time.monotonic() - start) * 1000),
+            error=ErrorEnvelope(
+                code="precommit.config.valid.invalid-structure",
+                message="top-level mapping with a `repos:` list is required",
+                hint="A pre-commit config must be a mapping with a top-level `repos:` list.",
+                docs_url=_DOCS_URL,
+                file=".pre-commit-config.yaml",
+            ),
+        )
+
+    if _REQUIRED_HOOK not in _hook_ids(config):
+        return CheckResult(
+            check_id="precommit.config.valid",
+            status="fail",
+            message=(
+                f"the `{_REQUIRED_HOOK}` secret-scan hook is missing from .pre-commit-config.yaml"
+            ),
+            duration_ms=int((time.monotonic() - start) * 1000),
+            error=ErrorEnvelope(
+                code="precommit.config.valid.missing-hooks",
+                message=f"required hook `{_REQUIRED_HOOK}` not found in any repo block",
+                hint=(
+                    "Re-add the gitleaks hook (repo github.com/gitleaks/gitleaks, id "
+                    "`gitleaks`). It is the commit-time secret scanner that stops "
+                    "credentials from being committed."
+                ),
+                docs_url=_DOCS_URL,
+                file=".pre-commit-config.yaml",
+            ),
+        )
+
+    return CheckResult(
+        check_id="precommit.config.valid",
+        status="pass",
+        message="pre-commit config is valid YAML and the gitleaks secret-scan hook is present",
+        duration_ms=int((time.monotonic() - start) * 1000),
+    )

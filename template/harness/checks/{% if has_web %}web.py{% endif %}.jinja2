@@ -1,7 +1,7 @@
 """harness.checks.web — web add-on verifier registrations.
 
-Seven checks: web.vitest, web.playwright, web.lighthouse, web.axe,
-web.lost_pixel, web.otel_trace, web.typecheck.
+Eight checks: web.vitest, web.playwright, web.lighthouse, web.axe,
+web.lost_pixel, web.otel_trace, web.typecheck, web.console.
 
 FROZEN API contract: @register kwargs are `tier, category, description, inputs,
 fixable, tool, skip_if_unavailable`. NO `severity=`, NO `tags=`, NO MCP-level
@@ -236,6 +236,112 @@ def check_web_playwright(cwd: Path) -> CheckResult:
     return CheckResult(
         check_id="web.playwright",
         status=status,
+        duration_ms=duration_ms,
+        error=err,
+    )
+
+
+# ── web.console ────────────────────────────────────────────────────────────────
+
+
+def _console_error_envelope(
+    cwd: Path, result: subprocess.CompletedProcess
+) -> ErrorEnvelope:
+    """Build an envelope from the console.json artifact, else the reporter tail.
+
+    console.spec.ts writes every captured pageerror / console.error to
+    ../.verify/web/console.json before asserting, so on failure the structured
+    errors are available. If the artifact is missing (Playwright itself failed to
+    run), fall back to the reporter output so the failure is still debuggable.
+    """
+    artifact = cwd / ".verify" / "web" / "console.json"
+    try:
+        captured = json.loads(artifact.read_text())
+    except (OSError, json.JSONDecodeError):
+        captured = []
+
+    if isinstance(captured, list) and captured:
+        first = captured[0]
+        kind = str(first.get("type") or "pageerror").replace(".", "_")
+        msg = str(first.get("message") or "runtime error")
+        url = first.get("url")
+        return ErrorEnvelope(
+            code=f"web.console.{kind}",
+            message=f"{len(captured)} runtime error(s) on load; first: {msg}"[:200],
+            hint=(
+                "An uncaught page error or console.error fired on load — this can "
+                "leave a blank screen while every other web check passes. Fix the "
+                "error; run `cd web && pnpm exec playwright test console.spec.ts` to debug."
+            ),
+            docs_url="https://playwright.dev/docs/api/class-page#page-event-page-error",
+            file=str(url) if url else None,
+        )
+
+    diag = (result.stdout or "").strip() or (result.stderr or "").strip()
+    return ErrorEnvelope(
+        code="web.console.failed",
+        message=f"console probe exited {result.returncode}: {diag[-200:]}"[:200],
+        hint=(
+            "Run `cd web && pnpm exec playwright test console.spec.ts "
+            "--reporter=list` for details"
+        ),
+        fix_command="cd web && pnpm exec playwright test console.spec.ts",
+        docs_url="https://playwright.dev/docs/api/class-page#page-event-page-error",
+    )
+
+
+@register(
+    "web.console",
+    tier="standard",
+    category="runtime",
+    description="Promote runtime page errors / console.error to failures (blank-screen guard)",
+    inputs=["web/src/**", "web/tests/e2e/console.spec.ts"],
+    fixable=False,
+    tool="playwright",
+    skip_if_unavailable=True,  # Chromium download may not be present locally
+)
+def check_web_console(cwd: Path) -> CheckResult:
+    """Run the console.spec.ts probe; fail on any uncaught pageerror / console.error."""
+    t0 = time.monotonic()
+
+    install_result = proc_run(
+        ["pnpm", "exec", "playwright", "install", "--with-deps", "chromium"],
+        cwd=cwd / "web",
+        env=clean_env(),
+        timeout=300.0,
+    )
+    if install_result.returncode != 0:
+        return CheckResult(
+            check_id="web.console",
+            status="skip",
+            message=(
+                "Playwright Chromium install failed — skipping runtime-error scan "
+                "(run `cd web && pnpm exec playwright install chromium`)"
+            ),
+            duration_ms=int((time.monotonic() - t0) * 1000),
+        )
+
+    result = proc_run(
+        ["pnpm", "exec", "playwright", "test", "console.spec.ts"],
+        cwd=cwd / "web",
+        env={**clean_env(), "CI": "1"},  # CI=1 → single worker
+        timeout=180.0,
+    )
+    duration_ms = int((time.monotonic() - t0) * 1000)
+
+    if result.returncode == 0:
+        return CheckResult(
+            check_id="web.console",
+            status="pass",
+            message="no uncaught page errors or console.error on load",
+            duration_ms=duration_ms,
+        )
+
+    err = _console_error_envelope(cwd, result)
+    return CheckResult(
+        check_id="web.console",
+        status="fail",
+        message=err.message,
         duration_ms=duration_ms,
         error=err,
     )
