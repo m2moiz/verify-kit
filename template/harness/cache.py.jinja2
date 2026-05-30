@@ -173,6 +173,7 @@ class CacheStore:
     """
 
     def __init__(self, db_path: Path) -> None:
+        """Open the cache at ``db_path``, creating the parent directory if needed."""
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
 

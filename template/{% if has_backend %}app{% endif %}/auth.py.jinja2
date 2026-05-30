@@ -1,3 +1,5 @@
+"""Request authentication dependency for the FastAPI app."""
+
 from __future__ import annotations
 
 import secrets
@@ -16,6 +18,11 @@ def require_auth(
     request: Request,
     presented: Annotated[str | None, Depends(_api_key_header)],
 ) -> None:
+    """Validate the request's API key token, raising 401/503 when it fails.
+
+    Allows /healthz unauthenticated and permits dev requests when no token is
+    configured.
+    """
     # In-dependency exclusion: /healthz must remain unauthenticated for docker
     # healthchecks and smoke tests. FastAPI app-level dependencies are NOT
     # overridable via route-level dependencies=[]; the short-circuit lives here.

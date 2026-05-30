@@ -1,3 +1,5 @@
+"""Pydantic request and response models for the backend API."""
+
 from __future__ import annotations
 
 import re
@@ -33,6 +35,8 @@ _CONTROL_CHARS_ECHO = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 
 
 class EchoRequest(BaseModel):
+    """POST /echo request body carrying the hardened message to echo back."""
+
     message: str = Field(min_length=1, max_length=5000)
 
     @field_validator("message")
@@ -43,6 +47,8 @@ class EchoRequest(BaseModel):
 
 
 class EchoResponse(BaseModel):
+    """POST /echo response echoing the message with its request ID and timestamp."""
+
     message: str
     request_id: str
     received_at: datetime

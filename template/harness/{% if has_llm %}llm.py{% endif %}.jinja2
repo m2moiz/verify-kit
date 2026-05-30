@@ -91,6 +91,7 @@ class CostBudgetExceeded(RuntimeError):
     """
 
     def __init__(self, budget_usd: float, accumulated_usd: float, call_name: str) -> None:
+        """Record the budget ceiling, accumulated cost, and offending call name."""
         self.budget_usd = budget_usd
         self.accumulated_usd = accumulated_usd
         self.call_name = call_name

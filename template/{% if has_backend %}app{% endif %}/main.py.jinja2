@@ -1,3 +1,5 @@
+"""FastAPI application factory wiring middleware, lifespan, and routes."""
+
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
@@ -64,6 +66,11 @@ def _strip_surrogates(obj: object) -> object:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    """Configure logging and per-backend resources for the app's lifetime.
+
+    Loads settings, sets up logging and optional OTel/DB instrumentation on
+    startup, then disposes engines and shuts down providers on shutdown.
+    """
     # CWD is captured at instantiation time — see create_app() below.
     cwd = app.state.cwd
     settings = load_settings(cwd)

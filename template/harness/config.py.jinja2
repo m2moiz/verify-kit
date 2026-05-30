@@ -48,23 +48,31 @@ from harness.logging import log
 
 
 class FormatConfig(BaseModel):
+    """Output-format settings — selects the default report renderer."""
+
     model_config = ConfigDict(extra="forbid")
     default: Literal["pretty", "json", "jsonl", "junit", "sarif", "otlp"] = "pretty"
 
 
 class CacheConfig(BaseModel):
+    """Result-cache settings — toggles caching and caps its size in megabytes."""
+
     model_config = ConfigDict(extra="forbid")
     max_size_mb: int = 100
     enabled: bool = True
 
 
 class ChecksConfig(BaseModel):
+    """Check settings — lists disabled check ids and holds per-check overrides."""
+
     model_config = ConfigDict(extra="forbid")
     disabled: list[str] = Field(default_factory=list)
     per_check: dict[str, dict[str, Any]] = Field(default_factory=dict)
 
 
 class HarnessConfig(BaseModel):
+    """Top-level harness config — aggregates the format, cache, and checks sub-configs."""
+
     model_config = ConfigDict(extra="forbid")
     format: FormatConfig = Field(default_factory=FormatConfig)
     cache: CacheConfig = Field(default_factory=CacheConfig)

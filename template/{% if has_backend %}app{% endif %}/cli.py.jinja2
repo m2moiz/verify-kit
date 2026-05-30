@@ -58,6 +58,7 @@ def db_ping_cmd(database_url: str = typer.Option(..., envvar="DATABASE_URL")) ->
 
 
 def main() -> None:
+    """Console entry point that runs the Typer CLI app."""
     app()
 
 
