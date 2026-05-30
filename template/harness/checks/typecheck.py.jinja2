@@ -1,0 +1,135 @@
+"""harness.checks.typecheck — static Python type checking via pyright.
+
+Closes an advertised-but-hollow gap: `just verify` had no typecheck check, so a
+green said nothing about type safety — an agent could ship code with type errors
+and the harness would not see it. This check makes the umbrella `just verify`
+fail on any pyright error.
+
+Runs `uv run pyright --outputjson` over the `[tool.pyright].include` set in
+pyproject.toml (`harness/`{% if has_backend %} + `app/`{% endif %}), in pyright's
+default `standard` mode. Offline-first: pyright is a pinned dev dependency (`uv
+sync` installs it) — the check never auto-fetches from the network. pyright
+bundles its own Node via nodejs-wheel, so a pure-Python scaffold needs no Node
+toolchain to type-check.
+
+A true pyright limitation (a valid runtime construct pyright cannot model) is
+suppressed the honest way with a coded `# pyright: ignore[<rule>]` — never a
+blanket ignore (ruff `PGH003` bans those).
+
+Decision references: Decision 1.2 (dotted codes), 3.2 (@register), 4.1
+(tier="standard"), carryover-cwd (cwd kwarg, subprocess cwd=cwd).
+"""
+
+from __future__ import annotations
+
+import json
+import subprocess
+import time
+from pathlib import Path
+
+from harness.models import CheckResult, ErrorEnvelope
+from harness.registry import register
+
+_DOCS_URL = "https://microsoft.github.io/pyright/#/configuration"
+
+
+@register(
+    "typecheck.python",
+    tier="standard",
+    category="typecheck",
+    description="Static type-check Python via pyright (standard mode)",
+    inputs=["**/*.py", "pyproject.toml"],
+    fixable=False,
+    tool="pyright",
+)
+def check_typecheck_python(cwd: Path) -> CheckResult:
+    """Run `uv run pyright --outputjson` and surface the first type error."""
+    start = time.monotonic()
+    try:
+        proc = subprocess.run(
+            ["uv", "run", "pyright", "--outputjson"],
+            capture_output=True,
+            text=True,
+            cwd=cwd,
+            timeout=120,
+        )
+    except FileNotFoundError:
+        return CheckResult(
+            check_id="typecheck.python",
+            status="fail",
+            message="uv not found on PATH",
+            duration_ms=int((time.monotonic() - start) * 1000),
+            error=ErrorEnvelope(
+                code="typecheck.python.tool-missing",
+                message="uv binary not found",
+                hint="Install uv (https://docs.astral.sh/uv/) or via mise, then run `uv sync`",
+                docs_url=_DOCS_URL,
+            ),
+        )
+
+    duration_ms = int((time.monotonic() - start) * 1000)
+
+    # pyright --outputjson prints a JSON report to stdout on BOTH a clean run
+    # (exit 0) and an error run (exit 1). A non-JSON stdout means pyright itself
+    # could not run (e.g. the venv is not synced) — surface that honestly as a
+    # failure rather than passing silently (offline-first: we never auto-sync).
+    try:
+        report = json.loads(proc.stdout)
+    except json.JSONDecodeError:
+        return CheckResult(
+            check_id="typecheck.python",
+            status="fail",
+            message="pyright produced no JSON report — is the venv synced?",
+            duration_ms=duration_ms,
+            error=ErrorEnvelope(
+                code="typecheck.python.tool-error",
+                message=(proc.stderr.strip() or proc.stdout.strip())[:200],
+                hint="Run `uv sync` so pyright and project deps are installed, then retry",
+                docs_url=_DOCS_URL,
+            ),
+        )
+
+    errors = [
+        d for d in report.get("generalDiagnostics", []) if d.get("severity") == "error"
+    ]
+
+    if not errors:
+        analyzed = report.get("summary", {}).get("filesAnalyzed", 0)
+        return CheckResult(
+            check_id="typecheck.python",
+            status="pass",
+            message=f"pyright: 0 errors across {analyzed} files",
+            duration_ms=duration_ms,
+        )
+
+    first = errors[0]
+    rng = first.get("range", {}).get("start", {})
+    rel = first.get("file", "")
+    try:
+        rel = str(Path(rel).relative_to(cwd))
+    except ValueError:
+        pass
+    rule = first.get("rule") or "error"
+    line = int(rng.get("line", 0)) + 1
+    column = int(rng.get("character", 0)) + 1
+    return CheckResult(
+        check_id="typecheck.python",
+        status="fail",
+        message=(
+            f"{len(errors)} type error(s); first: {rel}:{line} "
+            f"{first.get('message', '')[:80]}"
+        ),
+        duration_ms=duration_ms,
+        error=ErrorEnvelope(
+            code=f"typecheck.python.{rule}",
+            message=first.get("message", "")[:200],
+            hint=(
+                "Fix the annotation/type mismatch. Suppress a genuine pyright "
+                "limitation with `# pyright: ignore[<rule>]` (coded, never blanket)."
+            ),
+            docs_url=_DOCS_URL,
+            file=rel,
+            line=line,
+            column=column,
+        ),
+    )

@@ -44,4 +44,7 @@ def load(cwd: Path) -> Settings:
 
     Passes cwd / ".env" as the env_file; never resolves against process cwd.
     """
-    return Settings(_env_file=cwd / ".env" if (cwd / ".env").exists() else None)
+    # `_env_file` is a documented pydantic-settings init kwarg handled via the
+    # BaseSettings metaclass; pyright cannot see it in the signature (known
+    # false positive, not a bug). Coded suppression keeps `typecheck.python` green.
+    return Settings(_env_file=cwd / ".env" if (cwd / ".env").exists() else None)  # pyright: ignore[reportCallIssue]

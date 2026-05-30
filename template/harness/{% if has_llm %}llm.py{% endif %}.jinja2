@@ -205,7 +205,10 @@ async def call_via_litellm(prompt: str, *, model: str | None = None) -> dict[str
     # path is the documented surface and is stable across providers.
     content = ""
     try:
-        content = response.choices[0].message.content or ""
+        # litellm types the streaming union as CustomStreamWrapper, which pyright
+        # cannot narrow to a response with `.choices`; the try/except already
+        # guards the runtime shape. Coded suppression keeps `typecheck.python` green.
+        content = response.choices[0].message.content or ""  # pyright: ignore[reportAttributeAccessIssue]
     except (AttributeError, IndexError, KeyError):
         content = ""
 
