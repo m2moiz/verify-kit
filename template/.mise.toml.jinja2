@@ -20,6 +20,8 @@ node = "24"
 uv = "latest"
 just = "latest"
 pnpm = "9.15.0"
+# gitleaks powers the always-on security.secrets check + the pre-commit hook.
+"aqua:gitleaks/gitleaks" = "8.30.1"
 {% if has_web and has_backend %}
 "npm:mprocs" = "latest"
 {% endif %}

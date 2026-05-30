@@ -1,0 +1,266 @@
+"""harness.checks.security — secret-scanning guard (always-on).
+
+Two independent layers, both rooted at `cwd`:
+
+1. **.env guard (always runs, OFFLINE).** A committed `.env` is the single most
+   common way a real secret leaks into a repo. This layer fails if a `.env` file
+   (or any `.env.*` other than `.env.example`) is GIT-TRACKED in `cwd`. It needs
+   no external tool — it asks git directly via `git ls-files` — so it runs even
+   on a machine with no `gitleaks` installed and with the network down. When
+   `cwd` is not a git repository the layer is a no-op (there is nothing tracked
+   to leak); it never crashes.
+
+2. **gitleaks scan (conditional).** If a `gitleaks` binary resolves
+   (`shutil.which` or a mise-provisioned shim), the check runs
+   `gitleaks detect --no-banner --report-format json --report-path -` and parses
+   the findings. Any finding (e.g. a planted `AKIA...`-style key) fails the
+   check. gitleaks signals via its EXIT CODE (0 = clean, 1 = leaks, >1 = tool
+   error) — that primary signal drives pass/fail, not a guessed report-file name
+   (REVIEW-CHECKLIST §9). If gitleaks is absent the check does NOT auto-fetch it
+   and does NOT fail on its account — the verdict falls back to layer 1, with a
+   note that the gitleaks layer was skipped (offline-first hard rule).
+
+A clean repo with no tracked `.env` and no gitleaks findings → pass.
+
+Decision references: Decision 1.2 (dotted codes — `security.secrets.<reason>`),
+3.2 (@register), 4.1 (tier="standard"), carryover-cwd (cwd kwarg; every git /
+gitleaks subprocess is rooted at `cwd`, never a bare relative Path).
+"""
+
+from __future__ import annotations
+
+import json
+import shutil
+import time
+from pathlib import Path
+
+from harness.models import CheckResult, ErrorEnvelope
+from harness.proc import run as proc_run
+from harness.registry import register
+
+_DOCS_URL = "https://github.com/m2moiz/verify-kit#security"
+
+_GITLEAKS_DOCS_URL = "https://github.com/gitleaks/gitleaks"
+
+#: Skip message for the gitleaks layer. Mirrors the offline-first contract used
+#: by harness.checks.format: NEVER recommend a network auto-fetch path.
+_GITLEAKS_SKIP_MSG = (
+    "gitleaks not found locally; the .env guard still ran. Install gitleaks via "
+    "`mise install` (pinned in .mise.toml) to enable full secret scanning. "
+    "verify-kit does not auto-fetch gitleaks from the network because "
+    "offline-first is a hard UX requirement."
+)
+
+
+def _resolve_gitleaks(cwd: Path) -> Path | None:
+    """Resolve a gitleaks binary: local mise shim, then PATH, else None.
+
+    Mirrors the local-first resolution used for Node tools in
+    harness.checks.format — a project-local shim is preferred so a
+    mise-provisioned gitleaks wins over an unrelated PATH copy. NEVER
+    auto-fetches from the network.
+    """
+    local = cwd / ".mise" / "shims" / "gitleaks"
+    if local.is_file():
+        return local
+    on_path = shutil.which("gitleaks")
+    if on_path is not None:
+        return Path(on_path)
+    return None
+
+
+def _tracked_env_files(cwd: Path) -> list[str] | None:
+    """Return git-tracked `.env`/`.env.*` paths (minus `.env.example`).
+
+    Asks git directly via `git ls-files` rooted at `cwd`. Returns None when
+    `cwd` is not a git repository (or git is missing) so the caller can treat
+    layer 1 as a no-op rather than a failure.
+    """
+    try:
+        proc = proc_run(
+            ["git", "-C", str(cwd), "ls-files", "--", ".env", ".env.*"],
+            cwd=cwd,
+            timeout=30,
+        )
+    except FileNotFoundError:
+        return None
+
+    if proc.returncode != 0:
+        # Non-zero almost always means "not a git repository" (exit 128).
+        # Either way there is no tracked tree to inspect → layer 1 no-ops.
+        return None
+
+    tracked: list[str] = []
+    for line in proc.stdout.splitlines():
+        name = line.strip()
+        if not name:
+            continue
+        # `.env.example` is the documented, intentionally-committed template.
+        if Path(name).name == ".env.example":
+            continue
+        tracked.append(name)
+    return tracked
+
+
+def _run_gitleaks(gitleaks: Path, cwd: Path) -> tuple[str, list[dict]]:
+    """Run gitleaks and return (outcome, findings).
+
+    outcome is one of "clean", "leaks", "skip", "error". `findings` is the
+    parsed JSON list (empty unless outcome == "leaks"). gitleaks streams its
+    JSON report to stdout via `--report-path -`; the EXIT CODE is the primary
+    signal (0 clean / 1 leaks / >1 tool error), not the presence of a named
+    report file (REVIEW-CHECKLIST §9).
+    """
+    try:
+        proc = proc_run(
+            [
+                str(gitleaks),
+                "detect",
+                "--no-banner",
+                "--report-format",
+                "json",
+                "--report-path",
+                "-",
+            ],
+            cwd=cwd,
+            timeout=120,
+        )
+    except FileNotFoundError:
+        return ("skip", [])
+
+    if proc.returncode == 0:
+        return ("clean", [])
+
+    if proc.returncode == 1:
+        try:
+            findings = json.loads(proc.stdout) if proc.stdout.strip() else []
+        except json.JSONDecodeError:
+            findings = []
+        if not isinstance(findings, list):
+            findings = []
+        return ("leaks", findings)
+
+    # returncode > 1 → gitleaks itself could not run cleanly (bad config, etc.).
+    return ("error", [])
+
+
+@register(
+    "security.secrets",
+    tier="standard",
+    category="security",
+    description="Guard against committed secrets: tracked .env files + gitleaks scan",
+    inputs=[".env", ".env.*", "**/*.py", "**/*.ts", "**/*.js"],
+    fixable=False,
+    tool="gitleaks",
+)
+def check_security_secrets(cwd: Path) -> CheckResult:
+    """Fail on a git-tracked `.env` or any gitleaks finding; gitleaks is optional."""
+    start = time.monotonic()
+
+    # ── Layer 1: .env guard (always-on, offline) ──────────────────────────────
+    tracked_env = _tracked_env_files(cwd)
+    if tracked_env:
+        shown = ", ".join(tracked_env[:3])
+        first = tracked_env[0]
+        return CheckResult(
+            check_id="security.secrets",
+            status="fail",
+            message=(
+                f"git-tracked secret file(s) [{shown}] — a committed .env almost "
+                "always leaks real credentials"
+            ),
+            duration_ms=int((time.monotonic() - start) * 1000),
+            error=ErrorEnvelope(
+                code="security.secrets.env_tracked",
+                message=f"tracked .env file(s): {tracked_env}",
+                hint=(
+                    f"Stop tracking it: `git rm --cached {first}` and add a `.env` "
+                    "line to .gitignore. Commit `.env.example` (placeholders only) "
+                    "instead. Rotate any secret that was committed."
+                ),
+                fix_command=f"git rm --cached {first}",
+                docs_url=_DOCS_URL,
+                file=first,
+            ),
+        )
+
+    # ── Layer 2: gitleaks scan (conditional, never auto-fetched) ──────────────
+    gitleaks = _resolve_gitleaks(cwd)
+    if gitleaks is None:
+        # No .env leak and no scanner available → pass on the offline baseline,
+        # noting that the deeper scan did not run.
+        return CheckResult(
+            check_id="security.secrets",
+            status="pass",
+            message=f"no git-tracked .env files; {_GITLEAKS_SKIP_MSG}",
+            duration_ms=int((time.monotonic() - start) * 1000),
+        )
+
+    outcome, findings = _run_gitleaks(gitleaks, cwd)
+    duration_ms = int((time.monotonic() - start) * 1000)
+
+    if outcome == "leaks":
+        first = findings[0] if findings else {}
+        rule = str(first.get("RuleID") or "secret")
+        file_path = str(first.get("File") or "")
+        raw_line = first.get("StartLine")
+        line = int(raw_line) if isinstance(raw_line, int) else None
+        desc = str(first.get("Description") or "secret detected")
+        return CheckResult(
+            check_id="security.secrets",
+            status="fail",
+            message=(
+                f"gitleaks found {len(findings)} secret(s); first: "
+                f"{file_path}:{line or '?'} [{rule}]"
+            ),
+            duration_ms=duration_ms,
+            error=ErrorEnvelope(
+                code="security.secrets.leak",
+                message=f"{rule}: {desc}"[:200],
+                hint=(
+                    "Remove the secret from the working tree AND scrub it from "
+                    "history (it stays in old commits). Rotate the credential — "
+                    "assume it is compromised. Add a `gitleaks:allow` comment only "
+                    "for a verified false positive."
+                ),
+                docs_url=_GITLEAKS_DOCS_URL,
+                file=file_path or None,
+                line=line,
+            ),
+        )
+
+    if outcome == "error":
+        # gitleaks could not run cleanly. Do NOT mask a real scanner failure as
+        # a pass — surface it (the .env guard already passed above).
+        return CheckResult(
+            check_id="security.secrets",
+            status="fail",
+            message="gitleaks could not complete the scan (config or runtime error)",
+            duration_ms=duration_ms,
+            error=ErrorEnvelope(
+                code="security.secrets.scan_error",
+                message="gitleaks exited with a tool error (>1)",
+                hint=(
+                    "Run `gitleaks detect --no-banner` manually to see the error; "
+                    "a malformed `.gitleaks.toml` is the usual cause."
+                ),
+                docs_url=_GITLEAKS_DOCS_URL,
+            ),
+        )
+
+    if outcome == "skip":
+        # Binary resolved but vanished at exec time → treat like absent gitleaks.
+        return CheckResult(
+            check_id="security.secrets",
+            status="pass",
+            message=f"no git-tracked .env files; {_GITLEAKS_SKIP_MSG}",
+            duration_ms=duration_ms,
+        )
+
+    # outcome == "clean"
+    return CheckResult(
+        check_id="security.secrets",
+        status="pass",
+        message="no git-tracked .env files and gitleaks found no secrets",
+        duration_ms=duration_ms,
+    )
