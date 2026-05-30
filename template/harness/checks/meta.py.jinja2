@@ -1,0 +1,140 @@
+"""harness.checks.meta — determinism guard for the check suite itself.
+
+verify-kit's whole value rests on `just verify` being a trustworthy ground
+truth. A check that returns "pass" on one run and "fail" on the next (a flappy
+check) silently poisons that ground truth: an agent that re-runs the suite can
+flip a red to green without changing anything, and the harness would reward the
+re-roll. `meta.stability` is the meta-check that hunts this failure mode.
+
+Logic (in-process, rooted at cwd):
+- Enumerate every registered check that is BOTH `tier="quick"` AND not this
+  meta-check itself. The quick tier is the cheap, deterministic, hermetic set
+  (pure file reads, <100ms each); slow/standard/subprocess-heavy checks are
+  deliberately excluded so the guard stays fast and cannot itself flake on a
+  missing external tool or live service.
+- Run each selected check TWICE via `spec.fn(cwd=cwd)` and record its status
+  both times. A check that raises is recorded as a stable sentinel so a
+  consistently-raising check is treated as deterministic (it is — it just
+  always crashes) while a check that raises on exactly one of the two runs is
+  correctly flagged as nondeterministic.
+- Compare the two status sequences per check. Any check whose first-run status
+  differs from its second-run status is flappy.
+
+Verdict:
+- ANY selected check's status differs between the two runs → fail
+  (code `meta.stability.nondeterministic`), message naming the flappy id(s).
+- All selected checks stable across both runs → pass.
+
+Anti-recursion: this check NEVER runs itself (it is filtered out by check_id),
+so it cannot recurse no matter how it is enumerated. It also never touches a
+slow/network check, so it stays in the quick tier without flaking.
+
+Decision references: Decision 1.2 (dotted codes), 3.2 (@register), 4.1
+(tier="quick" — pure in-process, no subprocess), carryover-cwd (cwd kwarg,
+forwarded verbatim to every probed `spec.fn(cwd=cwd)`).
+"""
+
+from __future__ import annotations
+
+import time
+from pathlib import Path
+
+from harness.models import CheckResult, ErrorEnvelope
+from harness.registry import list_checks, register
+
+#: This check's own id. Held in a constant so the self-exclusion filter and the
+#: returned CheckResult.check_id cannot drift apart.
+_CHECK_ID = "meta.stability"
+
+_DOCS_URL = "https://github.com/m2moiz/verify-kit#meta-stability"
+
+#: Sentinel recorded when a probed check raises instead of returning a
+#: CheckResult. A check that raises on BOTH runs is deterministic (always
+#: crashes); recording a stable string lets the equality comparison treat that
+#: case as stable rather than mistaking it for a flap.
+_RAISED = "raised"
+
+
+def _probe_status(spec, cwd: Path) -> str:
+    """Run one selected check once and return its status as a comparable string.
+
+    Returns the check's `status` ("pass"/"fail"/"skip") on a normal return, or
+    the `_RAISED` sentinel if the check raises. Catching here mirrors what the
+    runner does for the real suite (it converts an uncaught exception into a
+    failing result), so a sibling defect cannot crash the meta-check; instead it
+    is observed as a stable or flapping value just like any other status.
+    """
+    try:
+        result = spec.fn(cwd=cwd)
+    except Exception:  # noqa: BLE001 — a probed check raising must not crash the guard
+        return _RAISED
+    return result.status
+
+
+@register(
+    _CHECK_ID,
+    tier="quick",
+    category="meta",
+    description="Guard: quick-tier checks must return the same status on a re-run (no flapping)",
+    inputs=[],
+    fixable=False,
+)
+def check_meta_stability(cwd: Path) -> CheckResult:
+    """Fail when any quick-tier check yields a different status across two runs."""
+    start = time.monotonic()
+
+    # Enumerate the quick-tier checks, excluding this meta-check so it can never
+    # recurse into itself. list_checks() returns a snapshot in registration
+    # order; every check has already registered by the time any check runs.
+    selected = [
+        spec
+        for spec in list_checks()
+        if spec.tier == "quick" and spec.check_id != _CHECK_ID
+    ]
+
+    # First pass over the whole selected set, then a second full pass. Two full
+    # passes (rather than running each check twice back-to-back) more closely
+    # mimics the real "re-run the suite" scenario this guard defends against.
+    first = {spec.check_id: _probe_status(spec, cwd) for spec in selected}
+    second = {spec.check_id: _probe_status(spec, cwd) for spec in selected}
+
+    flappy = sorted(cid for cid in first if first[cid] != second[cid])
+
+    duration_ms = int((time.monotonic() - start) * 1000)
+
+    if not flappy:
+        return CheckResult(
+            check_id=_CHECK_ID,
+            status="pass",
+            message=(
+                f"all {len(selected)} quick-tier check(s) returned a stable status "
+                "across two runs"
+            ),
+            duration_ms=duration_ms,
+        )
+
+    shown = ", ".join(
+        f"{cid} ({first[cid]}→{second[cid]})" for cid in flappy[:3]
+    )
+    return CheckResult(
+        check_id=_CHECK_ID,
+        status="fail",
+        message=(
+            f"{len(flappy)} quick-tier check(s) are nondeterministic: {shown}"
+        ),
+        duration_ms=duration_ms,
+        error=ErrorEnvelope(
+            code="meta.stability.nondeterministic",
+            message=(
+                "the following quick-tier check(s) returned a different status on "
+                f"a re-run with no change: {flappy}"
+            ),
+            hint=(
+                "A check must be a pure function of its inputs. Make the flagged "
+                "check deterministic — remove any dependence on wall-clock time, "
+                "randomness, network reachability, or filesystem-iteration order "
+                "so the same tree always yields the same status."
+            ),
+            docs_url=_DOCS_URL,
+        ),
+    )
