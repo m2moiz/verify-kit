@@ -48,7 +48,7 @@ class BearerAuthMiddleware(BaseHTTPMiddleware):
         self._token = token
 
     async def dispatch(self, request: Request, call_next) -> Response:
-        """Bypass health paths, else require a matching bearer token before forwarding the request."""
+        """Allow health paths through; otherwise require a matching bearer token."""
         # Health-probe bypass — unauthenticated liveness checks are fine.
         if request.url.path.startswith("/health"):
             return await call_next(request)

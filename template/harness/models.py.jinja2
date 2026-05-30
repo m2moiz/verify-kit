@@ -184,7 +184,7 @@ class CheckCatalogEntry(BaseModel):
 
     @classmethod
     def from_spec(cls, spec: CheckSpec) -> CheckCatalogEntry:
-        """Build a serialization-safe entry from a CheckSpec, dropping the non-serializable fn field."""
+        """Build a serialization-safe catalog entry from a CheckSpec (drops the fn field)."""
         return cls(**{k: v for k, v in spec.model_dump(exclude={"fn"}).items()})
 
 
