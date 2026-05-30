@@ -40,6 +40,8 @@ from harness.checks import eval as _eval  # noqa: F401
 {% endif %}
 {% if has_web %}
 # Web add-on checks — imported for @register side-effect.
-# Registers: web.vitest, web.playwright, web.lighthouse, web.axe, web.lost_pixel
+# Registers: web.vitest, web.playwright, web.lighthouse, web.axe, web.lost_pixel,
+# web.otel_trace, web.typecheck, web.console, web.lint (+ web.api_client_fresh
+# when has_backend).
 from harness.checks import web as _web  # noqa: F401
 {% endif %}

@@ -154,11 +154,11 @@ verify-backend-quick:
 # Lighthouse + Lost Pixel are tier=slow — included here; use verify-web-quick to skip them.
 # CLI does exact match per --check (template/harness/core.py.jinja2:101); enumeration is mandatory.
 verify-web:
-	uv run verify-kit verify --check=web.vitest --check=web.playwright --check=web.lighthouse --check=web.axe --check=web.lost_pixel --check=web.typecheck --check=web.console
+	uv run verify-kit verify --check=web.vitest --check=web.playwright --check=web.lighthouse --check=web.axe --check=web.lost_pixel --check=web.typecheck --check=web.console --check=web.lint{% if has_backend %} --check=web.api_client_fresh{% endif %}
 
 # Fast feedback loop: only standard-tier web checks (vitest, playwright, axe).
 verify-web-quick:
-	uv run verify-kit verify --check=web.vitest --check=web.playwright --check=web.axe --check=web.typecheck --check=web.console
+	uv run verify-kit verify --check=web.vitest --check=web.playwright --check=web.axe --check=web.typecheck --check=web.console --check=web.lint{% if has_backend %} --check=web.api_client_fresh{% endif %}
 
 # Headed-mode Playwright smoke; useful for visual debugging during development.
 smoke-web:
@@ -191,7 +191,23 @@ web-baseline:
 	  -e LOST_PIXEL_DISABLE_TELEMETRY=1 \
 	  -e LOST_PIXEL_MODE=update \
 	  "lostpixel/lost-pixel:v$_lp_version"
-
+{% if has_backend %}
+# Regenerate the committed OpenAPI->TS client types (web/src/lib/api-types.ts).
+# Dumps the FastAPI app's OpenAPI schema OFFLINE (a pure create_app().openapi()
+# call — no server/DB), then runs openapi-typescript over it. This is the
+# fix_command surfaced by the web.api_client_fresh check when types drift; run it
+# after editing a Pydantic model, then `git add web/src/lib/api-types.ts`.
+# The dump MUST use json.dumps(..., sort_keys=True) — the same probe the check
+# uses — so the committed golden is byte-stable and never false-stales.
+regen-api-types:
+	#!/usr/bin/env bash
+	set -e
+	_schema=$(mktemp -t openapi-schema.XXXXXX.json)
+	trap 'rm -f "$_schema"' EXIT
+	uv run python -c 'import json, sys; from app.main import create_app; sys.stdout.write(json.dumps(create_app().openapi(), sort_keys=True))' > "$_schema"
+	pnpm --dir web exec openapi-typescript "$_schema" -o web/src/lib/api-types.ts
+	echo "[regen-api-types] regenerated web/src/lib/api-types.ts — review then \`git add\` it"
+{% endif %}
 {% endif %}
 
 {% if has_llm %}
