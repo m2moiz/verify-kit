@@ -196,11 +196,20 @@ async def call_via_litellm(prompt: str, *, model: str | None = None) -> dict[str
     from litellm import acompletion
 
     requested_model = model or os.environ.get("LLM_DEFAULT_MODEL", "anthropic/claude-haiku-4-5")
+    completion_kwargs: dict[str, Any] = {
+        "model": requested_model,
+        "messages": [{"role": "user", "content": prompt}],
+    }
 
-    response = await acompletion(
-        model=requested_model,
-        messages=[{"role": "user", "content": prompt}],
-    )
+    api_base = os.environ.get("LITELLM_API_BASE") or os.environ.get("OPENAI_API_BASE")
+    if api_base:
+        completion_kwargs["api_base"] = api_base
+
+    api_key = os.environ.get("LITELLM_API_KEY") or os.environ.get("OPENAI_API_KEY")
+    if api_key:
+        completion_kwargs["api_key"] = api_key
+
+    response = await acompletion(**completion_kwargs)
 
     # Extract content + usage from the litellm response. The choices[0]
     # path is the documented surface and is stable across providers.

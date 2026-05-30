@@ -1,0 +1,180 @@
+"""harness.checks.agents — keep AGENTS.md / CLAUDE.md in sync with the roster.
+
+AGENTS.md (and, when Claude Code is enabled, CLAUDE.md) is the single source of
+truth that human and agent contributors read. It frequently names checks by
+their dotted id ("run `web.axe` before commit"). When a check is renamed or
+removed, those prose references go stale silently — an agent then chases a
+``--check=web.bogus`` that no longer exists. ``agents.fresh`` is the guard that
+hunts this drift.
+
+Logic (in-process, rooted at cwd — no subprocess, no external tool):
+- Derive the set of KNOWN CHECK NAMESPACES dynamically from the live roster:
+  the prefix-before-the-first-dot of every registered check_id (e.g. ``web``,
+  ``arch``, ``deps``, ``security``, ``meta``, ``eval``, plus ``agents`` itself).
+- For each input file (AGENTS.md, then CLAUDE.md) that exists under cwd, extract
+  every "check-id-shaped" dotted token whose FIRST segment is a known namespace.
+  A token whose first segment is NOT a check namespace (``app.main``,
+  ``pyproject.toml``, ``ci.yml``, ``by_id.get``) is ignored — only the check
+  namespace governs what the guard validates, so harmless prose dotted tokens
+  never trip it.
+- Tokens whose LAST segment is a known file extension (``mise.toml``,
+  ``cli.py``) are skipped too: ``mise`` is a namespace but ``mise.toml`` is a
+  filename, not a check id.
+- Any surviving token that is NOT in ``{s.check_id for s in list_checks()}`` is a
+  stale reference → fail (code ``agents.fresh.stale_reference``).
+
+Determinism (so meta.stability does not flag it as flappy): inputs are iterated
+in a fixed order and the stale list is sorted before it is reported.
+
+Decision references: Decision 1.2 (dotted codes), 3.2 (@register), 4.1
+(tier="quick" — pure in-process file read), carryover-cwd (cwd kwarg, every path
+built as cwd/<name>).
+"""
+
+from __future__ import annotations
+
+import re
+import time
+from pathlib import Path
+
+from harness.models import CheckResult, ErrorEnvelope
+from harness.registry import list_checks, register
+
+#: This check's own id. Held in a constant so the registration and the returned
+#: CheckResult.check_id cannot drift apart.
+_CHECK_ID = "agents.fresh"
+
+_DOCS_URL = "https://github.com/m2moiz/verify-kit#agents-fresh"
+
+#: Docs / config files this guard scans, in a FIXED order. CLAUDE.md is only
+#: rendered when has_claude_code is true; the absent-file case is handled by the
+#: ``p.exists()`` guard, not by gating this module.
+_INPUTS = ("AGENTS.md", "CLAUDE.md")
+
+#: Matches a dotted, lowercase, id-shaped token: a first segment then one or more
+#: ``.segment`` parts. Tokens like ``web.axe``, ``mise.toml``, ``app.main`` all
+#: match; the namespace + extension filters below decide which are check ids.
+_DOTTED_TOKEN = re.compile(r"\b([a-z][a-z0-9_-]*(?:\.[a-z0-9_-]+)+)\b")
+
+#: A dotted token whose LAST segment is one of these is a filename / path, not a
+#: check id (``cli.py``, ``mise.toml``, ``ci.yml``). The check-namespace filter
+#: alone would let ``mise.toml`` through (``mise`` IS a namespace), so the
+#: extension filter is load-bearing for false-positive safety.
+_FILE_EXTENSIONS = frozenset(
+    {
+        "py",
+        "ts",
+        "js",
+        "tsx",
+        "jsx",
+        "yml",
+        "yaml",
+        "toml",
+        "json",
+        "md",
+        "css",
+        "sh",
+        "lock",
+        "txt",
+        "cfg",
+        "ini",
+        "example",
+        "local",
+        "production",
+        "config",
+        "html",
+        "png",
+        "svg",
+    }
+)
+
+
+def _check_namespaces() -> set[str]:
+    """Return the set of namespace prefixes derived from the live roster.
+
+    A namespace is the segment before the first dot of a registered check_id.
+    Computed at run time so it always tracks the current roster (e.g. web.* only
+    appears in the set on a has_web render where the web checks registered).
+    """
+    return {spec.check_id.split(".", 1)[0] for spec in list_checks()}
+
+
+def _is_check_shaped(token: str, namespaces: set[str]) -> bool:
+    """True when ``token`` looks like a check id: known namespace, not a filename."""
+    if token.rsplit(".", 1)[-1] in _FILE_EXTENSIONS:
+        return False
+    return token.split(".", 1)[0] in namespaces
+
+
+@register(
+    _CHECK_ID,
+    tier="quick",
+    category="meta",
+    description="Guard: AGENTS.md/CLAUDE.md check-id refs must match the live registry roster",
+    inputs=["AGENTS.md", "CLAUDE.md"],
+    fixable=False,
+)
+def check_agents_fresh(cwd: Path) -> CheckResult:
+    """Fail when AGENTS.md/CLAUDE.md names a check id that is not in the roster."""
+    start = time.monotonic()
+
+    namespaces = _check_namespaces()
+    valid_ids = {spec.check_id for spec in list_checks()}
+
+    stale: list[tuple[str, str]] = []
+    seen_refs = 0
+    for name in _INPUTS:
+        p = cwd / name
+        if not p.exists():
+            # CLAUDE.md is absent on a non-claude scaffold, and a project may have
+            # no AGENTS.md — either way there is nothing in that file to validate.
+            continue
+        try:
+            text = p.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        for token in _DOTTED_TOKEN.findall(text):
+            if not _is_check_shaped(token, namespaces):
+                continue
+            seen_refs += 1
+            if token not in valid_ids:
+                stale.append((name, token))
+
+    # Sort deterministically (file, token) so the message and pass/fail verdict
+    # never depend on read or set-iteration order — meta.stability re-runs this.
+    stale = sorted(set(stale))
+    duration_ms = int((time.monotonic() - start) * 1000)
+
+    if not stale:
+        return CheckResult(
+            check_id=_CHECK_ID,
+            status="pass",
+            message=(
+                f"all {seen_refs} check-id reference(s) in AGENTS.md/CLAUDE.md "
+                "match the live roster"
+            ),
+            duration_ms=duration_ms,
+        )
+
+    shown = ", ".join(f"{f}:{t}" for f, t in stale[:3])
+    first_file = stale[0][0]
+    return CheckResult(
+        check_id=_CHECK_ID,
+        status="fail",
+        message=f"{len(stale)} stale check-id reference(s) in agent docs: {shown}",
+        duration_ms=duration_ms,
+        error=ErrorEnvelope(
+            code="agents.fresh.stale_reference",
+            message=(
+                "the following AGENTS.md/CLAUDE.md reference(s) name a check id "
+                f"that is not in the live roster: {[f'{f}:{t}' for f, t in stale[:5]]}"
+            )[:200],
+            hint=(
+                "Update AGENTS.md/CLAUDE.md to match the live roster "
+                "(verify-kit list-checks) or remove the stale reference; the docs "
+                "drifted from the registered checks."
+            ),
+            docs_url=_DOCS_URL,
+            file=first_file,
+        ),
+    )
