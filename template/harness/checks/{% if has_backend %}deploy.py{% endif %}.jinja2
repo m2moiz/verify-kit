@@ -1,0 +1,384 @@
+"""harness.checks.deploy — backend deploy-readiness checks (has_backend only).
+
+Two checks live here:
+
+1. **deploy.config** (standard tier, offline). Asserts the app's prod
+   configuration *fails closed*: a production environment with no
+   ``VERIFYKIT_AUTH_TOKEN`` must be rejected by ``Settings.assert_deploy_ready()``.
+   The probe runs in a SUBPROCESS (``uv run python -c``) with an explicitly-built
+   environment — ``ENV=prod`` and the auth token scrubbed — so the verdict is
+   hermetic regardless of whatever the surrounding shell/CI happens to export
+   (the selftest CI sets ``VERIFYKIT_AUTH_TOKEN``; an in-process probe could read
+   that and mask the very fail-open this check exists to catch). The scaffold
+   stays boot-tolerant: ``deploy.config`` does not change how the app boots, it
+   only verifies the explicit pre-deploy guard is present and fails closed.
+
+   Verdicts: guard raises on the synthetic prod/no-token config → pass; guard
+   exists but does NOT raise → fail (``deploy.config.fail_open``); guard absent
+   entirely → fail (``deploy.config.no_validator``); ``app`` not importable →
+   skip (run ``uv pip install -e .``).
+
+2. **deploy.image_boots** (slow tier). Builds the app's Docker image and asserts
+   the container actually boots *healthy* — the image's own ``HEALTHCHECK`` (which
+   hits ``/healthz``) must report ``healthy``. Reuses ``_docker_reachable()`` from
+   harness.checks.backend; skips cleanly when no Docker daemon is reachable. A
+   container that exits/crashes (e.g. a broken ``CMD`` module) never reaches
+   healthy → fail. The container needs no Postgres to boot (the async engine is
+   lazy) and no auth token (``/healthz`` is auth-exempt and the app boots tolerant
+   of a missing token), so the boot probe is self-contained.
+
+Decision references: Decision 1.2 (dotted codes — ``<id>.<reason>``), 3.2
+(@register, FROZEN kwargs), 4.1 (tiers), carryover-cwd (cwd kwarg; every
+subprocess is rooted at the explicit ``cwd``, never a bare relative Path).
+"""
+
+from __future__ import annotations
+
+import contextlib
+import subprocess
+import time
+from pathlib import Path
+
+from harness.checks.backend import _docker_reachable
+from harness.models import CheckResult, ErrorEnvelope
+from harness.proc import run as proc_run
+from harness.registry import register
+
+_DOCS_URL = "https://github.com/m2moiz/verify-kit#deploy"
+
+# ── deploy.config ─────────────────────────────────────────────────────────────
+
+#: Probe executed via ``uv run python -c`` inside the scaffold. It imports the
+#: scaffold's own Settings, builds a config (the subprocess env supplies
+#: ENV=prod with the auth token removed), and prints a single verdict token. It
+#: is robust to BOTH designs of the guard: a plain ``assert_deploy_ready()``
+#: method (the shipped design — construction stays boot-tolerant) AND a
+#: hypothetical construction-time validator (in which case ``Settings()`` itself
+#: raises, which is also "fails closed" → CLOSED).
+_DEPLOY_CONFIG_PROBE = """
+import sys
+try:
+    from app.settings import Settings
+except Exception:
+    print("IMPORT_ERROR"); sys.exit(0)
+try:
+    s = Settings()
+except Exception:
+    print("CLOSED"); sys.exit(0)
+guard = getattr(s, "assert_deploy_ready", None)
+if guard is None:
+    print("NO_GUARD"); sys.exit(0)
+try:
+    guard()
+except Exception:
+    print("CLOSED")
+else:
+    print("OPEN")
+"""
+
+
+def _deploy_config_env() -> dict[str, str]:
+    """Build the subprocess env for the prod/no-token probe.
+
+    Starts from the current environment, force-sets ``ENV=prod``, and REMOVES
+    ``VERIFYKIT_AUTH_TOKEN`` so an ambient token (the selftest CI exports one)
+    cannot leak in and mask a fail-open.
+    """
+    import os
+
+    env = {k: v for k, v in os.environ.items() if k != "VERIFYKIT_AUTH_TOKEN"}
+    env["ENV"] = "prod"
+    return env
+
+
+@register(
+    "deploy.config",
+    tier="standard",
+    category="deploy",
+    description="Assert prod config fails closed: ENV=prod requires VERIFYKIT_AUTH_TOKEN",
+    inputs=["app/settings.py", "app/**", ".env.example"],
+    fixable=False,
+    tool="uv",
+)
+def check_deploy_config(cwd: Path) -> CheckResult:
+    """Fail when the app's prod-readiness guard is missing or does not fail closed."""
+    start = time.monotonic()
+    try:
+        proc = proc_run(
+            ["uv", "run", "python", "-c", _DEPLOY_CONFIG_PROBE],
+            cwd=cwd,
+            env=_deploy_config_env(),
+            timeout=120,
+        )
+    except FileNotFoundError:
+        return CheckResult(
+            check_id="deploy.config",
+            status="fail",
+            message="uv not found on PATH",
+            duration_ms=int((time.monotonic() - start) * 1000),
+            error=ErrorEnvelope(
+                code="deploy.config.tool-missing",
+                message="uv binary not found",
+                hint="Install uv (https://docs.astral.sh/uv/) or via mise, then run `uv sync`",
+                docs_url=_DOCS_URL,
+            ),
+        )
+
+    duration_ms = int((time.monotonic() - start) * 1000)
+    lines = proc.stdout.strip().splitlines()
+    verdict = lines[-1].strip() if lines else ""
+
+    if verdict == "CLOSED":
+        return CheckResult(
+            check_id="deploy.config",
+            status="pass",
+            message="prod config fails closed: ENV=prod without VERIFYKIT_AUTH_TOKEN is rejected",
+            duration_ms=duration_ms,
+        )
+
+    if verdict == "OPEN":
+        return CheckResult(
+            check_id="deploy.config",
+            status="fail",
+            message=(
+                "prod config is FAIL-OPEN: ENV=prod with no VERIFYKIT_AUTH_TOKEN "
+                "was accepted — a production deploy would ship with auth unconfigured"
+            ),
+            duration_ms=duration_ms,
+            error=ErrorEnvelope(
+                code="deploy.config.fail_open",
+                message=(
+                    "Settings.assert_deploy_ready() did not raise for a prod config "
+                    "with no VERIFYKIT_AUTH_TOKEN"
+                ),
+                hint=(
+                    "Strengthen Settings.assert_deploy_ready() in app/settings.py to "
+                    "raise when ENV in {prod, production} and VERIFYKIT_AUTH_TOKEN is unset."
+                ),
+                docs_url=_DOCS_URL,
+                file="app/settings.py",
+            ),
+        )
+
+    if verdict == "NO_GUARD":
+        return CheckResult(
+            check_id="deploy.config",
+            status="fail",
+            message=(
+                "no deploy-readiness guard found: Settings has no assert_deploy_ready() — "
+                "a misconfigured prod deploy cannot be caught before shipping"
+            ),
+            duration_ms=duration_ms,
+            error=ErrorEnvelope(
+                code="deploy.config.no_validator",
+                message="Settings.assert_deploy_ready() is missing",
+                hint=(
+                    "Add an assert_deploy_ready() method to Settings in app/settings.py "
+                    "that raises when ENV=prod and VERIFYKIT_AUTH_TOKEN is unset."
+                ),
+                docs_url=_DOCS_URL,
+                file="app/settings.py",
+            ),
+        )
+
+    if verdict == "IMPORT_ERROR":
+        return CheckResult(
+            check_id="deploy.config",
+            status="skip",
+            message=(
+                "app package not importable; run `uv pip install -e .` (or `uv sync`) "
+                "so the deploy-config probe can import app.settings"
+            ),
+            duration_ms=duration_ms,
+        )
+
+    # Unrecognized output: the probe could not run cleanly (e.g. venv not synced).
+    # Surface honestly as a failure rather than passing silently.
+    return CheckResult(
+        check_id="deploy.config",
+        status="fail",
+        message="deploy-config probe produced no recognizable verdict — is the venv synced?",
+        duration_ms=duration_ms,
+        error=ErrorEnvelope(
+            code="deploy.config.probe_error",
+            message=(proc.stderr.strip() or proc.stdout.strip() or "no output")[:200],
+            hint="Run `uv sync` so app + its deps are installed, then retry",
+            docs_url=_DOCS_URL,
+        ),
+    )
+
+
+# ── deploy.image_boots ────────────────────────────────────────────────────────
+
+#: Image tag + container name for the boot smoke. Fixed (not random) so a prior
+#: aborted run is reliably cleaned up by name before/after; uniqueness is not
+#: needed because the container is removed in a finally on every path.
+_IMAGE_TAG = "verifykit-deploy-smoke:verify"
+_CONTAINER_NAME = "verifykit-deploy-smoke"
+
+#: Docker build can legitimately take minutes on a cold cache (uv image pull +
+#: dep install). slow-tier budget; a real hang still surfaces inside 10 minutes.
+_BUILD_TIMEOUT_S = 600
+#: Max wall-clock to wait for the container's HEALTHCHECK to report healthy.
+#: The shipped Dockerfile uses start-period=10s + interval=10s + retries=3.
+_HEALTH_TIMEOUT_S = 120
+#: Terminal states for the poll loop: a settled health verdict, or a dead container.
+_SETTLED_HEALTH = frozenset({"healthy", "unhealthy"})
+_DEAD_STATES = frozenset({"exited", "dead", "missing"})
+#: Go-template for `docker inspect` State.Status + State.Health.Status. The
+#: literal Go-template braces are wrapped in a Jinja raw block so they render
+#: through verbatim instead of being parsed as template expressions.
+_INSPECT_FORMAT = (
+    "{% raw %}{{.State.Status}}|{{if .State.Health}}{{.State.Health.Status}}{{end}}{% endraw %}"
+)
+
+
+def _docker_rm(cwd: Path) -> None:
+    """Best-effort remove the boot-smoke container; never raises."""
+    with contextlib.suppress(OSError, subprocess.SubprocessError):
+        proc_run(["docker", "rm", "-f", _CONTAINER_NAME], cwd=cwd, timeout=60)
+
+
+def _inspect_state(cwd: Path) -> tuple[str, str]:
+    """Return (container_status, health_status) for the boot-smoke container.
+
+    container_status is one of created/running/exited/dead/... ; health_status
+    is starting/healthy/unhealthy or "" when the container has no healthcheck
+    state yet. Returns ("missing", "") when the container cannot be inspected.
+    """
+    try:
+        proc = proc_run(
+            ["docker", "inspect", "-f", _INSPECT_FORMAT, _CONTAINER_NAME],
+            cwd=cwd,
+            timeout=30,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return ("missing", "")
+    if proc.returncode != 0:
+        return ("missing", "")
+    state, _, health = proc.stdout.strip().partition("|")
+    return (state.strip(), health.strip())
+
+
+def _wait_for_health(cwd: Path, deadline: float) -> tuple[str, str]:
+    """Poll the container until its health settles, it dies, or the deadline passes."""
+    state, health = _inspect_state(cwd)
+    while health not in _SETTLED_HEALTH and state not in _DEAD_STATES:
+        if time.monotonic() >= deadline:
+            break
+        time.sleep(2.0)
+        state, health = _inspect_state(cwd)
+    return (state, health)
+
+
+def _container_logs(cwd: Path) -> str:
+    """Return the tail of the boot-smoke container's logs (empty on error)."""
+    try:
+        logs = proc_run(
+            ["docker", "logs", "--tail", "40", _CONTAINER_NAME],
+            cwd=cwd,
+            timeout=30,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    return (logs.stderr or logs.stdout or "").strip()[-600:]
+
+
+@register(
+    "deploy.image_boots",
+    tier="slow",
+    category="deploy",
+    description="Build the app Docker image and assert the container boots healthy (/healthz)",
+    inputs=["Dockerfile", "app/**", "harness/**", "pyproject.toml", "uv.lock"],
+    fixable=False,
+    tool="docker",
+)
+def check_deploy_image_boots(cwd: Path) -> CheckResult:
+    """Build the image, run it, and assert the container's HEALTHCHECK goes healthy."""
+    start = time.monotonic()
+
+    if not _docker_reachable():
+        return CheckResult(
+            check_id="deploy.image_boots",
+            status="skip",
+            message=(
+                "Docker daemon not reachable; the image-boot smoke needs Docker to "
+                "build and run the app image. Start Docker and re-run with "
+                "`verify-kit verify --full --require=deploy.image_boots`."
+            ),
+            duration_ms=int((time.monotonic() - start) * 1000),
+        )
+
+    # Clean up any container left over from a prior aborted run before building.
+    _docker_rm(cwd)
+    try:
+        build = proc_run(["docker", "build", "-t", _IMAGE_TAG, "."], cwd=cwd, timeout=_BUILD_TIMEOUT_S)
+        if build.returncode != 0:
+            return CheckResult(
+                check_id="deploy.image_boots",
+                status="fail",
+                message=f"docker build failed (exit {build.returncode})",
+                duration_ms=int((time.monotonic() - start) * 1000),
+                error=ErrorEnvelope(
+                    code="deploy.image_boots.build_failed",
+                    message=(build.stderr or build.stdout or "")[-200:],
+                    hint="Run `docker build .` in the project root to see the full error.",
+                    fix_command="docker build .",
+                    docs_url=_DOCS_URL,
+                    file="Dockerfile",
+                ),
+            )
+
+        run = proc_run(["docker", "run", "-d", "--name", _CONTAINER_NAME, _IMAGE_TAG], cwd=cwd, timeout=60)
+        if run.returncode != 0:
+            return CheckResult(
+                check_id="deploy.image_boots",
+                status="fail",
+                message=f"docker run failed (exit {run.returncode})",
+                duration_ms=int((time.monotonic() - start) * 1000),
+                error=ErrorEnvelope(
+                    code="deploy.image_boots.run_failed",
+                    message=(run.stderr or run.stdout or "")[-200:],
+                    hint=(
+                        "The image built but the container would not start; "
+                        "check the `docker run` output."
+                    ),
+                    docs_url=_DOCS_URL,
+                    file="Dockerfile",
+                ),
+            )
+
+        state, health = _wait_for_health(cwd, start + _HEALTH_TIMEOUT_S)
+        if health == "healthy":
+            return CheckResult(
+                check_id="deploy.image_boots",
+                status="pass",
+                message="app image built and the container booted healthy (/healthz OK)",
+                duration_ms=int((time.monotonic() - start) * 1000),
+            )
+
+        reason = (
+            "exited before becoming healthy"
+            if state in {"exited", "dead"}
+            else f"never reported healthy (last health={health or 'unknown'}, state={state})"
+        )
+        logs_tail = _container_logs(cwd)
+        return CheckResult(
+            check_id="deploy.image_boots",
+            status="fail",
+            message=f"app image container {reason}",
+            duration_ms=int((time.monotonic() - start) * 1000),
+            error=ErrorEnvelope(
+                code="deploy.image_boots.unhealthy",
+                message=(logs_tail or reason)[:200],
+                hint=(
+                    "The image built but the container did not pass its /healthz "
+                    "HEALTHCHECK. Run the image and inspect `docker logs`; a broken "
+                    "CMD or an import error at startup is the usual cause."
+                ),
+                docs_url=_DOCS_URL,
+                file="Dockerfile",
+            ),
+        )
+    finally:
+        _docker_rm(cwd)
