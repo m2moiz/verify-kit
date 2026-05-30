@@ -8,6 +8,32 @@ release PR before merge (per repo convention D-11).
 
 See `CONTRIBUTING.md` for the commit-message contract that drives this file.
 
+## [0.3.0](https://github.com/m2moiz/verify-kit/compare/v0.2.1...v0.3.0) (2026-05-30)
+
+
+### Added
+
+* **template:** beartype runtime type hook (types.runtime.hook) ([#46](https://github.com/m2moiz/verify-kit/issues/46)) ([6a131bc](https://github.com/m2moiz/verify-kit/commit/6a131bc75cd243e730cedad1825fd67868ff5a22))
+* **template:** ruff D docstring + PGH ignore-ban strictness gate (v0.3) ([#40](https://github.com/m2moiz/verify-kit/issues/40)) ([39c40e0](https://github.com/m2moiz/verify-kit/commit/39c40e09b78a57fb09154f9b58921ce91d7cc8b6))
+* **template:** ruff S/SIM/C90/T20 ruleset expansion (v0.3) ([#41](https://github.com/m2moiz/verify-kit/issues/41)) ([9440aef](https://github.com/m2moiz/verify-kit/commit/9440aefa30cb44aca96cbbba879388645ee9599e))
+* **template:** Wave 2 checks — security.secrets + meta.stability (v0.3) ([#42](https://github.com/m2moiz/verify-kit/issues/42)) ([85473bc](https://github.com/m2moiz/verify-kit/commit/85473bc88c5f41f3c05566ca4407f56b23768e5e))
+* **template:** Wave 3 config+web checks (precommit + web.console) ([#45](https://github.com/m2moiz/verify-kit/issues/45)) ([4abe896](https://github.com/m2moiz/verify-kit/commit/4abe896e2e29a3d5d995a8de9c2e6f1cf99c8baa))
+* **template:** Wave 3 deploy checks (deploy.config + image_boots) ([#43](https://github.com/m2moiz/verify-kit/issues/43)) ([dcc2721](https://github.com/m2moiz/verify-kit/commit/dcc2721c1873df10a3f0ec5ae273dd3a59cfed75))
+* **template:** Wave 3 static checks (arch.imports + deptry) ([#44](https://github.com/m2moiz/verify-kit/issues/44)) ([0ec8a62](https://github.com/m2moiz/verify-kit/commit/0ec8a624e24e373390e035778f57f5c08351b2e6))
+* **template:** Wave 4 llm checks — eval.golden_regression + agents.fresh (v0.3) ([#48](https://github.com/m2moiz/verify-kit/issues/48)) ([84ae0aa](https://github.com/m2moiz/verify-kit/commit/84ae0aaf6f59e872117ce51e1d70775dfa2dcc5d))
+* **template:** Wave 4 web checks — web.lint (oxlint) + web.api_client_fresh (v0.3) ([#47](https://github.com/m2moiz/verify-kit/issues/47)) ([aa413f0](https://github.com/m2moiz/verify-kit/commit/aa413f0844c1a5315f240c32bc482b47200813f4))
+* v0.3 Wave 1 — web.typecheck, fixloop guard, strict_mode ([#38](https://github.com/m2moiz/verify-kit/issues/38)) ([94f7c93](https://github.com/m2moiz/verify-kit/commit/94f7c93ffbe66721b6d1526ff0cb8ada4f81f9f7))
+
+
+### Fixed
+
+* register typecheck.python — just verify now checks types ([#36](https://github.com/m2moiz/verify-kit/issues/36)) ([46086e6](https://github.com/m2moiz/verify-kit/commit/46086e6e38bf85b662e523559c76652cac511a57))
+
+
+### Documentation
+
+* **template:** public-API docstrings for ruff D (Wave-1 prep) ([#39](https://github.com/m2moiz/verify-kit/issues/39)) ([6dc759f](https://github.com/m2moiz/verify-kit/commit/6dc759f01309177928bcc8ab620fbee09405c962))
+
 ## [0.2.1](https://github.com/m2moiz/verify-kit/compare/v0.2.0...v0.2.1) (2026-05-29)
 
 
