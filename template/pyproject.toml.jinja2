@@ -31,6 +31,9 @@ dependencies = [
     # FastAPI backend add-on
     "fastapi[standard]>=0.115",
     "pydantic-settings>=2.5",
+    # Runtime type-checking hook installed in app/__init__.py (prod=O0 no-op).
+    # A runtime dep, not a dev tool: app imports it unconditionally at boot.
+    "beartype>=0.22.9",
     "asgi-correlation-id>=4.3",
     "sse-starlette>=2.1",
     "secure>=1.0",

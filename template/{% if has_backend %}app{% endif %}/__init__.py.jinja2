@@ -1,1 +1,27 @@
-"""Application package for the FastAPI app and its CLI sibling."""
+"""Application package for the FastAPI app and its CLI sibling.
+
+Importing this package installs a beartype runtime type-checking hook over
+``app``: every annotated callable and class in an ``app`` submodule imported
+*after* this point is decorated to raise ``BeartypeCallHintViolation`` when a
+caller passes a wrongly-typed argument — the class of bug static type-checking
+(pyright) cannot see at runtime.
+
+The hook keys off the same ``ENV`` variable pydantic-settings reads (see
+``Settings.ENV``): in ``prod``/``production`` it installs with the ``O0`` no-op
+strategy (zero per-call overhead, identical import graph), otherwise full
+checking for dev/test. ``os.getenv`` is read directly rather than importing
+``app.settings`` so the hook is installed *before* any app submodule (including
+``settings``) is imported and thus eligible for checking.
+"""
+
+from __future__ import annotations
+
+import os
+
+from beartype import BeartypeConf, BeartypeStrategy
+from beartype.claw import beartype_this_package
+
+if os.getenv("ENV", "dev").lower() in {"prod", "production"}:
+    beartype_this_package(conf=BeartypeConf(strategy=BeartypeStrategy.O0))
+else:
+    beartype_this_package()
