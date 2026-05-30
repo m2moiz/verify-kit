@@ -1,6 +1,7 @@
 """harness.checks.web — web add-on verifier registrations.
 
-Five checks: web.vitest, web.playwright, web.lighthouse, web.axe, web.lost_pixel.
+Seven checks: web.vitest, web.playwright, web.lighthouse, web.axe,
+web.lost_pixel, web.otel_trace, web.typecheck.
 
 FROZEN API contract: @register kwargs are `tier, category, description, inputs,
 fixable, tool, skip_if_unavailable`. NO `severity=`, NO `tags=`, NO MCP-level
@@ -1092,4 +1093,132 @@ def check_web_otel_trace(cwd: Path) -> CheckResult:
         check_id="web.otel_trace",
         status="pass",
         duration_ms=duration_ms,
+    )
+
+
+# ── web.typecheck ─────────────────────────────────────────────────────────────
+
+# tsc --pretty false emits one diagnostic per line:
+#   path/to/File.tsx(12,9): error TS2322: Type 'x' is not assignable to type 'y'.
+# Capture: file, line, column, TS error code, message. The leading anchor keeps
+# us on the FIRST real diagnostic line (tsc prints them in source order).
+import re as _re  # noqa: E402 — module-local alias; re isn't imported at top
+
+_TSC_DIAG_RE = _re.compile(
+    r"^(?P<file>[^(]+)\((?P<line>\d+),(?P<col>\d+)\):\s+"
+    r"error\s+(?P<code>TS\d+):\s+(?P<msg>.*)$",
+    _re.MULTILINE,
+)
+
+
+@register(
+    "web.typecheck",
+    tier="standard",
+    category="typecheck",
+    description="TypeScript static type-check for web/ (tsc --noEmit)",
+    inputs=["web/**/*.ts", "web/**/*.tsx", "web/tsconfig.json", "web/package.json"],
+    fixable=False,
+    tool="tsc",
+    skip_if_unavailable=True,  # tsc may not be installed offline (no node_modules)
+)
+def check_web_typecheck(cwd: Path) -> CheckResult:
+    """Run `tsc --noEmit` over web/ to catch TS type errors `just verify` misses.
+
+    Vite NEVER type-checks during build (esbuild transpiles and drops types), so
+    a standard `just verify` is blind to TypeScript type errors today. This check
+    closes that gap by running the compiler in --noEmit mode.
+
+    Offline-first (subprocess discipline): tsc is a Node tool, so we resolve the
+    LOCAL binary at web/node_modules/.bin/tsc first. When it is absent (offline,
+    no `pnpm install`), the check returns status="skip" — never auto-fetches and
+    never fails a Docker-less / offline run (D8-A local-check degradation;
+    skip_if_unavailable=True). cwd=cwd/"web" + clean_env() mirror the sibling
+    web checks so pnpm/node resolve against the scaffold's own toolchain.
+
+    On a non-zero tsc exit, the FIRST `tsc --pretty false` diagnostic is parsed
+    into a clickable ErrorEnvelope (code="web.typecheck.TSxxxx", file/line/column).
+    """
+    t0 = time.monotonic()
+
+    # Offline-first: skip when the LOCAL tsc binary is not installed (no
+    # node_modules). We gate on the project-local bin only — `pnpm exec tsc`
+    # resolves the scaffold's own tsc against web/node_modules, so a global tsc
+    # on PATH is not a usable substitute (it would run without the project's
+    # installed deps and produce a noisy fail). NEVER auto-fetch via pnpm dlx —
+    # a missing toolchain is a skip, not a fail (same posture as web.lost_pixel's
+    # Docker probe; skip_if_unavailable=True).
+    tsc_bin = cwd / "web" / "node_modules" / ".bin" / "tsc"
+    if not tsc_bin.exists():
+        duration_ms = int((time.monotonic() - t0) * 1000)
+        return CheckResult(
+            check_id="web.typecheck",
+            status="skip",
+            duration_ms=duration_ms,
+            message=(
+                "web.typecheck: tsc not found at web/node_modules/.bin/tsc — "
+                "run `cd web && pnpm install` to enable the TypeScript type gate "
+                "(offline-first: never auto-fetched)."
+            ),
+        )
+
+    result = proc_run(
+        # --pretty false → stable machine-parseable `file(line,col): error TSxxxx`
+        # diagnostics (the default colorized/pretty format wraps + adds frames).
+        ["pnpm", "exec", "tsc", "--noEmit", "--pretty", "false"],
+        cwd=cwd / "web",
+        env=clean_env(),
+        timeout=120.0,
+    )
+    duration_ms = int((time.monotonic() - t0) * 1000)
+
+    if result.returncode == 0:
+        return CheckResult(
+            check_id="web.typecheck",
+            status="pass",
+            duration_ms=duration_ms,
+        )
+
+    # Non-zero exit → type errors (or a tsc invocation error). tsc writes
+    # diagnostics to stdout; fall back to stderr for invocation failures.
+    output = (result.stdout or "") + (result.stderr or "")
+    match = _TSC_DIAG_RE.search(output)
+    if match is None:
+        # tsc exited non-zero but emitted no parseable diagnostic (e.g. a config
+        # error or a tsc crash). Surface the output tail rather than a phantom pass.
+        diag = output.strip()
+        diag_tail = diag[-800:] if diag else "(no tsc output captured)"
+        return CheckResult(
+            check_id="web.typecheck",
+            status="fail",
+            duration_ms=duration_ms,
+            error=ErrorEnvelope(
+                code="web.typecheck.run.failed",
+                message=(
+                    f"tsc --noEmit exited {result.returncode} "
+                    f"(no parseable diagnostic): {diag_tail}"
+                ),
+                hint="Run `cd web && pnpm exec tsc --noEmit` to see the full error",
+                fix_command="cd web && pnpm exec tsc --noEmit",
+                docs_url="https://www.typescriptlang.org/docs/handbook/compiler-options.html",
+            ),
+        )
+
+    ts_code = match.group("code")
+    return CheckResult(
+        check_id="web.typecheck",
+        status="fail",
+        duration_ms=duration_ms,
+        error=ErrorEnvelope(
+            code=f"web.typecheck.{ts_code}",
+            message=f"{ts_code}: {match.group('msg').strip()}",
+            hint=(
+                "Fix the type error, or run "
+                "`cd web && pnpm exec tsc --noEmit` to see all diagnostics"
+            ),
+            fix_command="cd web && pnpm exec tsc --noEmit",
+            docs_url="https://www.typescriptlang.org/docs/handbook/compiler-options.html",
+            file=match.group("file").strip(),
+            line=int(match.group("line")),
+            column=int(match.group("col")),
+        ),
     )

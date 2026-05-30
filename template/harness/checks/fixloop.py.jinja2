@@ -1,0 +1,201 @@
+"""harness.checks.fixloop — anti-cheat guard for the self-heal loop.
+
+This check detects the exact failure verify-kit exists to prevent: a "fix" that
+turns `just verify` green by DELETING the test (the oracle) that proved the
+defect, rather than by actually fixing the code. An autonomous agent under
+pressure to make the suite pass can take this shortcut; without a guard the
+harness would reward it with a green it should never have given.
+
+Logic (git working tree vs HEAD, rooted at cwd):
+- deleted files   = `git -C <cwd> diff HEAD --diff-filter=D --name-only`
+  (covers both staged and unstaged deletions relative to HEAD).
+- changed source  = `git -C <cwd> diff HEAD --diff-filter=AM --name-only`
+  filtered to source files (added or modified, excluding test paths).
+- A path is a "test" when it matches one of: `test_`, `_test`, `/tests/`,
+  `.spec.`, `.test.` (covers Python `test_*.py`/`*_test.py`/`tests/` and
+  TS/JS `*.spec.ts`/`*.test.tsx`).
+
+Verdict:
+- ANY test file deleted AND ANY non-test source file added/modified in the same
+  working-tree change  → fail (code `fixloop.oracle_preserved.test_deleted`).
+  This is the smell of "deleted the failing test, edited the code, called it
+  fixed."
+- Only test deletions, with NO source edits (a legitimate test removal)  → pass.
+- No test deletions  → pass.
+- cwd is not a git repo (or `git` is missing)  → skip (offline / non-git safe).
+
+Decision references: Decision 1.2 (dotted codes), 3.2 (@register), 4.1
+(tier="standard"), carryover-cwd (cwd kwarg, `git -C <cwd>` rooting).
+"""
+
+from __future__ import annotations
+
+import subprocess
+import time
+from pathlib import Path
+
+from harness.models import CheckResult, ErrorEnvelope
+from harness.registry import register
+
+_DOCS_URL = "https://github.com/m2moiz/verify-kit#fixloop"
+
+#: Substrings that mark a path as a test/oracle file. Matched against the
+#: forward-slash path that git reports (git uses `/` on all platforms).
+_TEST_MARKERS: tuple[str, ...] = ("test_", "_test", "/tests/", ".spec.", ".test.")
+
+#: Extensions we treat as "source" for the changed-source side of the check.
+#: A fix edits code; doc/config churn (`.md`, `.yml`, `.toml`) is not the
+#: signal we are hunting, so it is deliberately excluded to avoid false fails.
+_SOURCE_SUFFIXES: tuple[str, ...] = (
+    ".py",
+    ".ts",
+    ".tsx",
+    ".js",
+    ".jsx",
+    ".gd",
+    ".sh",
+    ".go",
+    ".rs",
+)
+
+
+def _is_test_path(path: str) -> bool:
+    """True when `path` looks like a test/oracle file."""
+    name = path.rsplit("/", 1)[-1]
+    if name.startswith("test_") or "/tests/" in f"/{path}":
+        return True
+    stem = name[: name.rfind(".")] if "." in name else name
+    if stem.endswith("_test"):
+        return True
+    return ".spec." in name or ".test." in name
+
+
+def _is_source_path(path: str) -> bool:
+    """True when `path` is a code file we'd expect a real fix to edit."""
+    return any(path.endswith(suffix) for suffix in _SOURCE_SUFFIXES)
+
+
+def _git_names(cwd: Path, diff_filter: str) -> list[str]:
+    """Return `git diff HEAD --diff-filter=<f> --name-only` paths (may raise)."""
+    proc = subprocess.run(
+        ["git", "-C", str(cwd), "diff", "HEAD", f"--diff-filter={diff_filter}", "--name-only"],
+        capture_output=True,
+        text=True,
+        cwd=cwd,
+        timeout=30,
+    )
+    if proc.returncode != 0:
+        # Non-zero here means git could run but the diff failed (e.g. no HEAD
+        # yet — a repo with zero commits). Treat as "nothing to compare".
+        raise _GitUnavailable(proc.stderr.strip() or "git diff failed")
+    return [line for line in proc.stdout.splitlines() if line.strip()]
+
+
+class _GitUnavailable(Exception):
+    """Raised internally when git cannot produce a HEAD diff (→ skip)."""
+
+
+@register(
+    "fixloop.oracle_preserved",
+    tier="standard",
+    category="fixloop",
+    description="Guard: a fix must not go green by deleting the test that proves the defect",
+    inputs=[],
+    fixable=False,
+    tool="git",
+)
+def check_fixloop_oracle_preserved(cwd: Path) -> CheckResult:
+    """Fail when a working-tree change deletes a test AND edits non-test source."""
+    start = time.monotonic()
+    try:
+        # `git rev-parse --git-dir` is the cheap "is this a git repo?" probe.
+        probe = subprocess.run(
+            ["git", "-C", str(cwd), "rev-parse", "--git-dir"],
+            capture_output=True,
+            text=True,
+            cwd=cwd,
+            timeout=30,
+        )
+    except FileNotFoundError:
+        return CheckResult(
+            check_id="fixloop.oracle_preserved",
+            status="skip",
+            message="git not found on PATH; cannot inspect working-tree changes",
+            duration_ms=int((time.monotonic() - start) * 1000),
+        )
+
+    if probe.returncode != 0:
+        return CheckResult(
+            check_id="fixloop.oracle_preserved",
+            status="skip",
+            message="not a git repository; oracle-preservation guard is git-state-based",
+            duration_ms=int((time.monotonic() - start) * 1000),
+        )
+
+    try:
+        deleted = _git_names(cwd, "D")
+        changed = _git_names(cwd, "AM")
+    except _GitUnavailable as exc:
+        return CheckResult(
+            check_id="fixloop.oracle_preserved",
+            status="skip",
+            message=f"git could not diff against HEAD ({exc}); guard skipped",
+            duration_ms=int((time.monotonic() - start) * 1000),
+        )
+    except FileNotFoundError:
+        return CheckResult(
+            check_id="fixloop.oracle_preserved",
+            status="skip",
+            message="git not found on PATH; cannot inspect working-tree changes",
+            duration_ms=int((time.monotonic() - start) * 1000),
+        )
+
+    duration_ms = int((time.monotonic() - start) * 1000)
+
+    deleted_tests = [p for p in deleted if _is_test_path(p)]
+    if not deleted_tests:
+        return CheckResult(
+            check_id="fixloop.oracle_preserved",
+            status="pass",
+            message="no test/oracle file was deleted in the working tree",
+            duration_ms=duration_ms,
+        )
+
+    changed_source = [p for p in changed if _is_source_path(p) and not _is_test_path(p)]
+    if not changed_source:
+        # Test(s) removed but no source edited — a legitimate test cleanup.
+        return CheckResult(
+            check_id="fixloop.oracle_preserved",
+            status="pass",
+            message=(
+                f"{len(deleted_tests)} test file(s) deleted but no non-test source "
+                "was edited — treated as a legitimate test removal"
+            ),
+            duration_ms=duration_ms,
+        )
+
+    shown_tests = ", ".join(deleted_tests[:3])
+    shown_source = ", ".join(changed_source[:3])
+    return CheckResult(
+        check_id="fixloop.oracle_preserved",
+        status="fail",
+        message=(
+            f"deleted test(s) [{shown_tests}] while editing source [{shown_source}] — "
+            "a fix must not go green by removing its own oracle"
+        ),
+        duration_ms=duration_ms,
+        error=ErrorEnvelope(
+            code="fixloop.oracle_preserved.test_deleted",
+            message=(
+                f"{len(deleted_tests)} test file(s) deleted alongside "
+                f"{len(changed_source)} non-test source edit(s): "
+                f"deleted={deleted_tests}; edited={changed_source}"
+            ),
+            hint=(
+                "A fix must not delete the test that proves the defect. Restore the "
+                "deleted test (`git checkout HEAD -- <path>`) and make the source "
+                "change pass it, or justify the removal in a separate commit."
+            ),
+            docs_url=_DOCS_URL,
+        ),
+    )
