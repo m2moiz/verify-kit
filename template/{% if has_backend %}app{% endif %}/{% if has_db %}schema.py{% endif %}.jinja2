@@ -1,3 +1,5 @@
+"""SQLAlchemy ORM declarative base and table models for the application."""
+
 from __future__ import annotations
 
 from datetime import datetime
@@ -8,10 +10,12 @@ from sqlalchemy.sql import func
 
 
 class Base(DeclarativeBase):
-    pass
+    """Declarative base class for all ORM models."""
 
 
 class User(Base):
+    """ORM model for a user row in the users table."""
+
     __tablename__ = "users"
 
     id: Mapped[int] = mapped_column(primary_key=True)

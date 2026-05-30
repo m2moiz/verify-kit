@@ -107,6 +107,7 @@ class ReportSummary(BaseModel):
 
     @classmethod
     def from_checks(cls, checks: list[CheckResult], total_duration_ms: int) -> ReportSummary:
+        """Tally pass/fail/skip counts from check results and attach total duration."""
         p = sum(1 for c in checks if c.status == "pass")
         f = sum(1 for c in checks if c.status == "fail")
         s = sum(1 for c in checks if c.status == "skip")
@@ -132,6 +133,7 @@ class VerifyReport(BaseModel):
 
     @classmethod
     def from_checks(cls, checks: list[CheckResult], total_duration_ms: int) -> VerifyReport:
+        """Build a report from check results, deriving the exit code from the fail count."""
         summary = ReportSummary.from_checks(checks, total_duration_ms)
         exit_code = EXIT_CHECK_FAIL if summary.fail_count > 0 else EXIT_OK
         return cls(exit_code=exit_code, checks=list(checks), summary=summary)
@@ -182,6 +184,7 @@ class CheckCatalogEntry(BaseModel):
 
     @classmethod
     def from_spec(cls, spec: CheckSpec) -> CheckCatalogEntry:
+        """Build a serialization-safe entry from a CheckSpec, dropping the non-serializable fn field."""
         return cls(**{k: v for k, v in spec.model_dump(exclude={"fn"}).items()})
 
 

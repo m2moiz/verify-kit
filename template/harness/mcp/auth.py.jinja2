@@ -41,12 +41,14 @@ class BearerAuthMiddleware(BaseHTTPMiddleware):
     """
 
     def __init__(self, app, token: str) -> None:
+        """Wrap ``app``, requiring a non-empty bearer ``token`` on every request."""
         super().__init__(app)
         if not token:
             raise ValueError("BearerAuthMiddleware requires a non-empty token")
         self._token = token
 
     async def dispatch(self, request: Request, call_next) -> Response:
+        """Bypass health paths, else require a matching bearer token before forwarding the request."""
         # Health-probe bypass — unauthenticated liveness checks are fine.
         if request.url.path.startswith("/health"):
             return await call_next(request)

@@ -1,3 +1,5 @@
+"""Application settings model and loader backed by environment and .env files."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -30,6 +32,7 @@ class Settings(BaseSettings):
 
     @property
     def cors_allow_origins(self) -> list[str]:
+        """Return the configured list of allowed CORS origins."""
         return self.CORS_ALLOW_ORIGINS
 
 {% endif %}

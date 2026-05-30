@@ -22,6 +22,7 @@ from pathlib import Path
 
 
 def main() -> int:
+    """Run schemathesis fuzz against the in-process FastAPI app and return an exit code."""
     parser = argparse.ArgumentParser(
         description="Run schemathesis fuzz against the FastAPI app in-process."
     )

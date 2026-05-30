@@ -1,3 +1,5 @@
+"""FastAPI route definitions for the app's HTTP API."""
+
 from __future__ import annotations
 
 import asyncio
@@ -27,6 +29,7 @@ router = APIRouter()
 
 @router.get("/healthz", response_model=HealthResponse)
 async def healthz(request: Request) -> HealthResponse:
+    """Return the service health status, version, and current environment."""
     settings = request.app.state.settings
     return HealthResponse(status="ok", version="0.1.0", env=settings.ENV)
 
@@ -42,6 +45,7 @@ async def healthz(request: Request) -> HealthResponse:
     },
 )
 async def echo_route(req: EchoRequest) -> EchoResponse:
+    """Echo the request payload back, tagged with the current correlation ID."""
     rid = correlation_id.get() or "no-correlation-id"
     return echo(req, request_id=rid)
 
@@ -53,6 +57,7 @@ async def echo_route(req: EchoRequest) -> EchoResponse:
     responses={200: {"content": {"text/event-stream": {}}}},
 )
 async def events_stream() -> EventSourceResponse:
+    """Stream three demo Server-Sent Events as a text/event-stream response."""
     async def gen():
         for i in range(3):
             await asyncio.sleep(0.01)
@@ -129,6 +134,8 @@ _INJECTION_MARKERS = [
 
 
 class SummarizeRequest(BaseModel):
+    """Request body for /summarize, with prompt-injection input validation."""
+
     text: str = Field(
         ..., min_length=1, max_length=5000, description="Text to summarize in one sentence."
     )
@@ -148,6 +155,8 @@ class SummarizeRequest(BaseModel):
 
 
 class SummarizeResponse(BaseModel):
+    """Response body for /summarize: the summary plus cost and latency metrics."""
+
     summary: str
     cost_usd: float
     latency_ms: float
@@ -179,6 +188,7 @@ async def _summarize(text: str) -> dict:
     },
 )
 async def summarize_route(req: SummarizeRequest) -> SummarizeResponse:
+    """Summarize the request text via the LLM, returning summary, cost, and latency."""
     started = monotonic()
     out = await _summarize(req.text)
     latency_ms = (monotonic() - started) * 1000.0
