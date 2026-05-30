@@ -210,4 +210,11 @@ eval:
 refresh-cassettes:
     rm -rf tests/llm/cassettes/
     uv run pytest tests/llm/ --record-mode=once
+
+# Offline LLM golden-regression gate (eval.golden_regression). Replays committed
+# golden cassettes through pydantic-evals — NO network, NO tokens. On a fresh
+# scaffold with no cassette it skips cleanly; record cassettes via
+# `just refresh-cassettes` to make it assert.
+eval-golden:
+    uv run verify-kit verify --check=eval.golden_regression
 {% endif %}

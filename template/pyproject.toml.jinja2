@@ -113,6 +113,10 @@ dev = [
     # LLM add-on dev deps
     "vcrpy>=8.1,<9",
     "pytest-recording>=0.13.4",
+    # Offline golden-regression gate (eval.golden_regression): scores
+    # cassette-replayed golden cases. Pins pydantic-ai-slim==1.104.0 exactly
+    # (inside the >=1.100,<2 runtime range), so run `uv lock` after editing.
+    "pydantic-evals>=1.104,<2",
 {% endif %}
 ]
 

@@ -41,6 +41,7 @@ _exclude:
   - "{% if not has_db %}alembic.ini{% endif %}"
   - "{% if not has_llm %}harness/llm.py{% endif %}"
   - "{% if not has_llm %}harness/checks/eval.py{% endif %}"
+  - "{% if not has_llm %}harness/checks/eval_golden.py{% endif %}"
   - "{% if not has_llm %}eval{% endif %}"
   - "{% if not has_llm %}eval/**{% endif %}"
   - "{% if not has_llm %}tests/llm{% endif %}"

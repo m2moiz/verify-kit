@@ -1,0 +1,234 @@
+"""harness.checks.eval_golden — offline LLM golden-regression gate (gate: has_llm).
+
+The shipped ``eval`` check (id ``"eval"``) is a Promptfoo gate that hits the LIVE
+API via ``just eval`` and is skip-by-default. That leaves ``just verify`` with no
+OFFLINE oracle for the LLM call path. ``eval.golden_regression`` fills that hole:
+it replays committed golden cases through VCR cassettes (record_mode="none", no
+network) and runs them through pydantic-evals (``Dataset``/``Case`` +
+``EqualsExpected``/``IsInstance``). A mismatch between the cassette-replayed
+output and a golden expected value reds the check deterministically — no tokens
+spent, no flaky live call.
+
+Mechanism: the check shells out to ``uv run pytest
+tests/llm/test_golden_regression.py`` (a ``@pytest.mark.vcr`` test). VCR + the
+autouse ``_skip_when_no_cassette`` fixture guarantee the no-network property:
+- No cassette recorded (fresh scaffold) → the test SKIPs → exit code maps to
+  status="skip" (the day-1 green-scaffold contract, G1).
+- Cassette present, all golden cases match → exit 0 → pass.
+- A golden case mismatches → nonzero exit → fail (``case_failed``).
+- VCR sees an un-cassetted request under record_mode="none" → it raises
+  ``CannotOverwriteExistingCassetteException`` rather than calling out → fail
+  (``cassette_missing``), proving no live call happened.
+
+tier="slow": like the ``eval`` gate, this stays out of the bare ``just verify``
+umbrella (pytest subprocess + replay is not free) but DOES run under
+``verify --full``, ``--check=eval.golden_regression``, and ``just eval-golden``.
+
+Decision references: Decision 1.2 (dotted codes), 3.2 (@register), 4.1
+(tier="slow"), carryover-cwd (cwd kwarg; subprocess + paths rooted at cwd).
+"""
+
+from __future__ import annotations
+
+import time
+from pathlib import Path
+
+from harness.models import CheckResult, ErrorEnvelope
+from harness.proc import run as proc_run
+from harness.registry import register
+
+_CHECK_ID = "eval.golden_regression"
+
+_DOCS_URL = "https://github.com/m2moiz/verify-kit#eval-golden-regression"
+
+#: The cassette-backed test module the check drives. Relative to cwd.
+_TEST_PATH = "tests/llm/test_golden_regression.py"
+
+#: The golden dataset the test loads. Used only to decide whether to skip early
+#: (a scaffold may delete the dataset). Relative to cwd.
+_DATASET_PATH = "eval/datasets/golden.jsonl"
+
+#: Tokens in pytest/VCR output that mean "an un-cassetted request was attempted
+#: under record_mode='none'" — i.e. the check would have hit the network but VCR
+#: blocked it. Surfacing these as cassette_missing proves no live call occurred.
+_CASSETTE_BLOCKED_MARKERS = (
+    "CannotOverwriteExistingCassetteException",
+    "Cannot overwrite existing cassette",
+    "Connection refused",
+    "ConnectionError",
+)
+
+#: pytest exit code 5 = "no tests collected" (e.g. the test module deselected or
+#: empty). Treated as skip, not fail.
+_PYTEST_NO_TESTS = 5
+
+_REFRESH_HINT = "Run `just refresh-cassettes` to record golden cassettes (needs ANTHROPIC_API_KEY)."
+
+
+def _first_failing_case(stdout: str) -> str | None:
+    """Parse the first failing case name from pytest -q output, if present.
+
+    The golden test asserts ``all(r.value for r in c.assertions.values()), c.name``
+    so the failure message carries ``AssertionError: <case_name> failed: ...``.
+    That detail (the golden CASE name) is preferred over the pytest NODE id from
+    the ``FAILED ...::node`` summary line, which is just the test-function name.
+    Best-effort: return the most specific plausible token, else None.
+    """
+    lines = [line.strip() for line in stdout.splitlines()]
+    # Prefer the AssertionError detail — it names the failing golden case.
+    for stripped in lines:
+        if "AssertionError:" in stripped:
+            tail = stripped.split("AssertionError:", 1)[1].strip()
+            if tail:
+                # `<case> failed: ...` → keep the leading case token for clarity.
+                return tail.split(" failed", 1)[0].strip()[:80] or tail[:80]
+    # Fall back to the pytest node id from the FAILED summary line.
+    for stripped in lines:
+        if stripped.startswith("FAILED ") and "::" in stripped:
+            node = stripped.split(" ", 1)[1].split(" ", 1)[0]
+            return node.split("::", 1)[-1][:80]
+    return None
+
+
+def _fix_command(cwd: Path) -> str:
+    """Suggested fix: re-record cassettes then re-run the golden test."""
+    return f"cd {cwd} && just refresh-cassettes && uv run pytest {_TEST_PATH}"
+
+
+@register(
+    _CHECK_ID,
+    tier="slow",
+    category="llm",
+    description=(
+        "Offline LLM golden-regression gate: replays committed golden cases "
+        "through VCR cassettes (no network) and scores them via pydantic-evals"
+    ),
+    inputs=[
+        "eval/datasets/**",
+        "tests/llm/cassettes/**",
+        "tests/llm/test_golden_regression.py",
+    ],
+    fixable=False,
+    tool="pydantic-evals",
+)
+def check_eval_golden_regression(cwd: Path) -> CheckResult:
+    """Run the cassette-backed golden test and map its outcome to a CheckResult."""
+    start = time.monotonic()
+
+    # Nothing to evaluate if the scaffold has neither the test nor the dataset.
+    if not (cwd / _TEST_PATH).exists() or not (cwd / _DATASET_PATH).exists():
+        return CheckResult(
+            check_id=_CHECK_ID,
+            status="skip",
+            message="no golden test/dataset present — nothing to evaluate",
+            duration_ms=int((time.monotonic() - start) * 1000),
+            error=ErrorEnvelope(
+                code="eval.golden_regression.no_dataset",
+                message="golden test module or dataset is absent",
+                hint=_REFRESH_HINT,
+                docs_url=_DOCS_URL,
+            ),
+        )
+
+    try:
+        proc = proc_run(
+            ["uv", "run", "pytest", _TEST_PATH, "-q", "--no-header", "-p", "no:cacheprovider"],
+            cwd=cwd,
+            timeout=120,
+        )
+    except FileNotFoundError:
+        return CheckResult(
+            check_id=_CHECK_ID,
+            status="fail",
+            message="uv not found on PATH",
+            duration_ms=int((time.monotonic() - start) * 1000),
+            error=ErrorEnvelope(
+                code="eval.golden_regression.tool-missing",
+                message="uv binary not found",
+                hint="Install uv (https://docs.astral.sh/uv/) or via mise, then run `uv sync`",
+                docs_url=_DOCS_URL,
+            ),
+        )
+
+    duration_ms = int((time.monotonic() - start) * 1000)
+    output = f"{proc.stdout}\n{proc.stderr}"
+
+    if proc.returncode == 0:
+        # All collected golden cases passed. A fully-skipped run (no cassette)
+        # also exits 0; map that to skip below before this branch by checking
+        # the no-cassette markers, so an exit-0 here means real cases ran green.
+        if _all_skipped(proc.stdout):
+            return _cassette_missing_skip(duration_ms)
+        return CheckResult(
+            check_id=_CHECK_ID,
+            status="pass",
+            message="golden regression: all cassette-replayed cases match expected",
+            duration_ms=duration_ms,
+        )
+
+    # exit 5 = no tests collected → treat as skip (nothing to regress on).
+    if proc.returncode == _PYTEST_NO_TESTS:
+        return _cassette_missing_skip(duration_ms)
+
+    # An un-cassetted request blocked by VCR under record_mode="none". This is a
+    # cassette gap, not a real regression — and it PROVES no live call happened.
+    if any(marker in output for marker in _CASSETTE_BLOCKED_MARKERS):
+        return CheckResult(
+            check_id=_CHECK_ID,
+            status="fail",
+            message="a golden case has no recorded cassette (no network attempted)",
+            duration_ms=duration_ms,
+            error=ErrorEnvelope(
+                code="eval.golden_regression.cassette_missing",
+                message=(output.strip() or "VCR blocked an un-cassetted request")[:200],
+                hint=_REFRESH_HINT,
+                fix_command=_fix_command(cwd),
+                docs_url=_DOCS_URL,
+            ),
+        )
+
+    # Any other nonzero exit is a genuine golden-case regression.
+    case = _first_failing_case(proc.stdout)
+    detail = f"; first failing case: {case}" if case else ""
+    return CheckResult(
+        check_id=_CHECK_ID,
+        status="fail",
+        message=f"golden regression: a cassette-replayed case no longer matches expected{detail}",
+        duration_ms=duration_ms,
+        error=ErrorEnvelope(
+            code="eval.golden_regression.case_failed",
+            message=(output.strip() or "golden case failed")[:200],
+            hint=(
+                "A golden output drifted from its expected value. Inspect the diff, "
+                "then either fix the regression or, if the new behavior is correct, "
+                "re-record the cassette and update the expected value."
+            ),
+            fix_command=_fix_command(cwd),
+            docs_url=_DOCS_URL,
+        ),
+    )
+
+
+def _all_skipped(stdout: str) -> bool:
+    """True when pytest reported skips but zero passes/failures (no cassette)."""
+    summary = stdout.lower()
+    has_skip = "skipped" in summary
+    has_pass = " passed" in summary or "passed," in summary
+    has_fail = "failed" in summary
+    return has_skip and not has_pass and not has_fail
+
+
+def _cassette_missing_skip(duration_ms: int) -> CheckResult:
+    """Build the clean-skip result for a fresh scaffold with no recorded cassette."""
+    return CheckResult(
+        check_id=_CHECK_ID,
+        status="skip",
+        message="no golden cassette recorded — skipping (run `just refresh-cassettes`)",
+        duration_ms=duration_ms,
+        error=ErrorEnvelope(
+            code="eval.golden_regression.cassette_missing",
+            message="no recorded cassette for the golden test; nothing to replay offline",
+            hint=_REFRESH_HINT,
+            docs_url=_DOCS_URL,
+        ),
+    )

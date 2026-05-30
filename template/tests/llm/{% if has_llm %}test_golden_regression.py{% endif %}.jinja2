@@ -1,0 +1,67 @@
+"""Offline golden-regression test — cassette-backed via @pytest.mark.vcr.
+
+This is the test module that the ``eval.golden_regression`` harness check shells
+out to (``uv run pytest tests/llm/test_golden_regression.py``). It is the OFFLINE
+counterpart to the live Promptfoo ``eval`` gate: the same golden inputs, replayed
+through a recorded VCR cassette (record_mode="none", set in tests/conftest.py),
+scored by pydantic-evals.
+
+First-run discipline: on a fresh scaffold no cassette exists, so the autouse
+``_skip_when_no_cassette`` fixture (tests/llm/conftest.py) SKIPs this test — it
+never makes a live call. After ``just refresh-cassettes`` records the cassette,
+the test replays it deterministically with zero network and zero tokens.
+
+How a regression reds the check: each ``Case`` carries an ``EqualsExpected``
+evaluator. ``Dataset.evaluate_sync(task)`` runs every case's input through the
+cassette-replayed ``call_llm`` and records ``report.cases[i].assertions[
+"EqualsExpected"].value``. If a replayed output no longer equals the golden
+``expected_output``, that value is ``False`` and the ``assert`` below fails →
+nonzero pytest exit → ``eval.golden_regression.case_failed``.
+"""
+
+from __future__ import annotations
+
+import pytest
+from pydantic_evals import Case, Dataset
+from pydantic_evals.evaluators import EqualsExpected
+
+from harness.llm import call_llm
+
+#: Golden cases. These mirror the deterministic rows in
+#: eval/datasets/golden.jsonl (the ``equals`` / ``contains`` style inputs that
+#: have a single correct answer). Replace/extend with your real use case after
+#: recording cassettes via ``just refresh-cassettes``.
+#:
+#: Each case's ``expected_output`` is what the cassette-replayed model returned
+#: when the cassette was recorded; ``EqualsExpected`` reds the check if a future
+#: replay drifts from it.
+_GOLDEN_CASES = [
+    Case(
+        name="echo_ok",
+        inputs="Return exactly the word: OK",
+        expected_output="OK",
+        evaluators=(EqualsExpected(),),
+    ),
+]
+
+
+async def _task(prompt: str) -> str:
+    """Run one golden input through the scaffold's own LLM entry point.
+
+    Calls ``harness.llm.call_llm`` so the HTTP request is recorded/replayed by
+    VCR — never a direct provider SDK call. Returns the response text, stripped,
+    so ``EqualsExpected`` compares the model's content against the golden value.
+    """
+    result = await call_llm(prompt)
+    return str(result.get("content", "")).strip()
+
+
+@pytest.mark.vcr
+def test_golden_regression() -> None:
+    """Every golden case's cassette-replayed output must match its expected value."""
+    dataset = Dataset(name="golden-regression", cases=_GOLDEN_CASES)
+    report = dataset.evaluate_sync(_task)
+    for case in report.cases:
+        assert all(r.value for r in case.assertions.values()), (
+            f"{case.name} failed: expected output did not match the cassette replay"
+        )
