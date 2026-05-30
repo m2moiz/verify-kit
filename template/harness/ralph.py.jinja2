@@ -30,9 +30,11 @@ from typing import Literal
 
 
 class RalphStuck(Exception):
-    """Raised by callers that want exception-based flow. The library
-    primarily returns the canonical result dict; this exception exists for
-    callers that prefer ``try/except`` over inspecting ``status``."""
+    """Raised by callers that want exception-based flow.
+
+    The library primarily returns the canonical result dict; this exception
+    exists for callers that prefer ``try/except`` over inspecting ``status``.
+    """
 
     def __init__(self, reason: Literal["iteration_cap", "cost_cap"], iters: int, cost_usd: float):
         """Record why ralph stopped and the iteration and cost totals at that point."""

@@ -1,10 +1,10 @@
-"""harness/observability.py — lazy OpenTelemetry tracer with zero-cost null path.
+r"""harness/observability.py — lazy OpenTelemetry tracer with zero-cost null path.
 
 Decision 3.1 (OBS-01 verification gate): when ``OTEL_EXPORTER_OTLP_ENDPOINT``
 is unset, importing this module MUST NOT import any ``opentelemetry.*``
 submodule. The verification command is::
 
-    OTEL_EXPORTER_OTLP_ENDPOINT= python -X importtime \\
+    OTEL_EXPORTER_OTLP_ENDPOINT= python -X importtime \
         -c "import harness.observability" 2>&1 | grep -c opentelemetry  # → 0
 
 To uphold this contract, every OTel import is gated behind the
