@@ -10,6 +10,7 @@ The `as _xxx` aliases prevent shadowing the builtin `format` name when the
 """
 
 from harness.checks import copier as _copier  # noqa: F401
+from harness.checks import deps as _deps  # noqa: F401
 from harness.checks import fixloop as _fixloop  # noqa: F401
 from harness.checks import format as _format  # noqa: F401
 from harness.checks import just_list as _just_list  # noqa: F401
@@ -20,6 +21,9 @@ from harness.checks import security as _security  # noqa: F401
 from harness.checks import typecheck as _typecheck  # noqa: F401
 
 {% if has_backend %}
+# Architectural import-boundary check — imported for @register side-effect.
+from harness.checks import arch as _arch  # noqa: F401
+
 # Backend slice check — imported for @register side-effect.
 from harness.checks import backend as _backend  # noqa: F401
 
